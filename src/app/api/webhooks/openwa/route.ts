@@ -104,6 +104,9 @@ export async function POST(request: NextRequest) {
     externalMessageSid: event.waMessageId,
     metadata,
     deliveryStatus: event.fromMe ? "sent" : "received",
+    // Preserve the WhatsApp send time (epoch seconds) so backfilled history
+    // interleaves correctly with live messages.
+    createdAt: event.timestamp ? new Date(event.timestamp * 1000).toISOString() : undefined,
   });
 
   await bumpConversationActivity(conv.id, { inbound: !event.fromMe });

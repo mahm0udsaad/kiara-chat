@@ -60,6 +60,8 @@ export async function saveMessage(params: {
   externalMessageSid: string;
   metadata?: Record<string, unknown>;
   deliveryStatus?: string;
+  /** Original WhatsApp send time — keeps history-backfilled messages in order. */
+  createdAt?: string;
 }): Promise<string | null> {
   const { data, error } = await getAdminSupabaseClient()
     .from("messages")
@@ -72,6 +74,7 @@ export async function saveMessage(params: {
       external_message_sid: params.externalMessageSid,
       channel: "whatsapp",
       delivery_status: params.deliveryStatus ?? "received",
+      ...(params.createdAt ? { created_at: params.createdAt } : {}),
     })
     .select("id")
     .single();
