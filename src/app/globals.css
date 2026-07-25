@@ -1,0 +1,197 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7f8fc;
+  --foreground: #111d57;
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --line: rgba(17, 29, 87, 0.10);
+  --muted: #526083;
+  --subtle: #7480a3;
+  --brand: #20339a;
+  --brand-strong: #172777;
+  --brand-soft: #edf0ff;
+  --brand-yellow: #ffc400;
+  --brand-yellow-strong: #e4ad00;
+  --accent: var(--brand);
+  --accent-strong: var(--brand-strong);
+  --accent-soft: var(--brand-yellow);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  min-height: 100%;
+  scroll-behavior: smooth;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--brand-yellow) 55%, white);
+  color: var(--brand-strong);
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+*:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--brand-yellow) 80%, white);
+  outline-offset: 2px;
+}
+
+.dashboard-page {
+  width: 100%;
+  max-width: 1500px;
+  margin-inline: auto;
+  padding: 32px clamp(16px, 3vw, 44px) 48px;
+}
+
+.dashboard-page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.dashboard-page-header h1 {
+  color: var(--foreground);
+  font-size: clamp(1.65rem, 2vw, 2.25rem);
+  font-weight: 750;
+  letter-spacing: -0.04em;
+}
+
+.dashboard-page-header p {
+  max-width: 720px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.8;
+}
+
+.dashboard-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(32, 51, 154, 0.12);
+  border-radius: 20px;
+  background: linear-gradient(135deg, #20339a 0%, #172777 100%);
+  box-shadow: 0 24px 48px -34px rgba(32, 51, 154, 0.68);
+}
+
+.dashboard-hero::after {
+  position: absolute;
+  inset: auto -5% -75% auto;
+  width: 360px;
+  height: 360px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 999px;
+  content: "";
+}
+
+.dashboard-hero h1 {
+  position: relative;
+  z-index: 1;
+  font-size: clamp(1.65rem, 3vw, 2.5rem);
+  letter-spacing: -0.045em;
+}
+
+.dashboard-hero p {
+  position: relative;
+  z-index: 1;
+}
+
+.dashboard-tabs {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 10px 26px -24px rgba(17, 29, 87, 0.5);
+  backdrop-filter: blur(12px);
+}
+
+.dashboard-tab-trigger {
+  min-height: 56px;
+  color: var(--muted);
+  transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.dashboard-tab-trigger[data-state="active"] {
+  background: var(--brand);
+  color: white;
+  box-shadow: 0 8px 18px -14px rgba(32, 51, 154, 0.9);
+}
+
+.dashboard-surface-muted {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--brand-soft) 34%, white);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media (max-width: 1023px) {
+  .dashboard-page {
+    padding-top: 84px;
+  }
+}
+
+@media (max-width: 639px) {
+  .dashboard-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 22px;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), var(--font-noto-sans-arabic), Arial, Helvetica, sans-serif;
+}
+
+/* RTL: prefer Arabic font when direction is rtl */
+html[dir="rtl"] body {
+  font-family: var(--font-noto-sans-arabic), var(--font-inter), Arial, Helvetica, sans-serif;
+}
+
+body::selection {
+  background: color-mix(in srgb, var(--accent) 22%, white);
+}
+
+* {
+  border-color: var(--line);
+}
+
+@keyframes bounce-subtle {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-bounce-subtle {
+  animation: bounce-subtle 4s ease-in-out infinite;
+}
