@@ -49,12 +49,23 @@ export interface EngineState {
   state: string; // not_configured | unreachable | awaiting_qr | authenticated | ready | disconnected | error | initializing
   number: string | null;
   qrDataUrl: string | null;
+  /** When the engine minted the current QR (epoch ms), for the expiry countdown. */
+  qrUpdatedAt: number | null;
+  /** How long the engine considers a QR usable before cycling it (ms). */
+  qrMaxAgeMs: number | null;
 }
 
 /** Poll the engine for its connection state + QR (for the Connect page). */
 export async function getEngineState(): Promise<EngineState> {
   if (!BASE || !TOKEN) {
-    return { configured: false, state: "not_configured", number: null, qrDataUrl: null };
+    return {
+      configured: false,
+      state: "not_configured",
+      number: null,
+      qrDataUrl: null,
+      qrUpdatedAt: null,
+      qrMaxAgeMs: null,
+    };
   }
   const base = BASE.replace(/\/+$/, "");
   const headers = { Authorization: `Bearer ${TOKEN}` };
@@ -70,8 +81,30 @@ export async function getEngineState(): Promise<EngineState> {
       state: status.state ?? qr.state ?? "unknown",
       number: status.number ?? null,
       qrDataUrl: qr.qrDataUrl ?? null,
+      qrUpdatedAt: qr.qrUpdatedAt ?? null,
+      qrMaxAgeMs: qr.qrMaxAgeMs ?? null,
     };
   } catch {
-    return { configured: true, state: "unreachable", number: null, qrDataUrl: null };
+    return {
+      configured: true,
+      state: "unreachable",
+      number: null,
+      qrDataUrl: null,
+      qrUpdatedAt: null,
+      qrMaxAgeMs: null,
+    };
+  }
+}
+
+/**
+ * Ask the engine to mint a brand-new QR. Needed because whatsapp-web.js cannot
+ * refresh one in place against current WhatsApp Web builds, so a displayed code
+ * silently dies after ~60s.
+ */
+export async function refreshEngineQr(): Promise<void> {
+  const res = await post("/qr/refresh", {});
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`QR refresh failed (${res.status}): ${detail}`);
   }
 }

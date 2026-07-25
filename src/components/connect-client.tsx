@@ -1,20 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Smartphone, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Loader2, Smartphone, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 
 interface EngineState {
   configured: boolean;
   state: string;
   number: string | null;
   qrDataUrl: string | null;
+  qrUpdatedAt: number | null;
+  qrMaxAgeMs: number | null;
 }
 
 const ACTIVE_POLL = ["awaiting_qr", "authenticated", "initializing", "unknown"];
+const FALLBACK_MAX_AGE_MS = 45000;
 
 export function ConnectClient() {
   const [data, setData] = useState<EngineState | null>(null);
   const [error, setError] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  // Ticks once a second purely to drive the countdown re-render.
+  const [now, setNow] = useState(() => Date.now());
 
   const poll = useCallback(async () => {
     try {
@@ -36,7 +42,30 @@ export function ConnectClient() {
     return () => clearInterval(t);
   }, [poll]);
 
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const requestFreshQr = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await fetch("/api/whatsapp/refresh", { method: "POST" });
+      // The engine restarts its browser to mint a new code; poll picks it up.
+      await poll();
+    } catch {
+      setError(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [poll]);
+
   const state = data?.state ?? "loading";
+  const maxAge = data?.qrMaxAgeMs ?? FALLBACK_MAX_AGE_MS;
+  const secondsLeft = data?.qrUpdatedAt
+    ? Math.max(0, Math.ceil((data.qrUpdatedAt + maxAge - now) / 1000))
+    : null;
+  const expired = secondsLeft === 0;
 
   return (
     <div className="dashboard-page max-w-2xl">
@@ -73,10 +102,56 @@ export function ConnectClient() {
           </div>
         ) : data.qrDataUrl && ACTIVE_POLL.includes(state) ? (
           <div className="flex flex-col items-center gap-4">
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="relative rounded-xl border border-slate-200 bg-white p-4">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={data.qrDataUrl} alt="رمز QR" className="size-64" />
+              <img
+                src={data.qrDataUrl}
+                alt="رمز QR"
+                className={`size-64 transition ${expired ? "opacity-20 blur-sm" : ""}`}
+              />
+              {expired && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
+                  <AlertTriangle className="size-6 text-amber-600" />
+                  <p className="px-4 text-sm font-medium text-slate-700">
+                    انتهت صلاحية الرمز
+                  </p>
+                </div>
+              )}
             </div>
+
+            {/* A WhatsApp QR dies after about a minute; show exactly how long is
+                left so nobody scans a dead code and blames their phone. */}
+            {secondsLeft !== null && !expired && (
+              <p className="text-sm text-slate-600">
+                صالح لمدة{" "}
+                <span
+                  className={`font-semibold tabular-nums ${
+                    secondsLeft <= 10 ? "text-red-600" : "text-slate-900"
+                  }`}
+                >
+                  {secondsLeft}
+                </span>{" "}
+                ثانية
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={requestFreshQr}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+            >
+              {refreshing ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" /> جارٍ إنشاء رمز جديد…
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="size-4" /> رمز جديد
+                </>
+              )}
+            </button>
+
             <ol className="max-w-sm space-y-1 text-sm text-slate-600">
               <li className="flex items-center gap-2">
                 <Smartphone className="size-4" /> افتح واتساب على هاتف الصالون
@@ -86,8 +161,18 @@ export function ConnectClient() {
             </ol>
           </div>
         ) : (
-          <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
-            <Loader2 className="size-4 animate-spin" /> الحالة: {state} — بانتظار الرمز…
+          <div className="flex flex-col items-center gap-3">
+            <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+              <Loader2 className="size-4 animate-spin" /> الحالة: {state} — بانتظار الرمز…
+            </div>
+            <button
+              type="button"
+              onClick={requestFreshQr}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+            >
+              <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} /> رمز جديد
+            </button>
           </div>
         )}
       </div>
