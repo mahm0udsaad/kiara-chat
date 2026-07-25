@@ -43,3 +43,35 @@ export const openWaTransport: MessageTransport = {
     return parse(await post("/messages", { to: toE164, media }));
   },
 };
+
+export interface EngineState {
+  configured: boolean;
+  state: string; // not_configured | unreachable | awaiting_qr | authenticated | ready | disconnected | error | initializing
+  number: string | null;
+  qrDataUrl: string | null;
+}
+
+/** Poll the engine for its connection state + QR (for the Connect page). */
+export async function getEngineState(): Promise<EngineState> {
+  if (!BASE || !TOKEN) {
+    return { configured: false, state: "not_configured", number: null, qrDataUrl: null };
+  }
+  const base = BASE.replace(/\/+$/, "");
+  const headers = { Authorization: `Bearer ${TOKEN}` };
+  try {
+    const [statusRes, qrRes] = await Promise.all([
+      fetch(`${base}/status`, { headers, cache: "no-store" }),
+      fetch(`${base}/qr`, { headers, cache: "no-store" }),
+    ]);
+    const status = statusRes.ok ? await statusRes.json() : {};
+    const qr = qrRes.ok ? await qrRes.json() : {};
+    return {
+      configured: true,
+      state: status.state ?? qr.state ?? "unknown",
+      number: status.number ?? null,
+      qrDataUrl: qr.qrDataUrl ?? null,
+    };
+  } catch {
+    return { configured: true, state: "unreachable", number: null, qrDataUrl: null };
+  }
+}

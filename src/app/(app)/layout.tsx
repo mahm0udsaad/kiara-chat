@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getKiaraSession } from "@/lib/tenant";
 import { SignOutButton } from "@/components/sign-out-button";
@@ -18,6 +19,16 @@ export default async function AppLayout({
           <span className="rounded-full bg-[var(--brand-soft)] px-2 py-0.5 text-xs text-[var(--brand)]">
             {session.role === "admin" ? "مدير" : "موظف"}
           </span>
+          <nav className="flex items-center gap-3 text-sm">
+            <Link href="/inbox" className="text-[var(--muted)] hover:text-[var(--brand)]">
+              المحادثات
+            </Link>
+            {session.role === "admin" ? (
+              <Link href="/connect" className="text-[var(--muted)] hover:text-[var(--brand)]">
+                ربط واتساب
+              </Link>
+            ) : null}
+          </nav>
         </div>
         <div className="flex items-center gap-3 text-sm text-[var(--muted)]">
           <span dir="ltr">{session.email}</span>
