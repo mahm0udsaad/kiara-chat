@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Loader2,
@@ -29,6 +29,7 @@ import type { InternalNote } from "@/lib/notes";
 import type { SavedReply } from "@/lib/saved-replies";
 import { formatRelativeTime } from "@/lib/format";
 import { MessageBubble } from "./message-bubble";
+import { useInboxRealtime } from "./use-inbox-realtime";
 
 const CS_STATUS_LABEL: Record<CsStatus, string> = {
   open: "مفتوحة",
@@ -161,6 +162,46 @@ export function InboxClient({
       setLoading(false);
     }
   }, []);
+
+  // ---- live updates (Supabase Realtime) ----
+  // Refs so the realtime callbacks always see the current selection without
+  // resubscribing on every render.
+  const selectedRef = useRef<Conversation | null>(null);
+  selectedRef.current = selected;
+
+  // Conversation-list changes arrive in bursts (message insert + unread bump +
+  // reorder) — coalesce them into one server refresh.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleListRefresh = useCallback(() => {
+    if (refreshTimer.current) return;
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      router.refresh();
+    }, 800);
+  }, [router]);
+  useEffect(
+    () => () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    },
+    []
+  );
+
+  // Silently refetch the open thread (through the API — it signs media URLs).
+  const refetchThread = useCallback(async (conversationId: string) => {
+    if (selectedRef.current?.id !== conversationId) return;
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}/messages`);
+      const data = await res.json();
+      setMessages(data.messages ?? []);
+    } catch {
+      // keep whatever is on screen; the next event or refresh will catch up
+    }
+  }, []);
+
+  useInboxRealtime({
+    onNewMessage: refetchThread,
+    onConversationsChanged: scheduleListRefresh,
+  });
 
   const addNote = useCallback(async () => {
     if (!selected || !noteDraft.trim()) return;
