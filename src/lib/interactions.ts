@@ -8,6 +8,11 @@ import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
+import {
+  uploadBase64Media,
+  messageTypeFromContentType,
+  MAX_MEDIA_BYTES,
+} from "@/lib/storage-media";
 import type { CsStatus, AgentInfo } from "@/lib/types";
 
 export type { CsStatus, AgentInfo };
@@ -151,12 +156,98 @@ export async function sendReply(
   return { messageId: (msg?.id as string) ?? null, sent };
 }
 
+/**
+ * Send an image / document / voice note. Stores our own copy in the bucket
+ * first so the thread renders it even if the WhatsApp send fails, then hands
+ * the bytes to the transport.
+ */
+export async function sendMediaReply(
+  conversationId: string,
+  sender: { email: string | null },
+  file: { buffer: Buffer; contentType: string; filename: string | null },
+  caption: string
+): Promise<{ messageId: string | null; sent: boolean }> {
+  const admin = getAdminSupabaseClient();
+  const { data: conv } = await admin
+    .from("conversations")
+    .select("id, customer_phone, metadata")
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (!conv) throw new Error("Conversation not found");
+
+  if (file.buffer.byteLength > MAX_MEDIA_BYTES) {
+    throw new Error("الملف أكبر من الحد المسموح (20 ميجابايت)");
+  }
+
+  const base64 = file.buffer.toString("base64");
+  const messageType = messageTypeFromContentType(file.contentType);
+  const slot = await uploadBase64Media({
+    restaurantId: KIARA_RESTAURANT_ID,
+    conversationId,
+    contentType: file.contentType,
+    base64,
+    originalFilename: file.filename,
+  });
+
+  const { data: msg, error } = await admin
+    .from("messages")
+    .insert({
+      conversation_id: conversationId,
+      role: "agent",
+      content: caption || "",
+      message_type: messageType,
+      metadata: { source: "app", sent_by_email: sender.email, media: [slot] },
+      channel: "whatsapp",
+      delivery_status: "queued",
+    })
+    .select("id")
+    .single();
+  if (error) throw new Error(`Failed to record media message: ${error.message}`);
+
+  let sent = false;
+  let providerId: string | null = null;
+  if (isOpenWaConfigured()) {
+    try {
+      const r = await openWaTransport.sendMedia(conv.customer_phone as string, {
+        base64,
+        contentType: file.contentType,
+        filename: file.filename ?? undefined,
+        caption: caption || undefined,
+      });
+      providerId = r.providerMessageId || null;
+      sent = true;
+    } catch {
+      sent = false;
+    }
+  }
+
+  await admin
+    .from("messages")
+    .update({
+      delivery_status: sent ? "sent" : isOpenWaConfigured() ? "failed" : "queued",
+      external_message_sid: providerId,
+    })
+    .eq("id", msg!.id);
+
+  const convMeta = {
+    ...((conv.metadata as Record<string, unknown>) ?? {}),
+    handled_on_whatsapp: false,
+  };
+  await admin
+    .from("conversations")
+    .update({ last_message_at: new Date().toISOString(), metadata: convMeta })
+    .eq("id", conversationId);
+
+  return { messageId: (msg?.id as string) ?? null, sent };
+}
+
 /** Active Kiara agents (for the transfer picker), with emails resolved. */
 export async function listAgents(): Promise<AgentInfo[]> {
   const admin = getAdminSupabaseClient();
   const { data } = await admin
     .from("team_members")
-    .select("id, user_id, role")
+    .select("id, user_id, role, full_name, is_active")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .eq("is_active", true)
     .order("created_at");
@@ -170,7 +261,15 @@ export async function listAgents(): Promise<AgentInfo[]> {
       } catch {
         /* ignore */
       }
-      return { id: a.id as string, role: a.role as string, email };
+      const fullName = ((a.full_name as string) || "").trim();
+      return {
+        id: a.id as string,
+        role: a.role as string,
+        email,
+        fullName: fullName || null,
+        isActive: Boolean(a.is_active),
+      };
     })
   );
 }
+

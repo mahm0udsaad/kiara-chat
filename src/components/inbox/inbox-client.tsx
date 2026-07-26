@@ -8,15 +8,19 @@ import {
   UserCheck,
   UserX,
   Repeat,
-  Smartphone,
   Search,
   Tag,
   Plus,
-  X,
   StickyNote,
   MessageSquareText,
   ChevronRight,
+  MoreVertical,
+  Paperclip,
+  Mic,
+  Square,
 } from "lucide-react";
+import { Modal } from "@/components/ui/modal";
+import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
 import type {
   Conversation,
@@ -28,7 +32,7 @@ import type {
 } from "@/lib/types";
 import type { InternalNote } from "@/lib/notes";
 import type { SavedReply } from "@/lib/saved-replies";
-import { formatRelativeTime } from "@/lib/format";
+import { formatRelativeTime, agentDisplayName } from "@/lib/format";
 import { MessageBubble } from "./message-bubble";
 import { useInboxRealtime } from "./use-inbox-realtime";
 
@@ -96,14 +100,21 @@ export function InboxClient({
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState("");
   const [notes, setNotes] = useState<InternalNote[]>([]);
-  const [notesOpen, setNotesOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
   const [repliesOpen, setRepliesOpen] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+
+  // Media
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
 
   const [labels, setLabels] = useState<Label[]>(initialLabels);
   const [assignments, setAssignments] =
     useState<Record<string, string[]>>(initialAssignments);
-  const [labelEditorOpen, setLabelEditorOpen] = useState(false);
   const [newLabelName, setNewLabelName] = useState("");
   const [newLabelColor, setNewLabelColor] = useState<LabelColor>("blue");
 
@@ -141,9 +152,9 @@ export function InboxClient({
 
   const loadMessages = useCallback(async (c: Conversation) => {
     setSelected(c);
-    setLabelEditorOpen(false);
-    setNotesOpen(false);
+    setOptionsOpen(false);
     setNoteDraft("");
+    setMediaError(null);
     setLoading(true);
     setMessages([]);
     setNotes([]);
@@ -276,6 +287,89 @@ export function InboxClient({
     }
   }, [selected, draft, router]);
 
+  /** Upload + send one file (picked attachment or recorded voice note). */
+  const sendFile = useCallback(
+    async (file: File, caption = "") => {
+      if (!selected) return;
+      setUploading(true);
+      setMediaError(null);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        if (caption) form.append("caption", caption);
+        const res = await fetch(`/api/conversations/${selected.id}/media`, {
+          method: "POST",
+          body: form,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setMediaError(data?.error ?? "تعذّر إرسال الملف");
+          return;
+        }
+        const m = await fetch(`/api/conversations/${selected.id}/messages`);
+        setMessages((await m.json()).messages ?? []);
+        router.refresh();
+      } catch {
+        setMediaError("تعذّر إرسال الملف");
+      } finally {
+        setUploading(false);
+      }
+    },
+    [selected, router]
+  );
+
+  const onPickFile = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      // Reset first so picking the same file twice still fires onChange.
+      e.target.value = "";
+      if (file) await sendFile(file, draft.trim());
+      setDraft("");
+    },
+    [sendFile, draft]
+  );
+
+  /** Hold-to-record a WhatsApp-style voice note via MediaRecorder. */
+  const startRecording = useCallback(async () => {
+    setMediaError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Prefer ogg/opus — that's what WhatsApp uses for voice notes; Safari
+      // only offers mp4, which still sends fine as audio.
+      const mime = MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")
+        ? "audio/ogg;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : "";
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      chunksRef.current = [];
+      rec.ondataavailable = (ev) => {
+        if (ev.data.size) chunksRef.current.push(ev.data);
+      };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const type = rec.mimeType || "audio/ogg";
+        const blob = new Blob(chunksRef.current, { type });
+        chunksRef.current = [];
+        if (blob.size > 0) {
+          const ext = type.includes("mp4") ? "m4a" : type.includes("webm") ? "webm" : "ogg";
+          await sendFile(new File([blob], `voice-${Date.now()}.${ext}`, { type }));
+        }
+      };
+      rec.start();
+      recorderRef.current = rec;
+      setRecording(true);
+    } catch {
+      setMediaError("تعذّر الوصول إلى الميكروفون. تأكد من منح الإذن.");
+    }
+  }, [sendFile]);
+
+  const stopRecording = useCallback(() => {
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+    setRecording(false);
+  }, []);
+
   const toggleLabel = useCallback(
     async (labelId: string) => {
       if (!selected) return;
@@ -312,7 +406,7 @@ export function InboxClient({
   const ownerLabel = (c: Conversation): string | null => {
     if (!c.assigned_to) return null;
     if (c.assigned_to === myTeamMemberId) return "أنت";
-    return agentMap[c.assigned_to]?.email || "موظف";
+    return agentDisplayName(agentMap[c.assigned_to]);
   };
 
   const selectedLabelIds = selected ? assignments[selected.id] ?? [] : [];
@@ -427,8 +521,12 @@ export function InboxClient({
                     </span>
                     <div className="flex items-center gap-1">
                       {wa ? (
-                        <span className="flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] text-emerald-700">
-                          <Smartphone size={9} /> واتساب
+                        <span
+                          className="flex size-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-600"
+                          title="تمت المعالجة عبر تطبيق واتساب"
+                        >
+                          <WhatsAppIcon size={12} />
+                          <span className="sr-only">تمت المعالجة عبر تطبيق واتساب</span>
                         </span>
                       ) : null}
                       {c.unread_count ? (
@@ -501,140 +599,23 @@ export function InboxClient({
                     {selected.customer_phone}
                   </p>
                 </div>
-              </div>
-              {/* Six controls won't fit a phone width; scroll them sideways
-                  instead of wrapping into a header three rows tall. */}
-              <div className="scroll-pane flex items-center gap-2 overflow-x-auto px-2 pb-2 sm:px-5 [&::-webkit-scrollbar]:hidden">
-                <select
-                  value={csStatusOf(selected)}
-                  disabled={busy}
-                  onChange={(e) => act("status", { status: e.target.value })}
-                  aria-label="حالة المحادثة"
-                  className="min-h-10 shrink-0 rounded-lg border bg-white px-2 text-xs"
-                >
-                  {CS_STATUS_ORDER.map((s) => (
-                    <option key={s} value={s}>
-                      {CS_STATUS_LABEL[s]}
-                    </option>
-                  ))}
-                </select>
+                {/* Every control lives behind this one button so the chat
+                    screen itself stays free of chrome. */}
                 <button
                   type="button"
-                  onClick={() => setLabelEditorOpen((o) => !o)}
-                  aria-expanded={labelEditorOpen}
-                  className="flex min-h-10 shrink-0 items-center gap-1 rounded-lg border px-3 text-xs text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
+                  onClick={() => setOptionsOpen(true)}
+                  aria-label="خيارات المحادثة"
+                  aria-haspopup="dialog"
+                  className="flex size-10 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
                 >
-                  <Tag size={14} aria-hidden="true" /> تصنيفات
+                  <MoreVertical size={20} aria-hidden="true" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setNotesOpen((o) => !o)}
-                  aria-expanded={notesOpen}
-                  className="flex min-h-10 shrink-0 items-center gap-1 rounded-lg border px-3 text-xs text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
-                >
-                  <StickyNote size={14} aria-hidden="true" /> ملاحظات
-                  {notes.length ? ` (${notes.length})` : ""}
-                </button>
-                {selected.assigned_to === myTeamMemberId && myTeamMemberId ? (
-                  <button
-                    type="button"
-                    onClick={() => act("release")}
-                    disabled={busy}
-                    className="flex min-h-10 shrink-0 items-center gap-1 rounded-lg border px-3 text-xs text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)] disabled:opacity-60"
-                  >
-                    <UserX size={14} aria-hidden="true" /> إطلاق
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => act("take")}
-                    disabled={busy || !myTeamMemberId}
-                    className="flex min-h-10 shrink-0 items-center gap-1 rounded-lg bg-[var(--brand)] px-3 text-xs font-medium text-white transition-opacity disabled:opacity-60"
-                  >
-                    <UserCheck size={14} aria-hidden="true" /> استلام
-                  </button>
-                )}
-                <div className="flex shrink-0 items-center gap-1">
-                  <Repeat size={14} className="text-[var(--muted)]" aria-hidden="true" />
-                  <select
-                    value=""
-                    disabled={busy}
-                    onChange={(e) =>
-                      e.target.value && act("transfer", { targetTeamMemberId: e.target.value })
-                    }
-                    aria-label="تحويل المحادثة إلى موظف"
-                    className="min-h-10 rounded-lg border bg-white px-2 text-xs"
-                  >
-                    <option value="">تحويل إلى…</option>
-                    {agents
-                      .filter((a) => a.id !== selected.assigned_to)
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.email || a.role}
-                        </option>
-                      ))}
-                  </select>
-                </div>
               </div>
             </header>
 
-            {/* Label editor */}
-            {labelEditorOpen ? (
-              <div className="space-y-2 border-b bg-white px-5 py-3">
-                <div className="flex flex-wrap gap-1.5">
-                  {labels.map((l) => {
-                    const on = selectedLabelIds.includes(l.id);
-                    return (
-                      <button
-                        key={l.id}
-                        onClick={() => toggleLabel(l.id)}
-                        className={cn(
-                          "rounded-full border px-2 py-0.5 text-[11px] transition",
-                          LABEL_CLASSES[l.color],
-                          on ? "ring-2 ring-[var(--brand)]/40" : "opacity-60"
-                        )}
-                      >
-                        {on ? "✓ " : ""}
-                        {l.name}
-                      </button>
-                    );
-                  })}
-                  {labels.length === 0 ? (
-                    <span className="text-xs text-[var(--subtle)]">لا توجد تصنيفات بعد.</span>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    value={newLabelName}
-                    onChange={(e) => setNewLabelName(e.target.value)}
-                    placeholder="تصنيف جديد…"
-                    className="w-32 rounded-md border px-2 py-1 text-xs outline-none"
-                  />
-                  <div className="flex gap-1">
-                    {NEW_LABEL_COLORS.map((col) => (
-                      <button
-                        key={col}
-                        onClick={() => setNewLabelColor(col)}
-                        className={cn(
-                          "size-4 rounded-full border",
-                          LABEL_CLASSES[col].split(" ")[0],
-                          newLabelColor === col ? "ring-2 ring-offset-1 ring-[var(--brand)]" : ""
-                        )}
-                        aria-label={col}
-                      />
-                    ))}
-                  </div>
-                  <button
-                    onClick={createLabel}
-                    disabled={!newLabelName.trim()}
-                    className="flex items-center gap-1 rounded-md bg-[var(--brand)] px-2 py-1 text-[11px] text-white disabled:opacity-60"
-                  >
-                    <Plus size={11} /> إضافة
-                  </button>
-                </div>
-              </div>
-            ) : selectedLabelIds.length ? (
-              <div className="flex flex-wrap items-center gap-1.5 border-b bg-white px-5 py-2">
+            {/* Status strip only — anything actionable lives in the modal. */}
+            {selectedLabelIds.length ? (
+              <div className="flex flex-wrap items-center gap-1.5 border-b bg-[var(--surface)] px-4 py-1.5">
                 {selectedLabelIds
                   .map((id) => labelMap[id])
                   .filter(Boolean)
@@ -642,68 +623,19 @@ export function InboxClient({
                     <span
                       key={(l as Label).id}
                       className={cn(
-                        "flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]",
+                        "rounded-full border px-2 py-0.5 text-[11px]",
                         LABEL_CLASSES[(l as Label).color]
                       )}
                     >
                       {(l as Label).name}
-                      <button onClick={() => toggleLabel((l as Label).id)}>
-                        <X size={10} />
-                      </button>
                     </span>
                   ))}
               </div>
             ) : null}
 
-            {notesOpen ? (
-              <div className="space-y-2 border-b bg-amber-50 px-5 py-3">
-                <p className="text-[11px] font-medium text-amber-800">
-                  ملاحظات داخلية — لا تُرسل للعميل
-                </p>
-                {notes.length === 0 ? (
-                  <p className="text-xs text-amber-700/70">لا توجد ملاحظات.</p>
-                ) : (
-                  <ul className="space-y-1">
-                    {notes.map((n) => (
-                      <li
-                        key={n.id}
-                        className="rounded border border-amber-200 bg-white px-2 py-1 text-xs text-slate-700"
-                      >
-                        {n.body}
-                        <span className="mr-2 text-[9px] text-slate-400">
-                          {new Date(n.created_at).toLocaleString("ar")}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <div className="flex items-center gap-2">
-                  <input
-                    value={noteDraft}
-                    onChange={(e) => setNoteDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        void addNote();
-                      }
-                    }}
-                    placeholder="أضف ملاحظة داخلية…"
-                    className="flex-1 rounded-md border border-amber-200 px-2 py-1 text-xs outline-none"
-                  />
-                  <button
-                    onClick={addNote}
-                    disabled={!noteDraft.trim()}
-                    className="rounded-md bg-amber-600 px-2 py-1 text-[11px] text-white disabled:opacity-60"
-                  >
-                    إضافة
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
             {isHandledOnWhatsApp(selected) ? (
-              <div className="flex items-center gap-2 bg-emerald-50 px-5 py-1.5 text-xs text-emerald-700">
-                <Smartphone size={12} /> تمت معالجة هذه المحادثة عبر تطبيق واتساب.
+              <div className="flex items-center gap-2 bg-emerald-50 px-4 py-1.5 text-xs text-emerald-700">
+                <WhatsAppIcon size={13} /> تمت معالجة هذه المحادثة عبر تطبيق واتساب.
               </div>
             ) : null}
 
@@ -721,7 +653,54 @@ export function InboxClient({
               )}
             </div>
 
+            {mediaError ? (
+              <p
+                aria-live="polite"
+                className="shrink-0 bg-red-50 px-4 py-1.5 text-xs text-red-700"
+              >
+                {mediaError}
+              </p>
+            ) : null}
+
             <div className="safe-b flex shrink-0 items-end gap-2 border-t bg-[var(--surface)] px-3 pt-3 sm:px-4">
+              <input
+                ref={fileInputRef}
+                type="file"
+                hidden
+                accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                onChange={onPickFile}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || recording}
+                aria-label="إرفاق صورة أو ملف"
+                className="flex size-11 shrink-0 items-center justify-center rounded-lg border text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)] disabled:opacity-60"
+              >
+                {uploading ? (
+                  <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Paperclip size={18} aria-hidden="true" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={recording ? stopRecording : startRecording}
+                disabled={uploading}
+                aria-label={recording ? "إيقاف التسجيل وإرسال" : "تسجيل رسالة صوتية"}
+                className={cn(
+                  "flex size-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-60",
+                  recording
+                    ? "animate-pulse border-red-300 bg-red-50 text-red-600"
+                    : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                )}
+              >
+                {recording ? (
+                  <Square size={16} aria-hidden="true" />
+                ) : (
+                  <Mic size={18} aria-hidden="true" />
+                )}
+              </button>
               {savedReplies.length ? (
                 <div className="relative">
                   <button
@@ -784,6 +763,183 @@ export function InboxClient({
                 <span className="sr-only sm:not-sr-only sm:text-sm sm:font-medium">إرسال</span>
               </button>
             </div>
+
+            {/* Everything that isn't the conversation itself. */}
+            <Modal
+              open={optionsOpen}
+              onClose={() => setOptionsOpen(false)}
+              title="خيارات المحادثة"
+            >
+              <div className="space-y-5">
+                <section className="space-y-2">
+                  <h3 className="text-xs font-semibold text-[var(--subtle)]">الحالة</h3>
+                  <select
+                    value={csStatusOf(selected)}
+                    disabled={busy}
+                    onChange={(e) => act("status", { status: e.target.value })}
+                    aria-label="حالة المحادثة"
+                    className="min-h-11 w-full rounded-lg border bg-white px-3 text-sm"
+                  >
+                    {CS_STATUS_ORDER.map((s) => (
+                      <option key={s} value={s}>
+                        {CS_STATUS_LABEL[s]}
+                      </option>
+                    ))}
+                  </select>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="text-xs font-semibold text-[var(--subtle)]">المسؤول</h3>
+                  {selected.assigned_to === myTeamMemberId && myTeamMemberId ? (
+                    <button
+                      type="button"
+                      onClick={() => act("release")}
+                      disabled={busy}
+                      className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border text-sm text-[var(--muted)] hover:bg-[var(--brand-soft)] disabled:opacity-60"
+                    >
+                      <UserX size={16} aria-hidden="true" /> إطلاق المحادثة
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => act("take")}
+                      disabled={busy || !myTeamMemberId}
+                      className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--brand)] text-sm font-medium text-white disabled:opacity-60"
+                    >
+                      <UserCheck size={16} aria-hidden="true" /> استلام المحادثة
+                    </button>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <Repeat size={16} className="shrink-0 text-[var(--muted)]" aria-hidden="true" />
+                    <select
+                      value=""
+                      disabled={busy}
+                      onChange={(e) =>
+                        e.target.value && act("transfer", { targetTeamMemberId: e.target.value })
+                      }
+                      aria-label="تحويل المحادثة إلى موظف"
+                      className="min-h-11 flex-1 rounded-lg border bg-white px-3 text-sm"
+                    >
+                      <option value="">تحويل إلى…</option>
+                      {agents
+                        .filter((a) => a.id !== selected.assigned_to)
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {agentDisplayName(a)}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="flex items-center gap-1.5 text-xs font-semibold text-[var(--subtle)]">
+                    <Tag size={13} aria-hidden="true" /> التصنيفات
+                  </h3>
+                  <div className="flex flex-wrap gap-1.5">
+                    {labels.map((l) => {
+                      const on = selectedLabelIds.includes(l.id);
+                      return (
+                        <button
+                          key={l.id}
+                          type="button"
+                          onClick={() => toggleLabel(l.id)}
+                          aria-pressed={on}
+                          className={cn(
+                            "min-h-9 rounded-full border px-3 text-xs transition",
+                            LABEL_CLASSES[l.color],
+                            on ? "ring-2 ring-[var(--brand)]/40" : "opacity-60"
+                          )}
+                        >
+                          {on ? "✓ " : ""}
+                          {l.name}
+                        </button>
+                      );
+                    })}
+                    {labels.length === 0 ? (
+                      <span className="text-xs text-[var(--subtle)]">لا توجد تصنيفات بعد.</span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={newLabelName}
+                      onChange={(e) => setNewLabelName(e.target.value)}
+                      aria-label="اسم التصنيف الجديد"
+                      placeholder="تصنيف جديد…"
+                      className="min-h-10 flex-1 rounded-lg border px-2 text-sm outline-none"
+                    />
+                    <div className="flex gap-1">
+                      {NEW_LABEL_COLORS.map((col) => (
+                        <button
+                          key={col}
+                          type="button"
+                          onClick={() => setNewLabelColor(col)}
+                          className={cn(
+                            "size-6 rounded-full border",
+                            LABEL_CLASSES[col].split(" ")[0],
+                            newLabelColor === col
+                              ? "ring-2 ring-[var(--brand)] ring-offset-1"
+                              : ""
+                          )}
+                          aria-label={`لون ${col}`}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={createLabel}
+                      disabled={!newLabelName.trim()}
+                      className="flex min-h-10 items-center gap-1 rounded-lg bg-[var(--brand)] px-3 text-xs text-white disabled:opacity-60"
+                    >
+                      <Plus size={13} aria-hidden="true" /> إضافة
+                    </button>
+                  </div>
+                </section>
+
+                <section className="space-y-2">
+                  <h3 className="flex items-center gap-1.5 text-xs font-semibold text-[var(--subtle)]">
+                    <StickyNote size={13} aria-hidden="true" /> ملاحظات داخلية — لا تُرسل للعميل
+                  </h3>
+                  {notes.length === 0 ? (
+                    <p className="text-xs text-[var(--subtle)]">لا توجد ملاحظات.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {notes.map((n) => (
+                        <li
+                          key={n.id}
+                          className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-slate-700"
+                        >
+                          {n.body}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={noteDraft}
+                      onChange={(e) => setNoteDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void addNote();
+                        }
+                      }}
+                      aria-label="ملاحظة داخلية جديدة"
+                      placeholder="أضف ملاحظة داخلية…"
+                      className="min-h-10 flex-1 rounded-lg border px-2 text-sm outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={addNote}
+                      disabled={!noteDraft.trim()}
+                      className="min-h-10 rounded-lg bg-amber-600 px-3 text-xs text-white disabled:opacity-60"
+                    >
+                      إضافة
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </Modal>
           </>
         )}
       </section>

@@ -1,4 +1,14 @@
+import type { AgentInfo } from "@/lib/types";
+
 const rtf = new Intl.RelativeTimeFormat("ar", { numeric: "auto" });
+
+/** Display name for an agent: real name first, then the email local-part. */
+export function agentDisplayName(a: AgentInfo | undefined | null): string {
+  if (!a) return "موظف";
+  if (a.fullName) return a.fullName;
+  if (a.email) return a.email.split("@")[0];
+  return "موظف";
+}
 
 /** Relative Arabic timestamp (e.g. "قبل ٣ دقائق"). */
 export function formatRelativeTime(iso: string | null | undefined): string {

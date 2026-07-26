@@ -55,6 +55,9 @@ export interface AgentInfo {
   id: string; // team_members.id
   role: string;
   email: string | null;
+  /** team_members.full_name — shown on conversation rows instead of the email. */
+  fullName: string | null;
+  isActive?: boolean;
 }
 
 export interface MediaSlot {

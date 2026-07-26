@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { MessageSquare, QrCode } from "lucide-react";
+import { MessageSquare, QrCode, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ITEMS = [
   { href: "/inbox", label: "المحادثات", Icon: MessageSquare, adminOnly: false },
+  { href: "/team", label: "الموظفون", Icon: Users, adminOnly: true },
   { href: "/connect", label: "ربط واتساب", Icon: QrCode, adminOnly: true },
 ];
 
