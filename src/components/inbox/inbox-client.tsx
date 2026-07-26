@@ -35,6 +35,10 @@ import type { SavedReply } from "@/lib/saved-replies";
 import { formatRelativeTime, agentDisplayName } from "@/lib/format";
 import { MessageBubble } from "./message-bubble";
 import { useInboxRealtime } from "./use-inbox-realtime";
+import {
+  AttachmentPreview,
+  type PendingAttachment,
+} from "./attachment-preview";
 
 const CS_STATUS_LABEL: Record<CsStatus, string> = {
   open: "مفتوحة",
@@ -111,6 +115,13 @@ export function InboxClient({
   const [recording, setRecording] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
+  // Attachments staged for review before sending (WhatsApp-style).
+  const [pending, setPending] = useState<PendingAttachment[]>([]);
+  const [activeAttachment, setActiveAttachment] = useState(0);
+  const pendingRef = useRef<PendingAttachment[]>([]);
+  useEffect(() => {
+    pendingRef.current = pending;
+  }, [pending]);
 
   const [labels, setLabels] = useState<Label[]>(initialLabels);
   const [assignments, setAssignments] =
@@ -123,6 +134,13 @@ export function InboxClient({
   const [view, setView] = useState<View>("all");
   const [statusFilter, setStatusFilter] = useState<CsStatus | "all">("all");
   const [labelFilter, setLabelFilter] = useState<string>("all");
+  // Conversations read in this session — clears the badge before the server
+  // render catches up, and keeps it clear while the thread stays open.
+  const [locallyRead, setLocallyRead] = useState<Set<string>>(() => new Set());
+  const unreadOf = useCallback(
+    (c: Conversation) => (locallyRead.has(c.id) ? 0 : c.unread_count ?? 0),
+    [locallyRead]
+  );
 
   const labelMap = useMemo(
     () => Object.fromEntries(labels.map((l) => [l.id, l])),
@@ -142,38 +160,71 @@ export function InboxClient({
       }
       if (view === "mine" && c.assigned_to !== myTeamMemberId) return false;
       if (view === "unassigned" && c.assigned_to) return false;
-      if (view === "unread" && !c.unread_count) return false;
+      if (view === "unread" && !unreadOf(c)) return false;
       if (statusFilter !== "all" && csStatusOf(c) !== statusFilter) return false;
       if (labelFilter !== "all" && !(assignments[c.id] ?? []).includes(labelFilter))
         return false;
       return true;
     });
-  }, [conversations, search, view, statusFilter, labelFilter, assignments, myTeamMemberId]);
+  }, [
+    conversations,
+    search,
+    view,
+    statusFilter,
+    labelFilter,
+    assignments,
+    myTeamMemberId,
+    unreadOf,
+  ]);
 
-  const loadMessages = useCallback(async (c: Conversation) => {
-    setSelected(c);
-    setOptionsOpen(false);
-    setNoteDraft("");
-    setMediaError(null);
-    setLoading(true);
-    setMessages([]);
-    setNotes([]);
-    setDraft("");
-    try {
-      const [mRes, nRes] = await Promise.all([
-        fetch(`/api/conversations/${c.id}/messages`),
-        fetch(`/api/conversations/${c.id}/notes`),
-      ]);
-      const mData = await mRes.json();
-      const nData = await nRes.json();
-      setMessages(mData.messages ?? []);
-      setNotes(nData.notes ?? []);
-    } catch {
+  /**
+   * Clear a conversation's unread badge. Tracked locally as well as on the
+   * server so the badge disappears on tap rather than waiting for the next
+   * server render.
+   */
+  const markRead = useCallback(
+    (conversationId: string) => {
+      setLocallyRead((prev) => {
+        if (prev.has(conversationId)) return prev;
+        const next = new Set(prev);
+        next.add(conversationId);
+        return next;
+      });
+      void fetch(`/api/conversations/${conversationId}/read`, { method: "POST" }).catch(
+        () => {}
+      );
+    },
+    []
+  );
+
+  const loadMessages = useCallback(
+    async (c: Conversation) => {
+      setSelected(c);
+      setOptionsOpen(false);
+      setNoteDraft("");
+      setMediaError(null);
+      setLoading(true);
       setMessages([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      setNotes([]);
+      setDraft("");
+      markRead(c.id);
+      try {
+        const [mRes, nRes] = await Promise.all([
+          fetch(`/api/conversations/${c.id}/messages`),
+          fetch(`/api/conversations/${c.id}/notes`),
+        ]);
+        const mData = await mRes.json();
+        const nData = await nRes.json();
+        setMessages(mData.messages ?? []);
+        setNotes(nData.notes ?? []);
+      } catch {
+        setMessages([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [markRead]
+  );
 
   // ---- live updates (Supabase Realtime) ----
   // Refs so the realtime callbacks always see the current selection without
@@ -201,19 +252,35 @@ export function InboxClient({
   );
 
   // Silently refetch the open thread (through the API — it signs media URLs).
-  const refetchThread = useCallback(async (conversationId: string) => {
-    if (selectedRef.current?.id !== conversationId) return;
-    try {
-      const res = await fetch(`/api/conversations/${conversationId}/messages`);
-      const data = await res.json();
-      setMessages(data.messages ?? []);
-    } catch {
-      // keep whatever is on screen; the next event or refresh will catch up
-    }
-  }, []);
+  const onRealtimeMessage = useCallback(
+    async (conversationId: string) => {
+      if (selectedRef.current?.id !== conversationId) {
+        // Not the open thread: drop any local "read" mark so the badge can
+        // come back for the newly arrived message.
+        setLocallyRead((prev) => {
+          if (!prev.has(conversationId)) return prev;
+          const next = new Set(prev);
+          next.delete(conversationId);
+          return next;
+        });
+        return;
+      }
+      // Open thread: it's being read right now, so keep it clear and pull the
+      // new message in (the server bumps unread_count on every inbound).
+      markRead(conversationId);
+      try {
+        const res = await fetch(`/api/conversations/${conversationId}/messages`);
+        const data = await res.json();
+        setMessages(data.messages ?? []);
+      } catch {
+        // keep whatever is on screen; the next event or refresh will catch up
+      }
+    },
+    [markRead]
+  );
 
   useInboxRealtime({
-    onNewMessage: refetchThread,
+    onNewMessage: onRealtimeMessage,
     onConversationsChanged: scheduleListRefresh,
   });
 
@@ -287,11 +354,10 @@ export function InboxClient({
     }
   }, [selected, draft, router]);
 
-  /** Upload + send one file (picked attachment or recorded voice note). */
+  /** Upload + send one file. Returns false so callers can stop a batch. */
   const sendFile = useCallback(
-    async (file: File, caption = "") => {
-      if (!selected) return;
-      setUploading(true);
+    async (file: File, caption = ""): Promise<boolean> => {
+      if (!selected) return false;
       setMediaError(null);
       try {
         const form = new FormData();
@@ -304,34 +370,106 @@ export function InboxClient({
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           setMediaError(data?.error ?? "تعذّر إرسال الملف");
-          return;
+          return false;
         }
         const m = await fetch(`/api/conversations/${selected.id}/messages`);
         setMessages((await m.json()).messages ?? []);
         router.refresh();
+        return true;
       } catch {
         setMediaError("تعذّر إرسال الملف");
-      } finally {
-        setUploading(false);
+        return false;
       }
     },
     [selected, router]
   );
 
+  /**
+   * Picking files stages them for review instead of sending — same as
+   * WhatsApp. Nothing uploads until the preview's send button is pressed.
+   */
   const onPickFile = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files ?? []);
       // Reset first so picking the same file twice still fires onChange.
       e.target.value = "";
-      if (file) await sendFile(file, draft.trim());
-      setDraft("");
+      if (!files.length) return;
+      setMediaError(null);
+      setPending((prev) => {
+        const next = files.map((file, i) => ({
+          id: `${Date.now()}-${i}-${file.name}`,
+          file,
+          url: URL.createObjectURL(file),
+          isImage: file.type.startsWith("image/"),
+          // Carry whatever was already typed onto the first attachment.
+          caption: prev.length === 0 && i === 0 ? draft.trim() : "",
+        }));
+        if (prev.length === 0) setDraft("");
+        return [...prev, ...next];
+      });
     },
-    [sendFile, draft]
+    [draft]
   );
+
+  const discardPending = useCallback(() => {
+    setPending((prev) => {
+      prev.forEach((p) => URL.revokeObjectURL(p.url));
+      return [];
+    });
+    setActiveAttachment(0);
+    setMediaError(null);
+  }, []);
+
+  const removePending = useCallback((id: string) => {
+    setPending((prev) => {
+      const gone = prev.find((p) => p.id === id);
+      if (gone) URL.revokeObjectURL(gone.url);
+      const next = prev.filter((p) => p.id !== id);
+      setActiveAttachment((i) => Math.max(0, Math.min(i, next.length - 1)));
+      return next;
+    });
+  }, []);
+
+  /** Send every staged attachment in order, each with its own caption. */
+  const sendPending = useCallback(async () => {
+    if (!pending.length) return;
+    setMediaError(null);
+    setUploading(true);
+    try {
+      for (const item of pending) {
+        const ok = await sendFile(item.file, item.caption.trim());
+        if (!ok) return; // sendFile already surfaced the reason; keep the queue
+      }
+      discardPending();
+    } finally {
+      setUploading(false);
+    }
+  }, [pending, sendFile, discardPending]);
+
+  // Don't leak object URLs if the thread closes with attachments staged.
+  useEffect(() => {
+    return () => {
+      pendingRef.current.forEach((p) => URL.revokeObjectURL(p.url));
+    };
+  }, []);
 
   /** Hold-to-record a WhatsApp-style voice note via MediaRecorder. */
   const startRecording = useCallback(async () => {
     setMediaError(null);
+
+    // getUserMedia only exists in a secure context. Over plain HTTP — e.g.
+    // opening the dev server from a phone by LAN IP — the API is absent and
+    // the browser never shows a permission prompt at all, so "grant access"
+    // would be misleading advice.
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setMediaError(
+        typeof window !== "undefined" && !window.isSecureContext
+          ? "تسجيل الصوت يتطلب اتصالاً آمنًا (HTTPS). افتحي رابط التطبيق الرسمي بدل عنوان الشبكة المحلية."
+          : "هذا المتصفح لا يدعم تسجيل الصوت."
+      );
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       // Prefer ogg/opus — that's what WhatsApp uses for voice notes; Safari
@@ -353,14 +491,34 @@ export function InboxClient({
         chunksRef.current = [];
         if (blob.size > 0) {
           const ext = type.includes("mp4") ? "m4a" : type.includes("webm") ? "webm" : "ogg";
-          await sendFile(new File([blob], `voice-${Date.now()}.${ext}`, { type }));
+          // Voice notes send straight away — there's nothing to preview.
+          setUploading(true);
+          try {
+            await sendFile(new File([blob], `voice-${Date.now()}.${ext}`, { type }));
+          } finally {
+            setUploading(false);
+          }
         }
       };
       rec.start();
       recorderRef.current = rec;
       setRecording(true);
-    } catch {
-      setMediaError("تعذّر الوصول إلى الميكروفون. تأكد من منح الإذن.");
+    } catch (e) {
+      // Each of these needs a different action from the user, so don't collapse
+      // them into one message. A denied permission in particular cannot be
+      // re-prompted from JS — it has to be reset in the browser's site settings.
+      const name = e instanceof DOMException ? e.name : "";
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        setMediaError(
+          "الميكروفون محظور لهذا الموقع. افتحي إعدادات الموقع في المتصفح (رمز القفل بجانب العنوان) وفعّلي الميكروفون، ثم أعيدي المحاولة."
+        );
+      } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+        setMediaError("لا يوجد ميكروفون متاح في هذا الجهاز.");
+      } else if (name === "NotReadableError") {
+        setMediaError("الميكروفون مشغول بتطبيق آخر. أغلقيه ثم أعيدي المحاولة.");
+      } else {
+        setMediaError("تعذّر بدء التسجيل. حاولي مرة أخرى.");
+      }
     }
   }, [sendFile]);
 
@@ -529,7 +687,7 @@ export function InboxClient({
                           <span className="sr-only">تمت المعالجة عبر تطبيق واتساب</span>
                         </span>
                       ) : null}
-                      {c.unread_count ? (
+                      {unreadOf(c) ? (
                         <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
                           {c.unread_count}
                         </span>
@@ -667,6 +825,7 @@ export function InboxClient({
                 ref={fileInputRef}
                 type="file"
                 hidden
+                multiple
                 accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
                 onChange={onPickFile}
               />
@@ -940,6 +1099,23 @@ export function InboxClient({
                 </section>
               </div>
             </Modal>
+
+            <AttachmentPreview
+              items={pending}
+              activeIndex={activeAttachment}
+              sending={uploading}
+              error={mediaError}
+              onSetActive={setActiveAttachment}
+              onCaptionChange={(id, caption) =>
+                setPending((prev) =>
+                  prev.map((p) => (p.id === id ? { ...p, caption } : p))
+                )
+              }
+              onRemove={removePending}
+              onAddMore={() => fileInputRef.current?.click()}
+              onCancel={discardPending}
+              onSend={sendPending}
+            />
           </>
         )}
       </section>

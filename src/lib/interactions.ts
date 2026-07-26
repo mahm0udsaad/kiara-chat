@@ -63,6 +63,15 @@ export async function transferConversation(
   return data;
 }
 
+/** Clear the unread badge when an agent opens the thread. */
+export async function markConversationRead(conversationId: string) {
+  await getAdminSupabaseClient()
+    .from("conversations")
+    .update({ unread_count: 0 })
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID);
+}
+
 /** Release = back to the shared queue (unassigned). */
 export async function releaseConversation(conversationId: string) {
   await getAdminSupabaseClient()
