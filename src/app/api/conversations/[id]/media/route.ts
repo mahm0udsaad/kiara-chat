@@ -5,7 +5,7 @@
  */
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
-import { sendMediaReply } from "@/lib/interactions";
+import { sendMediaReply, getMyTeamMemberId } from "@/lib/interactions";
 import { MAX_MEDIA_BYTES } from "@/lib/storage-media";
 
 export const runtime = "nodejs";
@@ -41,9 +41,10 @@ export async function POST(
   const buffer = Buffer.from(await file.arrayBuffer());
 
   try {
+    const teamMemberId = await getMyTeamMemberId(session.userId);
     const result = await sendMediaReply(
       id,
-      { email: session.email },
+      { email: session.email, teamMemberId },
       {
         buffer,
         contentType: file.type || "application/octet-stream",

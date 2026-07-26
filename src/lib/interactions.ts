@@ -96,7 +96,7 @@ export async function setCsStatus(conversationId: string, csStatus: CsStatus) {
 /** Send an agent reply through the transport layer; records it either way. */
 export async function sendReply(
   conversationId: string,
-  sender: { email: string | null },
+  sender: { email: string | null; teamMemberId?: string | null },
   body: string
 ): Promise<{ messageId: string | null; sent: boolean }> {
   const admin = getAdminSupabaseClient();
@@ -116,6 +116,9 @@ export async function sendReply(
       content: body,
       message_type: "text",
       metadata: { source: "app", sent_by_email: sender.email },
+      // Stable attribution for per-employee reporting; the email in metadata
+      // is only a human-readable fallback.
+      sender_team_member_id: sender.teamMemberId ?? null,
       channel: "whatsapp",
       delivery_status: "queued",
     })
@@ -163,7 +166,7 @@ export async function sendReply(
  */
 export async function sendMediaReply(
   conversationId: string,
-  sender: { email: string | null },
+  sender: { email: string | null; teamMemberId?: string | null },
   file: { buffer: Buffer; contentType: string; filename: string | null },
   caption: string
 ): Promise<{ messageId: string | null; sent: boolean }> {
@@ -198,6 +201,7 @@ export async function sendMediaReply(
       content: caption || "",
       message_type: messageType,
       metadata: { source: "app", sent_by_email: sender.email, media: [slot] },
+      sender_team_member_id: sender.teamMemberId ?? null,
       channel: "whatsapp",
       delivery_status: "queued",
     })
