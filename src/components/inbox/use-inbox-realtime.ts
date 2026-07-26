@@ -27,8 +27,10 @@ export function useInboxRealtime({
   // Keep the callbacks in refs so the subscription survives re-renders.
   const onNewMessageRef = useRef(onNewMessage);
   const onConversationsChangedRef = useRef(onConversationsChanged);
-  onNewMessageRef.current = onNewMessage;
-  onConversationsChangedRef.current = onConversationsChanged;
+  useEffect(() => {
+    onNewMessageRef.current = onNewMessage;
+    onConversationsChangedRef.current = onConversationsChanged;
+  }, [onNewMessage, onConversationsChanged]);
 
   useEffect(() => {
     const supabase = createClient();

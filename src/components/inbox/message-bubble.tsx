@@ -16,6 +16,11 @@ const MEDIA_TYPES = new Set([
 
 const AR = /[؀-ۿ]/;
 
+const TIME_FMT = new Intl.DateTimeFormat("ar", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function formatBytes(bytes?: number | null): string {
   if (!bytes || bytes <= 0) return "";
   if (bytes < 1024) return `${bytes.toLocaleString("ar")} بايت`;
@@ -41,7 +46,11 @@ function MetaFooter({ message }: { message: Message }) {
   const statusLabel = status ? deliveryStatusLabel(status) : "";
   return (
     <p className="mt-1 flex items-center justify-between gap-2 text-[10px] opacity-70">
-      <span>{new Date(message.created_at).toLocaleTimeString("ar")}</span>
+      {/* Rendered from the ISO string on both server and client, and pinned to
+          hour/minute so locale defaults can't cause a hydration mismatch. */}
+      <time dateTime={message.created_at} className="tabular-nums">
+        {TIME_FMT.format(new Date(message.created_at))}
+      </time>
       {statusLabel ? <span>{statusLabel}</span> : null}
     </p>
   );
@@ -187,7 +196,7 @@ export function MessageBubble({ message }: { message: Message }) {
       <div className={cn("flex", align)}>
         <div
           className={cn(
-            "max-w-[75%] space-y-2 rounded-2xl px-3 py-2 text-sm shadow-sm",
+            "max-w-[85%] break-words sm:max-w-[75%]space-y-2 rounded-2xl px-3 py-2 text-sm shadow-sm",
             bubbleColor
           )}
           dir={dir}
@@ -212,7 +221,7 @@ export function MessageBubble({ message }: { message: Message }) {
     <div className={cn("flex", align)}>
       <div
         className={cn(
-          "max-w-[75%] rounded-2xl px-3 py-2 text-sm shadow-sm",
+          "max-w-[85%] break-words sm:max-w-[75%]rounded-2xl px-3 py-2 text-sm shadow-sm",
           bubbleColor
         )}
         dir={dir}

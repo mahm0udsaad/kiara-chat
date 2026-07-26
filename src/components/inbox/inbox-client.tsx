@@ -15,6 +15,7 @@ import {
   X,
   StickyNote,
   MessageSquareText,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
@@ -167,7 +168,9 @@ export function InboxClient({
   // Refs so the realtime callbacks always see the current selection without
   // resubscribing on every render.
   const selectedRef = useRef<Conversation | null>(null);
-  selectedRef.current = selected;
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
 
   // Conversation-list changes arrive in bursts (message insert + unread bump +
   // reorder) — coalesce them into one server refresh.
@@ -202,6 +205,25 @@ export function InboxClient({
     onNewMessage: refetchThread,
     onConversationsChanged: scheduleListRefresh,
   });
+
+  // On phones the thread replaces the list, so the phone's back gesture should
+  // return to the list rather than leave the app. Pushing a history entry when
+  // a thread opens gets that behaviour for free.
+  const selectedId = selected?.id ?? null;
+  useEffect(() => {
+    if (!selectedId) return;
+    window.history.pushState({ kiaraThread: selectedId }, "");
+    const onPop = () => setSelected(null);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [selectedId]);
+
+  const closeThread = useCallback(() => {
+    // Route through history so the entry pushed above is consumed; the
+    // popstate listener is what actually clears the selection.
+    if (window.history.state?.kiaraThread) window.history.back();
+    else setSelected(null);
+  }, []);
 
   const addNote = useCallback(async () => {
     if (!selected || !noteDraft.trim()) return;
@@ -296,29 +318,43 @@ export function InboxClient({
   const selectedLabelIds = selected ? assignments[selected.id] ?? [] : [];
 
   return (
-    <div className="flex h-[calc(100vh-57px)]">
-      {/* Conversation list */}
-      <aside className="flex w-full max-w-sm flex-col border-l bg-[var(--surface)]">
-        <div className="space-y-2 border-b px-3 py-3">
+    <div className="flex h-full">
+      {/* Conversation list. On phones this is a full-screen view that swaps
+          with the thread; from lg it becomes a permanent sidebar. */}
+      <aside
+        className={cn(
+          "w-full flex-col border-l bg-[var(--surface)] lg:flex lg:max-w-sm",
+          selected ? "hidden lg:flex" : "flex"
+        )}
+      >
+        <div className="shrink-0 space-y-2 border-b px-3 py-3">
           <div className="flex items-center gap-2 rounded-lg border px-2">
             <Search size={14} className="text-[var(--subtle)]" />
             <input
+              type="search"
+              name="conversation-search"
+              autoComplete="off"
+              spellCheck={false}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              aria-label="بحث في المحادثات"
               placeholder="بحث بالاسم أو الرقم…"
-              className="w-full bg-transparent py-1.5 text-sm outline-none"
+              className="min-h-10 w-full bg-transparent text-sm outline-none"
             />
           </div>
-          <div className="flex flex-wrap gap-1">
+          {/* Touch-sized filter controls (≥36px tall) rather than 11px pills. */}
+          <div className="flex flex-wrap gap-1.5">
             {(["all", "mine", "unassigned", "unread"] as View[]).map((v) => (
               <button
                 key={v}
+                type="button"
                 onClick={() => setView(v)}
+                aria-pressed={view === v}
                 className={cn(
-                  "rounded-full border px-2 py-0.5 text-[11px]",
+                  "min-h-9 rounded-full border px-3 text-xs transition-colors",
                   view === v
                     ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                    : "text-[var(--muted)]"
+                    : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
                 )}
               >
                 {v === "all" ? "الكل" : v === "mine" ? "لي" : v === "unassigned" ? "غير مسندة" : "غير مقروءة"}
@@ -327,7 +363,8 @@ export function InboxClient({
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as CsStatus | "all")}
-              className="rounded-full border px-1.5 py-0.5 text-[11px] text-[var(--muted)]"
+              aria-label="تصفية حسب الحالة"
+              className="min-h-9 rounded-full border px-2 text-xs text-[var(--muted)]"
             >
               <option value="all">كل الحالات</option>
               {CS_STATUS_ORDER.map((s) => (
@@ -340,7 +377,8 @@ export function InboxClient({
               <select
                 value={labelFilter}
                 onChange={(e) => setLabelFilter(e.target.value)}
-                className="rounded-full border px-1.5 py-0.5 text-[11px] text-[var(--muted)]"
+                aria-label="تصفية حسب التصنيف"
+                className="min-h-9 rounded-full border px-2 text-xs text-[var(--muted)]"
               >
                 <option value="all">كل التصنيفات</option>
                 {labels.map((l) => (
@@ -354,7 +392,7 @@ export function InboxClient({
           <p className="text-[11px] text-[var(--subtle)]">{filtered.length} محادثة</p>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="scroll-pane min-h-0 flex-1">
           {filtered.length === 0 ? (
             <p className="p-4 text-sm text-[var(--muted)]">لا توجد نتائج.</p>
           ) : (
@@ -431,28 +469,48 @@ export function InboxClient({
       </aside>
 
       {/* Thread */}
-      <section className="flex flex-1 flex-col bg-[var(--background)]">
+      <section
+        className={cn(
+          "min-w-0 flex-1 flex-col bg-[var(--background)]",
+          selected ? "flex" : "hidden lg:flex"
+        )}
+      >
         {!selected ? (
           <div className="flex flex-1 items-center justify-center text-sm text-[var(--muted)]">
             اختر محادثة لعرضها
           </div>
         ) : (
           <>
-            <header className="flex flex-wrap items-center justify-between gap-2 border-b bg-[var(--surface)] px-5 py-3">
-              <div>
-                <p className="font-semibold text-[var(--foreground)]">
-                  {selected.customer_name || selected.customer_phone}
-                </p>
-                <p dir="ltr" className="text-xs text-[var(--muted)]">
-                  {selected.customer_phone}
-                </p>
+            <header className="shrink-0 border-b bg-[var(--surface)]">
+              <div className="flex items-center gap-1 px-2 py-2 sm:px-5 sm:py-3">
+                {/* RTL: "back" points right. Phone-only — the sidebar is
+                    always visible from lg up. */}
+                <button
+                  type="button"
+                  onClick={closeThread}
+                  aria-label="العودة إلى قائمة المحادثات"
+                  className="flex size-10 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)] lg:hidden"
+                >
+                  <ChevronRight size={20} aria-hidden="true" />
+                </button>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold text-[var(--foreground)]">
+                    {selected.customer_name || selected.customer_phone}
+                  </p>
+                  <p dir="ltr" className="truncate text-xs text-[var(--muted)]">
+                    {selected.customer_phone}
+                  </p>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              {/* Six controls won't fit a phone width; scroll them sideways
+                  instead of wrapping into a header three rows tall. */}
+              <div className="scroll-pane flex items-center gap-2 overflow-x-auto px-2 pb-2 sm:px-5 [&::-webkit-scrollbar]:hidden">
                 <select
                   value={csStatusOf(selected)}
                   disabled={busy}
                   onChange={(e) => act("status", { status: e.target.value })}
-                  className="rounded-md border bg-white px-2 py-1 text-xs"
+                  aria-label="حالة المحادثة"
+                  className="min-h-10 shrink-0 rounded-lg border bg-white px-2 text-xs"
                 >
                   {CS_STATUS_ORDER.map((s) => (
                     <option key={s} value={s}>
@@ -461,44 +519,51 @@ export function InboxClient({
                   ))}
                 </select>
                 <button
+                  type="button"
                   onClick={() => setLabelEditorOpen((o) => !o)}
-                  className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                  aria-expanded={labelEditorOpen}
+                  className="flex min-h-10 shrink-0 items-center gap-1 rounded-lg border px-3 text-xs text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
                 >
-                  <Tag size={12} /> تصنيفات
+                  <Tag size={14} aria-hidden="true" /> تصنيفات
                 </button>
                 <button
+                  type="button"
                   onClick={() => setNotesOpen((o) => !o)}
-                  className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                  aria-expanded={notesOpen}
+                  className="flex min-h-10 shrink-0 items-center gap-1 rounded-lg border px-3 text-xs text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
                 >
-                  <StickyNote size={12} /> ملاحظات
+                  <StickyNote size={14} aria-hidden="true" /> ملاحظات
                   {notes.length ? ` (${notes.length})` : ""}
                 </button>
                 {selected.assigned_to === myTeamMemberId && myTeamMemberId ? (
                   <button
+                    type="button"
                     onClick={() => act("release")}
                     disabled={busy}
-                    className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                    className="flex min-h-10 shrink-0 items-center gap-1 rounded-lg border px-3 text-xs text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)] disabled:opacity-60"
                   >
-                    <UserX size={12} /> إطلاق
+                    <UserX size={14} aria-hidden="true" /> إطلاق
                   </button>
                 ) : (
                   <button
+                    type="button"
                     onClick={() => act("take")}
                     disabled={busy || !myTeamMemberId}
-                    className="flex items-center gap-1 rounded-md bg-[var(--brand)] px-2 py-1 text-xs text-white disabled:opacity-60"
+                    className="flex min-h-10 shrink-0 items-center gap-1 rounded-lg bg-[var(--brand)] px-3 text-xs font-medium text-white transition-opacity disabled:opacity-60"
                   >
-                    <UserCheck size={12} /> استلام
+                    <UserCheck size={14} aria-hidden="true" /> استلام
                   </button>
                 )}
-                <div className="flex items-center gap-1">
-                  <Repeat size={12} className="text-[var(--muted)]" />
+                <div className="flex shrink-0 items-center gap-1">
+                  <Repeat size={14} className="text-[var(--muted)]" aria-hidden="true" />
                   <select
                     value=""
                     disabled={busy}
                     onChange={(e) =>
                       e.target.value && act("transfer", { targetTeamMemberId: e.target.value })
                     }
-                    className="rounded-md border bg-white px-2 py-1 text-xs"
+                    aria-label="تحويل المحادثة إلى موظف"
+                    className="min-h-10 rounded-lg border bg-white px-2 text-xs"
                   >
                     <option value="">تحويل إلى…</option>
                     {agents
@@ -642,7 +707,7 @@ export function InboxClient({
               </div>
             ) : null}
 
-            <div className="flex-1 space-y-2 overflow-y-auto p-5">
+            <div className="scroll-pane min-h-0 flex-1 space-y-2 p-3 sm:p-5">
               {loading ? (
                 <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--muted)]">
                   <Loader2 size={14} className="animate-spin" /> جارٍ التحميل…
@@ -656,16 +721,17 @@ export function InboxClient({
               )}
             </div>
 
-            <div className="flex items-end gap-2 border-t bg-[var(--surface)] px-4 py-3">
+            <div className="safe-b flex shrink-0 items-end gap-2 border-t bg-[var(--surface)] px-3 pt-3 sm:px-4">
               {savedReplies.length ? (
                 <div className="relative">
                   <button
                     type="button"
                     onClick={() => setRepliesOpen((o) => !o)}
-                    className="flex h-10 items-center rounded-lg border px-2 text-[var(--muted)] hover:bg-[var(--brand-soft)]"
-                    title="الردود المحفوظة"
+                    aria-label="الردود المحفوظة"
+                    aria-expanded={repliesOpen}
+                    className="flex size-11 items-center justify-center rounded-lg border text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
                   >
-                    <MessageSquareText size={16} />
+                    <MessageSquareText size={18} aria-hidden="true" />
                   </button>
                   {repliesOpen ? (
                     <div className="absolute bottom-12 right-0 z-10 w-56 rounded-lg border bg-white p-1 shadow-lg">
@@ -690,22 +756,32 @@ export function InboxClient({
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  // Enter sends on desktop only — on a touch keyboard Enter
+                  // must insert a newline, or multi-line replies are impossible.
+                  // Queried at press time so there's no hydration-sensitive state.
+                  const touch = window.matchMedia("(pointer: coarse)").matches;
+                  if (e.key === "Enter" && !e.shiftKey && !touch) {
                     e.preventDefault();
                     void sendReply();
                   }
                 }}
                 rows={1}
+                aria-label="نص الرد"
                 placeholder="اكتب ردًا…"
-                className="max-h-32 min-h-[40px] flex-1 resize-none rounded-lg border px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
+                className="max-h-32 min-h-11 flex-1 resize-none rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-[var(--brand)]"
               />
               <button
+                type="button"
                 onClick={sendReply}
                 disabled={busy || !draft.trim()}
-                className="flex h-10 items-center gap-1 rounded-lg bg-emerald-600 px-4 text-sm font-medium text-white disabled:opacity-60"
+                className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white transition-opacity disabled:opacity-60 sm:size-auto sm:h-11 sm:gap-1 sm:px-4"
               >
-                {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                إرسال
+                {busy ? (
+                  <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Send size={16} aria-hidden="true" />
+                )}
+                <span className="sr-only sm:not-sr-only sm:text-sm sm:font-medium">إرسال</span>
               </button>
             </div>
           </>
