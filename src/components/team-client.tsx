@@ -1,12 +1,23 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Loader2, UserPlus, KeyRound, Ban, RotateCcw, Check } from "lucide-react";
+import { Loader2, UserPlus, KeyRound, Ban, RotateCcw, Check, Copy, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Modal } from "@/components/ui/modal";
 import type { TeamMemberRow } from "@/lib/team";
 
 function roleLabel(role: string) {
   return role === "admin" ? "مدير" : "موظف";
+}
+
+/** Readable, easy-to-dictate password — no look-alike characters. */
+function generatePassword(): string {
+  const alphabet = "abcdefghijkmnpqrstuvwxyz23456789";
+  const bytes = new Uint32Array(10);
+  crypto.getRandomValues(bytes);
+  return (
+    "kiara-" + [...bytes].map((b) => alphabet[b % alphabet.length]).join("").slice(0, 6)
+  );
 }
 
 export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
@@ -14,6 +25,13 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Password reset dialog
+  const [resetTarget, setResetTarget] = useState<TeamMemberRow | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetDone, setResetDone] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -79,30 +97,35 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
     [refresh]
   );
 
-  const resetPassword = useCallback(
-    async (m: TeamMemberRow) => {
-      const next = window.prompt(`كلمة مرور جديدة لـ ${m.fullName || m.email}:`);
-      if (!next) return;
-      setBusyId(m.id);
-      setError(null);
-      setNotice(null);
-      try {
-        const res = await fetch(`/api/team/${m.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password: next, userId: m.userId }),
-        });
-        if (!res.ok) {
-          setError((await res.json())?.error ?? "تعذّر تغيير كلمة المرور");
-          return;
-        }
-        setNotice("تم تغيير كلمة المرور.");
-      } finally {
-        setBusyId(null);
+  const submitReset = useCallback(async () => {
+    if (!resetTarget) return;
+    setBusyId(resetTarget.id);
+    setResetError(null);
+    try {
+      const res = await fetch(`/api/team/${resetTarget.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: newPassword, userId: resetTarget.userId }),
+      });
+      if (!res.ok) {
+        setResetError((await res.json())?.error ?? "تعذّر تغيير كلمة المرور");
+        return;
       }
-    },
-    []
-  );
+      // Show it once, here — this is the only moment it exists in readable
+      // form. Supabase stores a one-way hash, so it can never be looked up.
+      setResetDone(newPassword);
+    } finally {
+      setBusyId(null);
+    }
+  }, [resetTarget, newPassword]);
+
+  const closeReset = useCallback(() => {
+    setResetTarget(null);
+    setNewPassword("");
+    setResetDone(null);
+    setResetError(null);
+    setCopied(false);
+  }, []);
 
   return (
     <div className="dashboard-page max-w-3xl">
@@ -233,7 +256,13 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => resetPassword(m)}
+                onClick={() => {
+                  setResetTarget(m);
+                  setNewPassword(generatePassword());
+                  setResetDone(null);
+                  setResetError(null);
+                  setCopied(false);
+                }}
                 disabled={busyId === m.id}
                 className="flex min-h-10 items-center gap-1 rounded-lg border px-3 text-xs text-[var(--muted)] hover:bg-[var(--brand-soft)] disabled:opacity-60"
               >
@@ -258,6 +287,116 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
           </li>
         ))}
       </ul>
+
+      <Modal
+        open={Boolean(resetTarget)}
+        onClose={closeReset}
+        title={`كلمة مرور ${resetTarget?.fullName || resetTarget?.email || ""}`}
+      >
+        {resetDone ? (
+          <div className="space-y-3">
+            <p className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              <Check size={14} aria-hidden="true" /> تم تعيين كلمة المرور الجديدة.
+            </p>
+            <div>
+              <p className="mb-1 text-xs text-[var(--muted)]">
+                انسخيها الآن وسلّميها للموظفة — لن تظهر مرة أخرى.
+              </p>
+              <div className="flex items-center gap-2">
+                <code
+                  dir="ltr"
+                  className="flex-1 select-all rounded-lg border bg-[var(--brand-soft)] px-3 py-2.5 text-sm font-semibold tracking-wide"
+                >
+                  {resetDone}
+                </code>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(resetDone);
+                      setCopied(true);
+                    } catch {
+                      setCopied(false);
+                    }
+                  }}
+                  aria-label="نسخ كلمة المرور"
+                  className="flex size-11 shrink-0 items-center justify-center rounded-lg border text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                >
+                  {copied ? (
+                    <Check size={16} className="text-emerald-600" aria-hidden="true" />
+                  ) : (
+                    <Copy size={16} aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+              {copied ? (
+                <p aria-live="polite" className="mt-1 text-xs text-emerald-700">
+                  تم النسخ.
+                </p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={closeReset}
+              className="min-h-11 w-full rounded-lg bg-[var(--brand)] text-sm font-medium text-white"
+            >
+              تم
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {/* Passwords are stored as a one-way hash, so the current one can't
+                be shown — only replaced. Say so rather than leave it puzzling. */}
+            <p className="rounded-lg bg-[var(--brand-soft)] px-3 py-2 text-xs text-[var(--muted)]">
+              كلمة المرور الحالية محفوظة مشفّرة ولا يمكن عرضها لأي شخص. يمكنكِ تعيين
+              كلمة مرور جديدة وتسليمها للموظفة.
+            </p>
+            <label className="block">
+              <span className="mb-1 block text-sm text-[var(--muted)]">
+                كلمة المرور الجديدة
+              </span>
+              <div className="flex items-center gap-2">
+                <input
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  dir="ltr"
+                  type="text"
+                  minLength={6}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="min-h-11 flex-1 rounded-lg border px-3 outline-none focus:border-[var(--brand)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setNewPassword(generatePassword())}
+                  aria-label="توليد كلمة مرور"
+                  className="flex size-11 shrink-0 items-center justify-center rounded-lg border text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                >
+                  <Wand2 size={16} aria-hidden="true" />
+                </button>
+              </div>
+            </label>
+            {resetError ? (
+              <p aria-live="polite" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                {resetError}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              onClick={submitReset}
+              disabled={newPassword.trim().length < 6 || busyId === resetTarget?.id}
+              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--brand)] text-sm font-medium text-white disabled:opacity-60"
+            >
+              {busyId === resetTarget?.id ? (
+                <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+              ) : (
+                <KeyRound size={16} aria-hidden="true" />
+              )}
+              حفظ كلمة المرور
+            </button>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
