@@ -430,6 +430,19 @@ export function InboxClient({
     });
   }, []);
 
+  /** Replace a staged image with its cropped version, keeping the caption. */
+  const applyCrop = useCallback((id: string, blob: Blob) => {
+    setPending((prev) =>
+      prev.map((p) => {
+        if (p.id !== id) return p;
+        URL.revokeObjectURL(p.url);
+        const name = p.file.name.replace(/\.[^.]+$/, "") + ".jpg";
+        const file = new File([blob], name, { type: blob.type || "image/jpeg" });
+        return { ...p, file, url: URL.createObjectURL(file) };
+      })
+    );
+  }, []);
+
   /** Send every staged attachment in order, each with its own caption. */
   const sendPending = useCallback(async () => {
     if (!pending.length) return;
@@ -1115,6 +1128,7 @@ export function InboxClient({
               onAddMore={() => fileInputRef.current?.click()}
               onCancel={discardPending}
               onSend={sendPending}
+              onCropped={applyCrop}
             />
           </>
         )}

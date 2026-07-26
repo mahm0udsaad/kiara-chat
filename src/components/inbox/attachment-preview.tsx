@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Send, Plus, Trash2, FileText, Loader2 } from "lucide-react";
+import { X, Send, Plus, Trash2, FileText, Loader2, Crop } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ImageCropper } from "./image-cropper";
 
 export interface PendingAttachment {
   id: string;
@@ -36,6 +37,7 @@ export function AttachmentPreview({
   onAddMore,
   onCancel,
   onSend,
+  onCropped,
 }: {
   items: PendingAttachment[];
   activeIndex: number;
@@ -47,7 +49,10 @@ export function AttachmentPreview({
   onAddMore: () => void;
   onCancel: () => void;
   onSend: () => void;
+  onCropped: (id: string, blob: Blob) => void;
 }) {
+  const [cropping, setCropping] = useState(false);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !sending) onCancel();
@@ -86,17 +91,41 @@ export function AttachmentPreview({
             ? `${(activeIndex + 1).toLocaleString("ar")} / ${items.length.toLocaleString("ar")}`
             : active.file.name}
         </span>
-        <button
-          type="button"
-          onClick={() => onRemove(active.id)}
-          disabled={sending}
-          aria-label="حذف هذا المرفق"
-          className="flex size-11 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-50"
-        >
-          <Trash2 size={18} aria-hidden="true" />
-        </button>
+        <div className="flex items-center">
+          {active.isImage ? (
+            <button
+              type="button"
+              onClick={() => setCropping(true)}
+              disabled={sending}
+              aria-label="اقتصاص الصورة"
+              className="flex size-11 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-50"
+            >
+              <Crop size={18} aria-hidden="true" />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => onRemove(active.id)}
+            disabled={sending}
+            aria-label="حذف هذا المرفق"
+            className="flex size-11 items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-50"
+          >
+            <Trash2 size={18} aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
+      {cropping && active.isImage ? (
+        <ImageCropper
+          src={active.url}
+          onCancel={() => setCropping(false)}
+          onApply={(blob) => {
+            onCropped(active.id, blob);
+            setCropping(false);
+          }}
+        />
+      ) : (
+        <>
       <div className="flex min-h-0 flex-1 items-center justify-center p-3">
         {active.isImage ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -193,6 +222,8 @@ export function AttachmentPreview({
           </span>
         </button>
       </div>
+        </>
+      )}
     </div>,
     document.body
   );
