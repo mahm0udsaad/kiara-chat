@@ -30,6 +30,10 @@ export const viewport: Viewport = {
   // env(safe-area-inset-*). Zoom is deliberately left enabled.
   viewportFit: "cover",
   themeColor: "#ffffff",
+  // Shrink the layout viewport when the on-screen keyboard opens, so a
+  // bottom-anchored composer stays above it instead of being covered.
+  // Android honours this; iOS is handled by the visual-viewport hook.
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({

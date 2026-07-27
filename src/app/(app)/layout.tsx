@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getKiaraSession } from "@/lib/tenant";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AppNav } from "@/components/app-nav";
+import { ViewportHeight } from "@/components/viewport-height";
 
 export default async function AppLayout({
   children,
@@ -12,10 +13,10 @@ export default async function AppLayout({
   if (!session) redirect("/login");
 
   return (
-    // Fixed-height flex column: the header keeps its size and <main> takes the
-    // rest, so the inbox can fill the screen without hardcoding a header
-    // offset. dvh (not vh) so mobile browser chrome can't clip the composer.
-    <div className="flex h-[100dvh] flex-col">
+    // .app-shell is fixed to the *visible* viewport (see globals.css), so the
+    // composer stays above the on-screen keyboard instead of behind it. The
+    // header keeps its size and <main> takes the rest.
+    <div className="app-shell">
       <header className="safe-t shrink-0 border-b bg-[var(--surface)]">
         <div className="flex items-center justify-between gap-3 px-3 py-2 sm:px-5 sm:py-3">
           <div className="flex min-w-0 items-center gap-2">
@@ -39,7 +40,8 @@ export default async function AppLayout({
         </div>
         <AppNav isAdmin={session.role === "admin"} />
       </header>
-      <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+      <main className="scroll-pane min-h-0 flex-1">{children}</main>
+      <ViewportHeight />
     </div>
   );
 }

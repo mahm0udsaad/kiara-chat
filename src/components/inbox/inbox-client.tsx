@@ -123,6 +123,28 @@ export function InboxClient({
     pendingRef.current = pending;
   }, [pending]);
 
+  // Message list scrolling. A chat should open at the newest message, and new
+  // arrivals should only pull the view down if the reader is already there —
+  // yanking someone out of older messages mid-read is worse than not moving.
+  const listRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  const scrollToBottom = useCallback(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+
+  const onListScroll = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  useEffect(() => {
+    if (nearBottomRef.current) scrollToBottom();
+  }, [messages, scrollToBottom]);
+
   const [labels, setLabels] = useState<Label[]>(initialLabels);
   const [assignments, setAssignments] =
     useState<Record<string, string[]>>(initialAssignments);
@@ -207,6 +229,8 @@ export function InboxClient({
       setMessages([]);
       setNotes([]);
       setDraft("");
+      // A freshly opened thread always starts pinned to the newest message.
+      nearBottomRef.current = true;
       markRead(c.id);
       try {
         const [mRes, nRes] = await Promise.all([
@@ -339,6 +363,9 @@ export function InboxClient({
     setBusy(true);
     const text = draft.trim();
     setDraft("");
+    // Collapse the auto-grown composer back to one line.
+    if (composerRef.current) composerRef.current.style.height = "auto";
+    nearBottomRef.current = true;
     try {
       await fetch(`/api/conversations/${selected.id}/reply`, {
         method: "POST",
@@ -810,7 +837,11 @@ export function InboxClient({
               </div>
             ) : null}
 
-            <div className="scroll-pane min-h-0 flex-1 space-y-2 p-3 sm:p-5">
+            <div
+              ref={listRef}
+              onScroll={onListScroll}
+              className="scroll-pane min-h-0 flex-1 space-y-2 p-3 sm:p-5"
+            >
               {loading ? (
                 <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--muted)]">
                   <Loader2 size={14} className="animate-spin" /> جارٍ التحميل…
@@ -904,8 +935,21 @@ export function InboxClient({
                 </div>
               ) : null}
               <textarea
+                ref={composerRef}
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  // Grow with the text, like a native composer.
+                  const el = e.currentTarget;
+                  el.style.height = "auto";
+                  el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
+                }}
+                onFocus={() => {
+                  // The keyboard shrinks the visible area; keep the newest
+                  // message in view rather than leaving it behind the keyboard.
+                  nearBottomRef.current = true;
+                  setTimeout(scrollToBottom, 250);
+                }}
                 onKeyDown={(e) => {
                   // Enter sends on desktop only — on a touch keyboard Enter
                   // must insert a newline, or multi-line replies are impossible.
