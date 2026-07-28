@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createServerClient } from "@supabase/ssr";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cookies, headers } from "next/headers";
@@ -10,8 +11,12 @@ import { cookies, headers } from "next/headers";
  * Ported from the parent whatsapp-cs app so the mobile phase reuses the same
  * backend auth contract. The bearer branch wraps `auth.getUser()` so call
  * sites that do `getUser()` with no args validate the token transparently.
+ *
+ * Memoized per request: a single navigation used to build this three times
+ * (middleware, layout, page), and each fresh client re-ran a network
+ * `auth.getUser()` because nothing dedupes across instances.
  */
-export async function createServerSupabaseClient(): Promise<SupabaseClient> {
+export const createServerSupabaseClient = cache(async function createServerSupabaseClient(): Promise<SupabaseClient> {
   const headersList = await headers();
   const authHeader =
     headersList.get("authorization") ?? headersList.get("Authorization");
@@ -63,4 +68,4 @@ export async function createServerSupabaseClient(): Promise<SupabaseClient> {
       },
     }
   );
-}
+});

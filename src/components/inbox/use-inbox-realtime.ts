@@ -14,23 +14,35 @@ import { createClient } from "@/lib/supabase/client";
  * - INSERT on messages   → onNewMessage(conversationId) so an open thread can
  *                          refetch through the API (which signs media URLs —
  *                          the raw row payload can't be rendered directly).
+ * - UPDATE on messages   → onMessageUpdated(id, patch), patched straight into
+ *                          local state. Delivery status settles after the send
+ *                          response now (the provider call moved to `after()`),
+ *                          so this is how "queued" becomes "sent"/"failed"
+ *                          without a refetch.
  * - any conversations change → onConversationsChanged() so the list reorders
  *                          and unread badges update.
  */
 export function useInboxRealtime({
   onNewMessage,
+  onMessageUpdated,
   onConversationsChanged,
 }: {
   onNewMessage: (conversationId: string) => void;
+  onMessageUpdated: (
+    id: string,
+    patch: { delivery_status?: string | null; external_message_sid?: string | null }
+  ) => void;
   onConversationsChanged: () => void;
 }) {
   // Keep the callbacks in refs so the subscription survives re-renders.
   const onNewMessageRef = useRef(onNewMessage);
+  const onMessageUpdatedRef = useRef(onMessageUpdated);
   const onConversationsChangedRef = useRef(onConversationsChanged);
   useEffect(() => {
     onNewMessageRef.current = onNewMessage;
+    onMessageUpdatedRef.current = onMessageUpdated;
     onConversationsChangedRef.current = onConversationsChanged;
-  }, [onNewMessage, onConversationsChanged]);
+  }, [onNewMessage, onMessageUpdated, onConversationsChanged]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -45,6 +57,22 @@ export function useInboxRealtime({
           if (conversationId) onNewMessageRef.current(conversationId);
           // A new message also bumps the conversation's ordering/unread state.
           onConversationsChangedRef.current();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages" },
+        (payload) => {
+          const row = payload.new as {
+            id?: string;
+            delivery_status?: string | null;
+            external_message_sid?: string | null;
+          };
+          if (!row.id) return;
+          onMessageUpdatedRef.current(row.id, {
+            delivery_status: row.delivery_status,
+            external_message_sid: row.external_message_sid,
+          });
         }
       )
       .on(

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
-import { getMyTeamMemberId, takeConversation } from "@/lib/interactions";
+import { takeConversation } from "@/lib/interactions";
 
 export async function POST(
   _request: Request,
@@ -9,7 +9,7 @@ export async function POST(
   const session = await getKiaraSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
-  const teamMemberId = await getMyTeamMemberId(session.userId);
+  const teamMemberId = session.teamMemberId;
   if (!teamMemberId) {
     return NextResponse.json({ error: "Not a Kiara agent" }, { status: 403 });
   }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
-import { sendReply, getMyTeamMemberId } from "@/lib/interactions";
+import { sendReply } from "@/lib/interactions";
 
 export async function POST(
   request: Request,
@@ -13,7 +13,7 @@ export async function POST(
   const text = (body?.body as string | undefined)?.trim();
   if (!text) return NextResponse.json({ error: "Empty message" }, { status: 400 });
   try {
-    const teamMemberId = await getMyTeamMemberId(session.userId);
+    const teamMemberId = session.teamMemberId;
     const result = await sendReply(id, { email: session.email, teamMemberId }, text);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

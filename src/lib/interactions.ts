@@ -4,6 +4,7 @@
  * (through the transport layer). Callers must be authorized Kiara members —
  * the API routes enforce that; these helpers assume it and use the admin client.
  */
+import { after } from "next/server";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
@@ -17,16 +18,55 @@ import type { CsStatus, AgentInfo } from "@/lib/types";
 
 export type { CsStatus, AgentInfo };
 
-/** Resolve the caller's team_members.id for Kiara (agents + owner-as-admin). */
-export async function getMyTeamMemberId(userId: string): Promise<string | null> {
-  const { data } = await getAdminSupabaseClient()
-    .from("team_members")
-    .select("id")
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq("user_id", userId)
-    .eq("is_active", true)
-    .maybeSingle();
-  return (data?.id as string) ?? null;
+/**
+ * Deliver an already-recorded message and settle its status, after the HTTP
+ * response has been sent. The provider call is the slowest thing on the send
+ * path and nothing in the UI needs to wait for it — the message row already
+ * exists, so the thread renders it immediately as "queued" and the UPDATE
+ * streams the final status in over realtime.
+ */
+function deliverInBackground(
+  messageId: string,
+  conversationId: string,
+  conversationMetadata: Record<string, unknown> | null,
+  send: () => Promise<{ providerMessageId?: string | null }>
+): void {
+  after(async () => {
+    const admin = getAdminSupabaseClient();
+    let sent = false;
+    let providerId: string | null = null;
+    if (isOpenWaConfigured()) {
+      try {
+        const r = await send();
+        providerId = r.providerMessageId || null;
+        sent = true;
+      } catch {
+        sent = false;
+      }
+    }
+
+    await Promise.all([
+      admin
+        .from("messages")
+        .update({
+          delivery_status: sent
+            ? "sent"
+            : isOpenWaConfigured()
+              ? "failed"
+              : "queued",
+          external_message_sid: providerId,
+        })
+        .eq("id", messageId),
+      // Bump activity + clear "handled on WhatsApp" (now handled in-app).
+      admin
+        .from("conversations")
+        .update({
+          last_message_at: new Date().toISOString(),
+          metadata: { ...(conversationMetadata ?? {}), handled_on_whatsapp: false },
+        })
+        .eq("id", conversationId),
+    ]);
+  });
 }
 
 /**
@@ -135,37 +175,15 @@ export async function sendReply(
     .single();
   if (error) throw new Error(`Failed to record reply: ${error.message}`);
 
-  let sent = false;
-  let providerId: string | null = null;
-  if (isOpenWaConfigured()) {
-    try {
-      const r = await openWaTransport.sendText(conv.customer_phone as string, body);
-      providerId = r.providerMessageId || null;
-      sent = true;
-    } catch {
-      sent = false;
-    }
-  }
+  const messageId = msg!.id as string;
+  deliverInBackground(
+    messageId,
+    conversationId,
+    conv.metadata as Record<string, unknown> | null,
+    () => openWaTransport.sendText(conv.customer_phone as string, body)
+  );
 
-  await admin
-    .from("messages")
-    .update({
-      delivery_status: sent ? "sent" : isOpenWaConfigured() ? "failed" : "queued",
-      external_message_sid: providerId,
-    })
-    .eq("id", msg!.id);
-
-  // Bump activity + clear "handled on WhatsApp" (now handled in-app).
-  const convMeta = {
-    ...((conv.metadata as Record<string, unknown>) ?? {}),
-    handled_on_whatsapp: false,
-  };
-  await admin
-    .from("conversations")
-    .update({ last_message_at: new Date().toISOString(), metadata: convMeta })
-    .eq("id", conversationId);
-
-  return { messageId: (msg?.id as string) ?? null, sent };
+  return { messageId, sent: false };
 }
 
 /**
@@ -218,41 +236,21 @@ export async function sendMediaReply(
     .single();
   if (error) throw new Error(`Failed to record media message: ${error.message}`);
 
-  let sent = false;
-  let providerId: string | null = null;
-  if (isOpenWaConfigured()) {
-    try {
-      const r = await openWaTransport.sendMedia(conv.customer_phone as string, {
+  const messageId = msg!.id as string;
+  deliverInBackground(
+    messageId,
+    conversationId,
+    conv.metadata as Record<string, unknown> | null,
+    () =>
+      openWaTransport.sendMedia(conv.customer_phone as string, {
         base64,
         contentType: file.contentType,
         filename: file.filename ?? undefined,
         caption: caption || undefined,
-      });
-      providerId = r.providerMessageId || null;
-      sent = true;
-    } catch {
-      sent = false;
-    }
-  }
+      })
+  );
 
-  await admin
-    .from("messages")
-    .update({
-      delivery_status: sent ? "sent" : isOpenWaConfigured() ? "failed" : "queued",
-      external_message_sid: providerId,
-    })
-    .eq("id", msg!.id);
-
-  const convMeta = {
-    ...((conv.metadata as Record<string, unknown>) ?? {}),
-    handled_on_whatsapp: false,
-  };
-  await admin
-    .from("conversations")
-    .update({ last_message_at: new Date().toISOString(), metadata: convMeta })
-    .eq("id", conversationId);
-
-  return { messageId: (msg?.id as string) ?? null, sent };
+  return { messageId, sent: false };
 }
 
 /** Active Kiara agents (for the transfer picker), with emails resolved. */

@@ -19,6 +19,15 @@ const publicPrefixes = ["/api/webhooks/", "/api/internal/", "/api/mobile/"];
  * gating. Per-tenant authorization happens in the (app) layout via
  * getKiaraSession(). Ported + trimmed (legacy member-auth removed — Kiara
  * Chat uses Supabase email/password only).
+ *
+ * Uses `getClaims()` rather than `getUser()`. `getUser()` is an unconditional
+ * HTTPS round trip to /auth/v1/user (~250ms measured) on *every* request,
+ * including API calls — it was the single largest fixed cost in the app.
+ * `getClaims()` still refreshes an expired session (it goes through
+ * `getSession()` first), then verifies the JWT locally against the project's
+ * ES256 JWKS, so the network hop only happens when the token actually needs
+ * refreshing. This is a coarse gate; anything that needs a server-verified
+ * identity still calls getUser() via getKiaraSession().
  */
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -44,11 +53,9 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: claimsData } = await supabase.auth.getClaims();
 
-  const isAuthenticated = Boolean(user);
+  const isAuthenticated = Boolean(claimsData?.claims?.sub);
   const { pathname } = request.nextUrl;
 
   if (isAuthenticated && authEntryRoutes.includes(pathname)) {

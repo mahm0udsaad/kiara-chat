@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import {
   Loader2,
   Send,
@@ -18,7 +19,15 @@ import {
   Paperclip,
   Mic,
   Square,
+  Truck,
 } from "lucide-react";
+
+// Lazy — the order sheet (and its rosters) only load when an agent opens it,
+// keeping the initial inbox bundle lean.
+const CreateOrderSheet = dynamic(
+  () => import("./create-order-sheet").then((m) => m.CreateOrderSheet),
+  { ssr: false }
+);
 import { Modal } from "@/components/ui/modal";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
@@ -85,6 +94,7 @@ export function InboxClient({
   conversations,
   agents,
   myTeamMemberId,
+  isAdmin,
   labels: initialLabels,
   labelAssignments: initialAssignments,
   savedReplies,
@@ -93,6 +103,7 @@ export function InboxClient({
   agents: AgentInfo[];
   myTeamMemberId: string | null;
   myEmail: string | null;
+  isAdmin: boolean;
   labels: Label[];
   labelAssignments: Record<string, string[]>;
   savedReplies: SavedReply[];
@@ -107,6 +118,7 @@ export function InboxClient({
   const [noteDraft, setNoteDraft] = useState("");
   const [repliesOpen, setRepliesOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [orderOpen, setOrderOpen] = useState(false);
 
   // Media
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -303,8 +315,30 @@ export function InboxClient({
     [markRead]
   );
 
+  // Delivery status settles server-side after the send response, so patch the
+  // row in place rather than refetching the whole thread for one field.
+  const onRealtimeMessageUpdated = useCallback(
+    (
+      id: string,
+      patch: {
+        delivery_status?: string | null;
+        external_message_sid?: string | null;
+      }
+    ) => {
+      setMessages((prev) => {
+        const i = prev.findIndex((m) => m.id === id);
+        if (i === -1) return prev;
+        const next = [...prev];
+        next[i] = { ...next[i], ...patch };
+        return next;
+      });
+    },
+    []
+  );
+
   useInboxRealtime({
     onNewMessage: onRealtimeMessage,
+    onMessageUpdated: onRealtimeMessageUpdated,
     onConversationsChanged: scheduleListRefresh,
   });
 
@@ -360,26 +394,64 @@ export function InboxClient({
 
   const sendReply = useCallback(async () => {
     if (!selected || !draft.trim()) return;
-    setBusy(true);
+    const conversationId = selected.id;
     const text = draft.trim();
     setDraft("");
     // Collapse the auto-grown composer back to one line.
     if (composerRef.current) composerRef.current.style.height = "auto";
     nearBottomRef.current = true;
+
+    // Show the message immediately. The old flow cleared the composer and then
+    // waited on reply + a full thread refetch + router.refresh() before the text
+    // reappeared, so it looked like the message had been swallowed for seconds.
+    const tempId = `pending-${crypto.randomUUID()}`;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tempId,
+        conversation_id: conversationId,
+        role: "agent",
+        content: text,
+        message_type: "text",
+        delivery_status: "queued",
+        created_at: new Date().toISOString(),
+      },
+    ]);
+
     try {
-      await fetch(`/api/conversations/${selected.id}/reply`, {
+      const res = await fetch(`/api/conversations/${conversationId}/reply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: text }),
       });
-      const res = await fetch(`/api/conversations/${selected.id}/messages`);
-      const data = await res.json();
-      setMessages(data.messages ?? []);
-      router.refresh();
-    } finally {
-      setBusy(false);
+      const data = await res.json().catch(() => ({}));
+      // Swap the temp row for the real one. If the realtime INSERT already
+      // replaced the whole array this finds nothing, which is fine — the server
+      // copy is authoritative either way. No refetch, no router.refresh(): the
+      // realtime subscription already schedules the conversation-list refresh.
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempId
+            ? {
+                ...m,
+                id: (data?.messageId as string) ?? m.id,
+                delivery_status: !res.ok
+                  ? "failed"
+                  : data?.sent
+                    ? "sent"
+                    : "queued",
+              }
+            : m
+        )
+      );
+    } catch {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempId ? { ...m, delivery_status: "failed" } : m
+        )
+      );
     }
-  }, [selected, draft, router]);
+  }, [selected, draft]);
 
   /** Upload + send one file. Returns false so callers can stop a batch. */
   const sendFile = useCallback(
@@ -609,6 +681,18 @@ export function InboxClient({
 
   const selectedLabelIds = selected ? assignments[selected.id] ?? [] : [];
 
+  // Offered as a one-tap fill for the order's location field — the latest thing
+  // the customer typed is usually where they said their address.
+  const lastCustomerText = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role === "customer" && m.message_type === "text" && m.content?.trim()) {
+        return m.content.trim();
+      }
+    }
+    return null;
+  }, [messages]);
+
   return (
     <div className="flex h-full">
       {/* Conversation list. On phones this is a full-screen view that swaps
@@ -797,7 +881,18 @@ export function InboxClient({
                     {selected.customer_phone}
                   </p>
                 </div>
-                {/* Every control lives behind this one button so the chat
+                {/* Dispatch the visit to a driver over WhatsApp. */}
+                <button
+                  type="button"
+                  onClick={() => setOrderOpen(true)}
+                  aria-label="إنشاء طلب للسائق"
+                  aria-haspopup="dialog"
+                  className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--brand-soft)] px-2.5 text-sm font-medium text-[var(--brand)] transition-colors hover:bg-[var(--brand)] hover:text-white sm:px-3"
+                >
+                  <Truck size={16} aria-hidden="true" />
+                  <span className="hidden sm:inline">طلب سائق</span>
+                </button>
+                {/* Every other control lives behind this one button so the chat
                     screen itself stays free of chrome. */}
                 <button
                   type="button"
@@ -1174,6 +1269,18 @@ export function InboxClient({
               onSend={sendPending}
               onCropped={applyCrop}
             />
+
+            {orderOpen ? (
+              <CreateOrderSheet
+                open={orderOpen}
+                onClose={() => setOrderOpen(false)}
+                conversationId={selected.id}
+                customerPhone={selected.customer_phone}
+                customerName={selected.customer_name ?? null}
+                isAdmin={isAdmin}
+                suggestedLocation={lastCustomerText}
+              />
+            ) : null}
           </>
         )}
       </section>

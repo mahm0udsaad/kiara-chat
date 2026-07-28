@@ -60,6 +60,39 @@ export interface AgentInfo {
   isActive?: boolean;
 }
 
+/** A salon specialist (الأخصائية) — the person who visits the customer. */
+export interface Specialist {
+  id: string;
+  full_name: string;
+  phone: string | null;
+  is_active: boolean;
+}
+
+/** A delivery driver (السائق) the order is dispatched to over WhatsApp. */
+export interface Driver {
+  id: string;
+  full_name: string;
+  phone: string; // E.164
+  is_active: boolean;
+}
+
+export type DriverOrderStatus = "pending" | "sent" | "failed";
+
+/** A dispatch order sent to a driver's WhatsApp for one conversation. */
+export interface DriverOrder {
+  id: string;
+  conversation_id: string;
+  specialist_id: string | null;
+  driver_id: string | null;
+  arrival_at: string; // ISO
+  customer_location: string;
+  customer_phone: string;
+  duration_minutes: number;
+  status: DriverOrderStatus;
+  sent_at: string | null;
+  created_at: string;
+}
+
 export interface MediaSlot {
   storage_path: string | null;
   content_type: string;

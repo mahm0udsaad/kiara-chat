@@ -1,5 +1,5 @@
 import { getKiaraSession } from "@/lib/tenant";
-import { getMyTeamMemberId, listAgents } from "@/lib/interactions";
+import { listAgents } from "@/lib/interactions";
 import { listConversations } from "@/lib/inbox";
 import { listLabels, getLabelAssignments } from "@/lib/labels";
 import { listSavedReplies } from "@/lib/saved-replies";
@@ -9,15 +9,15 @@ export const dynamic = "force-dynamic";
 
 export default async function InboxPage() {
   const session = await getKiaraSession();
-  const [conversations, agents, myTeamMemberId, labels, labelAssignments, savedReplies] =
+  const [conversations, agents, labels, labelAssignments, savedReplies] =
     await Promise.all([
       listConversations(200),
       listAgents(),
-      session ? getMyTeamMemberId(session.userId) : Promise.resolve(null),
       listLabels(),
       getLabelAssignments(),
       listSavedReplies(),
     ]);
+  const myTeamMemberId = session?.teamMemberId ?? null;
 
   return (
     <InboxClient
@@ -25,6 +25,7 @@ export default async function InboxPage() {
       agents={agents}
       myTeamMemberId={myTeamMemberId}
       myEmail={session?.email ?? null}
+      isAdmin={session?.role === "admin"}
       labels={labels}
       labelAssignments={labelAssignments}
       savedReplies={savedReplies}

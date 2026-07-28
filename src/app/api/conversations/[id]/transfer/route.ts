@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
-import { getMyTeamMemberId, transferConversation } from "@/lib/interactions";
+import { transferConversation } from "@/lib/interactions";
 
 export async function POST(
   request: Request,
@@ -14,7 +14,7 @@ export async function POST(
   if (!target) {
     return NextResponse.json({ error: "targetTeamMemberId required" }, { status: 400 });
   }
-  const teamMemberId = await getMyTeamMemberId(session.userId);
+  const teamMemberId = session.teamMemberId;
   if (!teamMemberId) {
     return NextResponse.json({ error: "Not a Kiara agent" }, { status: 403 });
   }

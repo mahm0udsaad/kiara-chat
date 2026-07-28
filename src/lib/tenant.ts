@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -16,6 +17,12 @@ export interface KiaraSession {
   userId: string;
   role: AgentRole;
   email: string | null;
+  /**
+   * The caller's `team_members.id`, resolved as part of the same lookup that
+   * authorizes them. Null for an owner with no membership row. Callers must not
+   * re-query this — that was a third round trip on the send path.
+   */
+  teamMemberId: string | null;
 }
 
 export async function getCurrentUser() {
@@ -32,41 +39,55 @@ export async function getCurrentUser() {
  * Uses the RLS-respecting client (users can read their own membership row and
  * owners their restaurant), so this works without the service-role key.
  */
-export async function getKiaraSession(): Promise<KiaraSession | null> {
+export const getKiaraSession = cache(async function getKiaraSession(): Promise<KiaraSession | null> {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  // Member path — an active team_members row for this tenant.
-  const { data: member } = await supabase
-    .from("team_members")
-    .select("role")
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq("user_id", user.id)
-    .eq("is_active", true)
-    .maybeSingle();
+  // Both lookups run concurrently: the member path is the common case, but
+  // testing it first made the owner pay two serial round trips on every request.
+  const [{ data: member }, { data: owned }] = await Promise.all([
+    supabase
+      .from("team_members")
+      .select("id, role")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .maybeSingle(),
+    supabase
+      .from("restaurants")
+      .select("id")
+      .eq("id", KIARA_RESTAURANT_ID)
+      .eq("owner_id", user.id)
+      .maybeSingle(),
+  ]);
 
+  // Member wins on role resolution, but an owner who is also a member keeps
+  // admin either way.
   if (member) {
-    const role: AgentRole = member.role === "admin" ? "admin" : "agent";
-    return { userId: user.id, role, email: user.email ?? null };
+    const role: AgentRole =
+      member.role === "admin" || owned ? "admin" : "agent";
+    return {
+      userId: user.id,
+      role,
+      email: user.email ?? null,
+      teamMemberId: (member.id as string) ?? null,
+    };
   }
 
-  // Owner path — the restaurant's owner_id.
-  const { data: owned } = await supabase
-    .from("restaurants")
-    .select("id")
-    .eq("id", KIARA_RESTAURANT_ID)
-    .eq("owner_id", user.id)
-    .maybeSingle();
-
   if (owned) {
-    return { userId: user.id, role: "admin", email: user.email ?? null };
+    return {
+      userId: user.id,
+      role: "admin",
+      email: user.email ?? null,
+      teamMemberId: null,
+    };
   }
 
   return null;
-}
+});
 
 /** Page guard: redirect to /login unless the caller is an authorized Kiara user. */
 export async function requireKiaraSession(): Promise<KiaraSession> {
