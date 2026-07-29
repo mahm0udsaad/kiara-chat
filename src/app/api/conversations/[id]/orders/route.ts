@@ -17,6 +17,7 @@ export async function POST(
   const arrivalAt = (body?.arrivalAt as string | undefined)?.trim();
   const customerLocation = (body?.customerLocation as string | undefined)?.trim();
   const durationMinutes = Number(body?.durationMinutes);
+  const tripType = body?.tripType === "round_trip" ? "round_trip" : "one_way";
 
   if (!specialistId) return NextResponse.json({ error: "اختاري الأخصائية" }, { status: 400 });
   if (!driverId) return NextResponse.json({ error: "اختاري السائق" }, { status: 400 });
@@ -34,8 +35,12 @@ export async function POST(
       arrivalAt,
       customerLocation,
       durationMinutes,
+      tripType,
     });
-    return NextResponse.json({ ok: true, order, sent });
+    // Price is owner/manager-only — don't leak it to an agent via the response.
+    const safeOrder =
+      session.role === "admin" ? order : { ...order, price: null };
+    return NextResponse.json({ ok: true, order: safeOrder, sent });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "تعذّر إنشاء الطلب" },

@@ -4,6 +4,7 @@
  * authed client and are pinned to Kiara's tenant (RLS enforces it too). Roster
  * writes are additionally gated to admins by the API routes.
  */
+import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
@@ -12,12 +13,79 @@ import type {
   Driver,
   DriverOrder,
   DriverOrderStatus,
+  DispatchSettings,
+  TripType,
 } from "@/lib/types";
 
 const SPECIALIST_COLS = "id, full_name, phone, is_active";
 const DRIVER_COLS = "id, full_name, phone, is_active";
 const ORDER_COLS =
-  "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, status, sent_at, created_at";
+  "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type, price, status, sent_at, created_at";
+
+// -------------------------------------------------------------- pricing
+
+/**
+ * Read the tenant's dispatch prices. Owner/manager-only — the authed client is
+ * used so RLS (dispatch_settings_select → is_restaurant_admin) rejects agents.
+ * Returns zeros when nothing has been configured yet.
+ */
+export async function getDispatchSettings(): Promise<DispatchSettings> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("dispatch_settings")
+    .select("full_trip_price, half_trip_price")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return {
+    fullTripPrice: Number(data?.full_trip_price ?? 0),
+    halfTripPrice: Number(data?.half_trip_price ?? 0),
+  };
+}
+
+/** Upsert the tenant's dispatch prices. Admin-only (enforced by RLS + route). */
+export async function saveDispatchSettings(
+  userId: string,
+  prices: DispatchSettings
+): Promise<DispatchSettings> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("dispatch_settings")
+    .upsert(
+      {
+        restaurant_id: KIARA_RESTAURANT_ID,
+        full_trip_price: prices.fullTripPrice,
+        half_trip_price: prices.halfTripPrice,
+        updated_by: userId,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "restaurant_id" }
+    )
+    .select("full_trip_price, half_trip_price")
+    .single();
+  if (error) throw new Error(error.message);
+  return {
+    fullTripPrice: Number(data.full_trip_price),
+    halfTripPrice: Number(data.half_trip_price),
+  };
+}
+
+/**
+ * Price for a leg, read with the service-role client so an *agent* creating an
+ * order still snapshots the correct amount even though RLS hides prices from
+ * them. The number is never returned to a non-admin caller.
+ */
+async function priceForTrip(tripType: TripType): Promise<number | null> {
+  const { data } = await getAdminSupabaseClient()
+    .from("dispatch_settings")
+    .select("full_trip_price, half_trip_price")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (!data) return null;
+  const raw =
+    tripType === "round_trip" ? data.full_trip_price : data.half_trip_price;
+  return raw == null ? null : Number(raw);
+}
 
 // ------------------------------------------------------------ specialists
 
@@ -127,6 +195,7 @@ export interface CreateOrderInput {
   arrivalAt: string;
   customerLocation: string;
   durationMinutes: number;
+  tripType: TripType;
 }
 
 /**
@@ -168,6 +237,8 @@ export async function createAndDispatchOrder(
   if (!driver) throw new Error("Driver not found");
 
   const customerPhone = conv.customer_phone as string;
+  // Snapshot the price at creation so later price changes don't rewrite history.
+  const price = await priceForTrip(input.tripType);
 
   const { data: created, error: insErr } = await supabase
     .from("driver_orders")
@@ -180,6 +251,8 @@ export async function createAndDispatchOrder(
       customer_location: input.customerLocation.trim(),
       customer_phone: customerPhone,
       duration_minutes: input.durationMinutes,
+      trip_type: input.tripType,
+      price,
       status: "pending",
       created_by: userId,
     })
@@ -194,6 +267,7 @@ export async function createAndDispatchOrder(
     customerLocation: input.customerLocation.trim(),
     customerName: (conv.customer_name as string | null) ?? null,
     customerPhone,
+    tripType: input.tripType,
   });
 
   let sent = false;
@@ -261,6 +335,12 @@ export function formatDuration(minutes: number): string {
   return `${hours} و${n(m)} دقيقة`;
 }
 
+/** Arabic labels for the trip direction (shown to the driver; price is not). */
+export const TRIP_TYPE_LABEL: Record<TripType, string> = {
+  one_way: "ذهاب فقط",
+  round_trip: "ذهاب وعودة",
+};
+
 export function formatDriverOrderMessage(o: {
   specialistName: string;
   arrivalAt: string;
@@ -268,6 +348,7 @@ export function formatDriverOrderMessage(o: {
   customerLocation: string;
   customerName: string | null;
   customerPhone: string;
+  tripType: TripType;
 }): string {
   const arrival = ARRIVAL_FMT.format(new Date(o.arrivalAt));
   const who = o.customerName ? `${o.customerName} (${o.customerPhone})` : o.customerPhone;
@@ -277,6 +358,7 @@ export function formatDriverOrderMessage(o: {
     `👩 الأخصائية: ${o.specialistName}`,
     `🕒 موعد الوصول: ${arrival}`,
     `⏱️ مدة الجلسة: ${formatDuration(o.durationMinutes)}`,
+    `🚕 نوع الرحلة: ${TRIP_TYPE_LABEL[o.tripType]}`,
     `📍 موقع الزبونة: ${o.customerLocation}`,
     `📞 رقم الزبونة: ${who}`,
   ].join("\n");

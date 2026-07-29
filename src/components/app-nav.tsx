@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { MessageSquare, QrCode, Users, BarChart3 } from "lucide-react";
+import { MessageSquare, QrCode, Users, BarChart3, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ITEMS = [
@@ -10,6 +10,7 @@ const ITEMS = [
   { href: "/reports", label: "التقارير", Icon: BarChart3, adminOnly: true },
   { href: "/team", label: "الموظفون", Icon: Users, adminOnly: true },
   { href: "/connect", label: "ربط واتساب", Icon: QrCode, adminOnly: true },
+  { href: "/settings", label: "الإعدادات", Icon: Settings, adminOnly: true },
 ];
 
 export function AppNav({ isAdmin }: { isAdmin: boolean }) {

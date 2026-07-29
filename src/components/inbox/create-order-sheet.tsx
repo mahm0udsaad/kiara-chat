@@ -4,9 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, MapPin, Check } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
-import type { Specialist, Driver } from "@/lib/types";
+import type { Specialist, Driver, TripType, DispatchSettings } from "@/lib/types";
 
 const DURATION_PRESETS = [30, 45, 60, 90, 120];
+
+const TRIP_TYPES: [TripType, string][] = [
+  ["one_way", "ذهاب فقط"],
+  ["round_trip", "ذهاب وعودة"],
+];
 
 /** Local Date → the value a datetime-local input expects (no timezone shift). */
 function toLocalInputValue(d: Date): string {
@@ -44,6 +49,9 @@ export function CreateOrderSheet({
   const [location, setLocation] = useState("");
   const [duration, setDuration] = useState(60);
   const [customDuration, setCustomDuration] = useState(false);
+  // Default to one-way: the driver usually only drops the specialist off.
+  const [tripType, setTripType] = useState<TripType>("one_way");
+  const [prices, setPrices] = useState<DispatchSettings | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +65,7 @@ export function CreateOrderSheet({
     setLocation("");
     setDuration(60);
     setCustomDuration(false);
+    setTripType("one_way");
     // Default arrival: one hour from now, rounded to the next 5 minutes.
     const d = new Date(Date.now() + 60 * 60 * 1000);
     d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5, 0, 0);
@@ -89,6 +98,25 @@ export function CreateOrderSheet({
     if (open) void loadRosters();
   }, [open, loadRosters]);
 
+  // Prices are owner/manager-only; agents never fetch them (403 by RLS + route).
+  useEffect(() => {
+    if (!open || !isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/dispatch-settings");
+        if (!r.ok) return;
+        const d = await r.json();
+        if (!cancelled) setPrices(d.settings as DispatchSettings);
+      } catch {
+        /* pricing is non-blocking — the order can still be created */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isAdmin]);
+
   const submit = useCallback(async () => {
     setError(null);
     if (!specialistId) return setError("اختاري الأخصائية");
@@ -108,6 +136,7 @@ export function CreateOrderSheet({
           arrivalAt: new Date(arrival).toISOString(),
           customerLocation: location.trim(),
           durationMinutes: duration,
+          tripType,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -121,7 +150,7 @@ export function CreateOrderSheet({
     } finally {
       setSubmitting(false);
     }
-  }, [specialistId, driverId, arrival, location, duration, conversationId]);
+  }, [specialistId, driverId, arrival, location, duration, tripType, conversationId]);
 
   const canSuggest = useMemo(
     () => Boolean(suggestedLocation && suggestedLocation.trim()),
@@ -249,6 +278,49 @@ export function CreateOrderSheet({
                     className="mt-1 min-h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-[var(--brand)]"
                     placeholder="عدد الدقائق"
                   />
+                ) : null}
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-sm font-medium text-[var(--foreground)]">نوع الرحلة</span>
+                <div className="flex gap-1.5">
+                  {TRIP_TYPES.map(([val, lbl]) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setTripType(val)}
+                      aria-pressed={tripType === val}
+                      className={cn(
+                        "min-h-9 flex-1 rounded-full border px-3 text-xs transition-colors",
+                        tripType === val
+                          ? "border-[var(--brand)] bg-[var(--brand)] text-white"
+                          : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                      )}
+                    >
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+                {/* Price is owner/manager-only — never shown to agents or the driver. */}
+                {isAdmin && prices ? (
+                  (() => {
+                    const p =
+                      tripType === "round_trip"
+                        ? prices.fullTripPrice
+                        : prices.halfTripPrice;
+                    return p > 0 ? (
+                      <p className="text-xs text-[var(--muted)]">
+                        السعر:{" "}
+                        <span className="font-medium text-[var(--foreground)] tabular-nums">
+                          {p.toLocaleString("ar-SA")} ر.س
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="text-xs text-[var(--subtle)]">
+                        لم يُحدد سعر هذا النوع بعد — من صفحة الإعدادات.
+                      </p>
+                    );
+                  })()
                 ) : null}
               </div>
 

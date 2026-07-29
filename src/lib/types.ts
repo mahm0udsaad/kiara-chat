@@ -78,6 +78,13 @@ export interface Driver {
 
 export type DriverOrderStatus = "pending" | "sent" | "failed";
 
+/**
+ * A visit is one leg: the driver drops the specialist off ("one_way" — half a
+ * trip) and often doesn't bring her back on the same order. "round_trip" is the
+ * full there-and-back. Each is priced separately (see DispatchSettings).
+ */
+export type TripType = "one_way" | "round_trip";
+
 /** A dispatch order sent to a driver's WhatsApp for one conversation. */
 export interface DriverOrder {
   id: string;
@@ -88,9 +95,18 @@ export interface DriverOrder {
   customer_location: string;
   customer_phone: string;
   duration_minutes: number;
+  trip_type: TripType;
+  /** Snapshotted from DispatchSettings at creation; null until prices are set. */
+  price: number | null;
   status: DriverOrderStatus;
   sent_at: string | null;
   created_at: string;
+}
+
+/** Per-tenant dispatch pricing. Owner/manager-only (RLS blocks agents). */
+export interface DispatchSettings {
+  fullTripPrice: number; // ذهاب وعودة
+  halfTripPrice: number; // ذهاب فقط
 }
 
 export interface MediaSlot {
