@@ -27,6 +27,7 @@ import {
   Mic,
   Square,
   Truck,
+  BookOpen,
 } from "lucide-react";
 
 // Lazy — keep the large order form out of the initial inbox bundle. The module
@@ -37,6 +38,12 @@ const loadCreateOrderSheet = () =>
     default: module.CreateOrderSheet,
   }));
 const CreateOrderSheet = lazy(loadCreateOrderSheet);
+
+// Same treatment for the catalogue sheet: ~80 services with descriptions have
+// no business in the inbox's first paint.
+const CatalogSheet = lazy(() =>
+  import("./catalog-sheet").then((module) => ({ default: module.CatalogSheet }))
+);
 import { Modal } from "@/components/ui/modal";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
@@ -127,6 +134,7 @@ export function InboxClient({
   const [notes, setNotes] = useState<InternalNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
   const [repliesOpen, setRepliesOpen] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
   const [orderSheetMounted, setOrderSheetMounted] = useState(false);
@@ -1030,6 +1038,14 @@ export function InboxClient({
                   <Mic size={18} aria-hidden="true" />
                 )}
               </button>
+              <button
+                type="button"
+                onClick={() => setCatalogOpen(true)}
+                aria-label="الباقات والخدمات"
+                className="flex size-11 shrink-0 items-center justify-center rounded-lg border text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
+              >
+                <BookOpen size={18} aria-hidden="true" />
+              </button>
               {savedReplies.length ? (
                 <div className="relative">
                   <button
@@ -1300,6 +1316,18 @@ export function InboxClient({
               onSend={sendPending}
               onCropped={applyCrop}
             />
+
+            {catalogOpen ? (
+              <Suspense fallback={null}>
+                <CatalogSheet
+                  open={catalogOpen}
+                  onClose={() => setCatalogOpen(false)}
+                  onPick={(text) =>
+                    setDraft((d) => (d.trim() ? `${d.trim()}\n${text}` : text))
+                  }
+                />
+              </Suspense>
+            ) : null}
 
             {orderSheetMounted ? (
               <Suspense

@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { Loader2, Check, Car } from "lucide-react";
 import { BotSettingsCard } from "@/components/bot-settings-card";
+import { CatalogManager } from "@/components/catalog-manager";
+import { SavedRepliesManager } from "@/components/saved-replies-manager";
 import type { BotSettings } from "@/lib/bot-schedule";
+import type { CatalogItem } from "@/lib/catalog";
+import type { SavedReply } from "@/lib/saved-replies";
 import type { DispatchSettings } from "@/lib/types";
 
 /**
@@ -15,9 +19,13 @@ import type { DispatchSettings } from "@/lib/types";
 export function SettingsClient({
   initial,
   bot,
+  savedReplies,
+  catalog,
 }: {
   initial: DispatchSettings;
   bot: BotSettings;
+  savedReplies: SavedReply[];
+  catalog: CatalogItem[];
 }) {
   const [full, setFull] = useState(String(initial.fullTripPrice ?? 0));
   const [half, setHalf] = useState(String(initial.halfTripPrice ?? 0));
@@ -106,6 +114,8 @@ export function SettingsClient({
         </button>
       </div>
 
+      <SavedRepliesManager initial={savedReplies} />
+      <CatalogManager initial={catalog} />
       <BotSettingsCard initial={bot} />
     </div>
   );
