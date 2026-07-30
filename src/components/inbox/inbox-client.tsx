@@ -1,8 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
-import dynamic from "next/dynamic";
 import {
   Loader2,
   Send,
@@ -22,12 +29,14 @@ import {
   Truck,
 } from "lucide-react";
 
-// Lazy — the order sheet (and its rosters) only load when an agent opens it,
-// keeping the initial inbox bundle lean.
-const CreateOrderSheet = dynamic(
-  () => import("./create-order-sheet").then((m) => m.CreateOrderSheet),
-  { ssr: false }
-);
+// Lazy — keep the large order form out of the initial inbox bundle. The module
+// is warmed after the inbox settles and on button intent, while Suspense gives
+// an immediate sheet if someone taps before that finishes.
+const loadCreateOrderSheet = () =>
+  import("./create-order-sheet").then((module) => ({
+    default: module.CreateOrderSheet,
+  }));
+const CreateOrderSheet = lazy(loadCreateOrderSheet);
 import { Modal } from "@/components/ui/modal";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
@@ -42,6 +51,7 @@ import type {
 import type { InternalNote } from "@/lib/notes";
 import type { SavedReply } from "@/lib/saved-replies";
 import { formatRelativeTime, agentDisplayName } from "@/lib/format";
+import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 import { MessageBubble } from "./message-bubble";
 import { useInboxRealtime } from "./use-inbox-realtime";
 import {
@@ -119,6 +129,21 @@ export function InboxClient({
   const [repliesOpen, setRepliesOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
+  const [orderSheetMounted, setOrderSheetMounted] = useState(false);
+
+  const preloadOrderSheet = useCallback(() => {
+    void loadCreateOrderSheet();
+    void loadDispatchOptions().catch(() => {
+      // The visible sheet owns error feedback if the warm-up fails.
+    });
+  }, []);
+
+  // Warm the infrequently used feature only after the inbox has become usable.
+  // This keeps navigation fast but removes the first-open network waterfall.
+  useEffect(() => {
+    const timer = window.setTimeout(preloadOrderSheet, 1200);
+    return () => window.clearTimeout(timer);
+  }, [preloadOrderSheet]);
 
   // Media
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -683,7 +708,7 @@ export function InboxClient({
 
   // Offered as a one-tap fill for the order's location field — the latest thing
   // the customer typed is usually where they said their address.
-  const lastCustomerText = useMemo(() => {
+  const lastCustomerText = (() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
       if (m.role === "customer" && m.message_type === "text" && m.content?.trim()) {
@@ -691,7 +716,7 @@ export function InboxClient({
       }
     }
     return null;
-  }, [messages]);
+  })();
 
   return (
     <div className="flex h-full">
@@ -884,7 +909,13 @@ export function InboxClient({
                 {/* Dispatch the visit to a driver over WhatsApp. */}
                 <button
                   type="button"
-                  onClick={() => setOrderOpen(true)}
+                  onClick={() => {
+                    setOrderSheetMounted(true);
+                    setOrderOpen(true);
+                  }}
+                  onPointerEnter={preloadOrderSheet}
+                  onFocus={preloadOrderSheet}
+                  onPointerDown={preloadOrderSheet}
                   aria-label="إنشاء طلب للسائق"
                   aria-haspopup="dialog"
                   className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--brand-soft)] px-2.5 text-sm font-medium text-[var(--brand)] transition-colors hover:bg-[var(--brand)] hover:text-white sm:px-3"
@@ -1270,16 +1301,34 @@ export function InboxClient({
               onCropped={applyCrop}
             />
 
-            {orderOpen ? (
-              <CreateOrderSheet
-                open={orderOpen}
-                onClose={() => setOrderOpen(false)}
-                conversationId={selected.id}
-                customerPhone={selected.customer_phone}
-                customerName={selected.customer_name ?? null}
-                isAdmin={isAdmin}
-                suggestedLocation={lastCustomerText}
-              />
+            {orderSheetMounted ? (
+              <Suspense
+                fallback={
+                  <Modal
+                    open={orderOpen}
+                    onClose={() => setOrderOpen(false)}
+                    title="إنشاء طلب للسائق"
+                  >
+                    <div
+                      className="flex items-center justify-center gap-2 py-10 text-sm text-[var(--muted)]"
+                      aria-live="polite"
+                    >
+                      <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                      جارٍ تجهيز الطلب…
+                    </div>
+                  </Modal>
+                }
+              >
+                <CreateOrderSheet
+                  open={orderOpen}
+                  onClose={() => setOrderOpen(false)}
+                  conversationId={selected.id}
+                  customerPhone={selected.customer_phone}
+                  customerName={selected.customer_name ?? null}
+                  isAdmin={isAdmin}
+                  suggestedLocation={lastCustomerText}
+                />
+              </Suspense>
             ) : null}
           </>
         )}

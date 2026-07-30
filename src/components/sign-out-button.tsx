@@ -2,10 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { clearDispatchOptionsCache } from "@/lib/dispatch-options-client";
 
 export function SignOutButton() {
   const router = useRouter();
   async function signOut() {
+    clearDispatchOptionsCache();
     await createClient().auth.signOut();
     router.push("/login");
     router.refresh();

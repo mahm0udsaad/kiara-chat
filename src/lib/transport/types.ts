@@ -37,6 +37,12 @@ export interface OpenWaMessageEvent {
   timestamp?: number; // unix seconds
   messageType: string; // text | image | audio | voice | video | document | file
   body: string;
+  /**
+   * The sender's WhatsApp display name (Baileys `pushName`). Inbound only — on a
+   * fromMe message this is Kiara's own account name, so the engine sends null.
+   * Optional: older engine builds don't send it at all.
+   */
+  customerName?: string | null;
   media?: InboundMediaBlob[];
 }
 

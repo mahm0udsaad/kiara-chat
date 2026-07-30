@@ -70,7 +70,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing customerPhone" }, { status: 400 });
   }
 
-  const conv = await findOrCreateConversation(phone);
+  // pushName is only the customer's name on an inbound message; on fromMe it's
+  // Kiara's own account name (the engine already nulls it, belt and braces here).
+  const conv = await findOrCreateConversation(
+    phone,
+    event.fromMe ? null : event.customerName
+  );
 
   let messageType = event.messageType || "text";
   const mediaSlots: StoredMediaSlot[] = [];

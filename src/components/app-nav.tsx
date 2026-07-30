@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { MessageSquare, QrCode, Users, BarChart3, Settings } from "lucide-react";
+import { MessageSquare, QrCode, Users, BarChart3, Settings, Car } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ITEMS = [
   { href: "/inbox", label: "المحادثات", Icon: MessageSquare, adminOnly: false },
+  // Employees create the orders, so they get the log too (prices are stripped).
+  { href: "/orders", label: "طلبات السائقين", Icon: Car, adminOnly: false },
   { href: "/reports", label: "التقارير", Icon: BarChart3, adminOnly: true },
   { href: "/team", label: "الموظفون", Icon: Users, adminOnly: true },
   { href: "/connect", label: "ربط واتساب", Icon: QrCode, adminOnly: true },

@@ -103,6 +103,18 @@ export interface DriverOrder {
   created_at: string;
 }
 
+/**
+ * An order with the names the orders list needs. The roster/conversation names
+ * are resolved in a second small query rather than a PostgREST embed, so the
+ * list doesn't depend on the shape of the out-of-band FKs.
+ */
+export interface DriverOrderRow extends DriverOrder {
+  specialist_name: string | null;
+  driver_name: string | null;
+  driver_phone: string | null;
+  customer_name: string | null;
+}
+
 /** Per-tenant dispatch pricing. Owner/manager-only (RLS blocks agents). */
 export interface DispatchSettings {
   fullTripPrice: number; // ذهاب وعودة

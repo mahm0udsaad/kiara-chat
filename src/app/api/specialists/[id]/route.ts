@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
-import { setSpecialistActive } from "@/lib/dispatch";
+import { updateSpecialist, type RosterPatch } from "@/lib/dispatch";
 
 export async function PATCH(
   request: Request,
@@ -13,10 +13,16 @@ export async function PATCH(
 
   const { id } = await params;
   const body = await request.json().catch(() => ({}));
-  const isActive = Boolean(body?.isActive);
+  const patch: RosterPatch = {};
+  if (typeof body?.fullName === "string") patch.fullName = body.fullName;
+  if (typeof body?.phone === "string") patch.phone = body.phone;
+  if (typeof body?.isActive === "boolean") patch.isActive = body.isActive;
+  if (patch.fullName !== undefined && !patch.fullName.trim())
+    return NextResponse.json({ error: "الاسم مطلوب" }, { status: 400 });
+
   try {
-    await setSpecialistActive(id, isActive);
-    return NextResponse.json({ ok: true });
+    const specialist = await updateSpecialist(id, patch);
+    return NextResponse.json({ ok: true, specialist });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Failed to update specialist" },

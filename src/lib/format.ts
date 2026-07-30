@@ -1,4 +1,4 @@
-import type { AgentInfo } from "@/lib/types";
+import type { AgentInfo, TripType } from "@/lib/types";
 
 const rtf = new Intl.RelativeTimeFormat("ar", { numeric: "auto" });
 
@@ -9,6 +9,23 @@ export function agentDisplayName(a: AgentInfo | undefined | null): string {
   if (a.email) return a.email.split("@")[0];
   return "موظف";
 }
+
+/** "٩٠" → "ساعة ونصف" is too clever; use hours/minutes plainly. */
+export function formatDuration(minutes: number): string {
+  const n = (v: number) => v.toLocaleString("ar-SA");
+  if (minutes < 60) return `${n(minutes)} دقيقة`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  const hours = h === 1 ? "ساعة" : h === 2 ? "ساعتان" : `${n(h)} ساعات`;
+  if (m === 0) return hours;
+  return `${hours} و${n(m)} دقيقة`;
+}
+
+/** Arabic labels for the trip direction (shown to the driver; price is not). */
+export const TRIP_TYPE_LABEL: Record<TripType, string> = {
+  one_way: "ذهاب فقط",
+  round_trip: "ذهاب وعودة",
+};
 
 /** Relative Arabic timestamp (e.g. "قبل ٣ دقائق"). */
 export function formatRelativeTime(iso: string | null | undefined): string {

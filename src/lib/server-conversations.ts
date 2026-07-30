@@ -7,20 +7,49 @@
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 
-export async function findOrCreateConversation(
+/**
+ * A WhatsApp display name worth storing: not blank, not just the phone number
+ * (some clients set pushName to the msisdn), and short enough to be a name.
+ */
+function usableCustomerName(
+  name: string | null | undefined,
   customerPhone: string
+): string | null {
+  const trimmed = (name ?? "").trim();
+  if (!trimmed || trimmed.length > 80) return null;
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits && digits === customerPhone.replace(/\D/g, "")) return null;
+  return trimmed;
+}
+
+export async function findOrCreateConversation(
+  customerPhone: string,
+  /** The sender's WhatsApp display name, when the engine forwarded one. */
+  customerName?: string | null
 ): Promise<{ id: string; is_new: boolean }> {
   const admin = getAdminSupabaseClient();
+  const name = usableCustomerName(customerName, customerPhone);
   const { data: existing } = await admin
     .from("conversations")
-    .select("id")
+    .select("id, customer_name")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .eq("customer_phone", customerPhone)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (existing?.id) return { id: existing.id as string, is_new: false };
+  if (existing?.id) {
+    // Fill the name in once; never overwrite one that's already there (it may
+    // have been corrected by hand, and WhatsApp names change on a whim).
+    if (name && !existing.customer_name) {
+      await admin
+        .from("conversations")
+        .update({ customer_name: name })
+        .eq("id", existing.id)
+        .eq("restaurant_id", KIARA_RESTAURANT_ID);
+    }
+    return { id: existing.id as string, is_new: false };
+  }
 
   const now = new Date().toISOString();
   const { data: created, error } = await admin
@@ -28,6 +57,7 @@ export async function findOrCreateConversation(
     .insert({
       restaurant_id: KIARA_RESTAURANT_ID,
       customer_phone: customerPhone,
+      customer_name: name,
       status: "active",
       started_at: now,
       last_message_at: now,

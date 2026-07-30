@@ -5,6 +5,7 @@ import { Loader2, Plus, MapPin, Check } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
 import type { Specialist, Driver, TripType, DispatchSettings } from "@/lib/types";
+import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 
 const DURATION_PRESETS = [30, 45, 60, 90, 120];
 
@@ -19,6 +20,12 @@ function toLocalInputValue(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
     d.getHours()
   )}:${pad(d.getMinutes())}`;
+}
+
+function defaultArrivalValue(): string {
+  const date = new Date(Date.now() + 60 * 60 * 1000);
+  date.setMinutes(Math.ceil(date.getMinutes() / 5) * 5, 0, 0);
+  return toLocalInputValue(date);
 }
 
 export function CreateOrderSheet({
@@ -41,11 +48,11 @@ export function CreateOrderSheet({
 }) {
   const [specialists, setSpecialists] = useState<Specialist[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [rostersLoading, setRostersLoading] = useState(false);
+  const [rostersLoading, setRostersLoading] = useState(true);
 
   const [specialistId, setSpecialistId] = useState("");
   const [driverId, setDriverId] = useState("");
-  const [arrival, setArrival] = useState("");
+  const [arrival, setArrival] = useState(defaultArrivalValue);
   const [location, setLocation] = useState("");
   const [duration, setDuration] = useState(60);
   const [customDuration, setCustomDuration] = useState(false);
@@ -57,65 +64,41 @@ export function CreateOrderSheet({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<"sent" | "failed" | null>(null);
 
-  // Reset + prefill each time the sheet opens.
-  useEffect(() => {
-    if (!open) return;
+  const closeSheet = useCallback(() => {
     setError(null);
     setDone(null);
     setLocation("");
     setDuration(60);
     setCustomDuration(false);
     setTripType("one_way");
-    // Default arrival: one hour from now, rounded to the next 5 minutes.
-    const d = new Date(Date.now() + 60 * 60 * 1000);
-    d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5, 0, 0);
-    setArrival(toLocalInputValue(d));
-  }, [open]);
-
-  const loadRosters = useCallback(async () => {
-    setRostersLoading(true);
-    try {
-      const [sRes, dRes] = await Promise.all([
-        fetch("/api/specialists"),
-        fetch("/api/drivers"),
-      ]);
-      const sData = await sRes.json();
-      const dData = await dRes.json();
-      const activeS = ((sData.specialists ?? []) as Specialist[]).filter((s) => s.is_active);
-      const activeD = ((dData.drivers ?? []) as Driver[]).filter((d) => d.is_active);
-      setSpecialists(activeS);
-      setDrivers(activeD);
-      setSpecialistId((prev) => prev || activeS[0]?.id || "");
-      setDriverId((prev) => prev || activeD[0]?.id || "");
-    } catch {
-      setError("تعذّر تحميل القوائم");
-    } finally {
-      setRostersLoading(false);
-    }
-  }, []);
+    setArrival(defaultArrivalValue());
+    onClose();
+  }, [onClose]);
 
   useEffect(() => {
-    if (open) void loadRosters();
-  }, [open, loadRosters]);
-
-  // Prices are owner/manager-only; agents never fetch them (403 by RLS + route).
-  useEffect(() => {
-    if (!open || !isAdmin) return;
+    if (!open) return;
     let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch("/api/dispatch-settings");
-        if (!r.ok) return;
-        const d = await r.json();
-        if (!cancelled) setPrices(d.settings as DispatchSettings);
-      } catch {
-        /* pricing is non-blocking — the order can still be created */
-      }
-    })();
+
+    void loadDispatchOptions()
+      .then((options) => {
+        if (cancelled) return;
+        setSpecialists(options.specialists);
+        setDrivers(options.drivers);
+        setPrices(options.settings);
+        setSpecialistId((previous) => previous || options.specialists[0]?.id || "");
+        setDriverId((previous) => previous || options.drivers[0]?.id || "");
+      })
+      .catch(() => {
+        if (!cancelled) setError("تعذّر تحميل القوائم");
+      })
+      .finally(() => {
+        if (!cancelled) setRostersLoading(false);
+      });
+
     return () => {
       cancelled = true;
     };
-  }, [open, isAdmin]);
+  }, [open]);
 
   const submit = useCallback(async () => {
     setError(null);
@@ -158,7 +141,7 @@ export function CreateOrderSheet({
   );
 
   return (
-    <Modal open={open} onClose={onClose} title="إنشاء طلب للسائق">
+    <Modal open={open} onClose={closeSheet} title="إنشاء طلب للسائق">
       {done ? (
         <div className="space-y-4 py-4 text-center">
           <div
@@ -179,7 +162,7 @@ export function CreateOrderSheet({
           ) : null}
           <button
             type="button"
-            onClick={onClose}
+            onClick={closeSheet}
             className="min-h-11 w-full rounded-xl bg-[var(--brand)] px-4 font-medium text-white"
           >
             تم
