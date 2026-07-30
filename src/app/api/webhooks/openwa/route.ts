@@ -5,8 +5,9 @@
  * into Kiara's conversations/messages, deduped by the WhatsApp message id, and
  * flags "handled on WhatsApp" for phone-app replies our app didn't send.
  */
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import { runBotTurn } from "@/lib/bot/reply";
 import {
   findOrCreateConversation,
   hasMessageWithSid,
@@ -28,6 +29,14 @@ export const maxDuration = 60;
 function authorized(request: NextRequest): boolean {
   const token = process.env.OPENWA_INGEST_TOKEN;
   return Boolean(token) && request.headers.get("authorization") === `Bearer ${token}`;
+}
+
+/** Older than this and the message is history replay, not a live question. */
+const LIVE_WINDOW_MS = 10 * 60_000;
+
+function isLive(timestampSeconds: number | undefined): boolean {
+  if (!timestampSeconds) return true; // no timestamp => live push
+  return Date.now() - timestampSeconds * 1000 <= LIVE_WINDOW_MS;
 }
 
 function normalizeE164(value: string): string | null {
@@ -118,6 +127,21 @@ export async function POST(request: NextRequest) {
 
   // fromMe + new id => sent from the phone app (our sends are deduped above).
   if (event.fromMe) await markHandledOnWhatsApp(conv.id);
+
+  // Hand the message to the auto-reply bot off the response path — the engine
+  // gets its 200 immediately and a slow model call can't stall ingestion. Live
+  // inbound only: the pairing-time history backfill replays old messages
+  // through this same endpoint, and answering a week-old question is worse
+  // than staying quiet.
+  if (!event.fromMe && isLive(event.timestamp)) {
+    after(() =>
+      runBotTurn({
+        conversationId: conv.id,
+        customerPhone: phone,
+        body: event.body || "",
+      })
+    );
+  }
 
   return NextResponse.json({ ok: true, messageId, conversationId: conv.id });
 }

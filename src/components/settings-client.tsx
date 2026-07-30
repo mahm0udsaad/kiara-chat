@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { Loader2, Check, Car } from "lucide-react";
+import { BotSettingsCard } from "@/components/bot-settings-card";
+import type { BotSettings } from "@/lib/bot-schedule";
 import type { DispatchSettings } from "@/lib/types";
 
 /**
@@ -10,7 +12,13 @@ import type { DispatchSettings } from "@/lib/types";
  * price for its trip type at creation, so editing here never rewrites past
  * orders. Agents never reach this page (admin route guard + RLS).
  */
-export function SettingsClient({ initial }: { initial: DispatchSettings }) {
+export function SettingsClient({
+  initial,
+  bot,
+}: {
+  initial: DispatchSettings;
+  bot: BotSettings;
+}) {
   const [full, setFull] = useState(String(initial.fullTripPrice ?? 0));
   const [half, setHalf] = useState(String(initial.halfTripPrice ?? 0));
   const [saving, setSaving] = useState(false);
@@ -97,6 +105,8 @@ export function SettingsClient({ initial }: { initial: DispatchSettings }) {
           {saved ? "تم الحفظ" : "حفظ الأسعار"}
         </button>
       </div>
+
+      <BotSettingsCard initial={bot} />
     </div>
   );
 }
