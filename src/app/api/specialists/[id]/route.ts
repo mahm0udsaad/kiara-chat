@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { updateSpecialist, type RosterPatch } from "@/lib/dispatch";
+import { isNationalityCode } from "@/lib/nationalities";
 
 export async function PATCH(
   request: Request,
@@ -17,6 +18,9 @@ export async function PATCH(
   if (typeof body?.fullName === "string") patch.fullName = body.fullName;
   if (typeof body?.phone === "string") patch.phone = body.phone;
   if (typeof body?.isActive === "boolean") patch.isActive = body.isActive;
+  if (typeof body?.nationality === "string")
+    patch.nationality = isNationalityCode(body.nationality) ? body.nationality : null;
+  else if (body?.nationality === null) patch.nationality = null;
   if (patch.fullName !== undefined && !patch.fullName.trim())
     return NextResponse.json({ error: "الاسم مطلوب" }, { status: 400 });
 

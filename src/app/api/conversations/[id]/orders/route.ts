@@ -18,6 +18,10 @@ export async function POST(
   const customerLocation = (body?.customerLocation as string | undefined)?.trim();
   const durationMinutes = Number(body?.durationMinutes);
   const tripType = body?.tripType === "round_trip" ? "round_trip" : "one_way";
+  // Optional note to the specialist — capped so a paste can't become a novel.
+  const specialistNote = (body?.specialistNote as string | undefined)
+    ?.trim()
+    .slice(0, 500);
 
   if (!specialistId) return NextResponse.json({ error: "اختاري الأخصائية" }, { status: 400 });
   if (!driverId) return NextResponse.json({ error: "اختاري السائق" }, { status: 400 });
@@ -28,7 +32,7 @@ export async function POST(
     return NextResponse.json({ error: "المدة غير صحيحة" }, { status: 400 });
 
   try {
-    const { order, sent } = await createAndDispatchOrder(session.userId, {
+    const { order, sent, specialistSent } = await createAndDispatchOrder(session.userId, {
       conversationId: id,
       specialistId,
       driverId,
@@ -36,11 +40,12 @@ export async function POST(
       customerLocation,
       durationMinutes,
       tripType,
+      specialistNote: specialistNote || undefined,
     });
     // Price is owner/manager-only — don't leak it to an agent via the response.
     const safeOrder =
       session.role === "admin" ? order : { ...order, price: null };
-    return NextResponse.json({ ok: true, order: safeOrder, sent });
+    return NextResponse.json({ ok: true, order: safeOrder, sent, specialistSent });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "تعذّر إنشاء الطلب" },

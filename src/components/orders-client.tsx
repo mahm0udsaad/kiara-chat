@@ -12,6 +12,8 @@ import {
   Phone,
   ExternalLink,
   Wallet,
+  ChevronRight,
+  ChevronLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDuration, formatRelativeTime, TRIP_TYPE_LABEL } from "@/lib/format";
@@ -31,6 +33,11 @@ const TIME_FMT = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
   minute: "2-digit",
   timeZone: TZ,
 });
+const MONTH_FMT = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
+  month: "long",
+  year: "numeric",
+  timeZone: TZ,
+});
 /** Stable YYYY-MM-DD key in Riyadh time, for grouping and "today". */
 const DAY_KEY_FMT = new Intl.DateTimeFormat("en-CA", {
   year: "numeric",
@@ -38,6 +45,12 @@ const DAY_KEY_FMT = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
   timeZone: TZ,
 });
+
+/** Midday avoids any timezone-boundary surprises when re-formatting a key. */
+const dateOfKey = (key: string) => new Date(`${key}T12:00:00+03:00`);
+
+/** Sunday-first, matching the Saudi work week. */
+const WEEKDAYS = ["أحد", "اثنين", "ثلاثاء", "أربعاء", "خميس", "جمعة", "سبت"];
 
 const STATUS_META: Record<
   DriverOrderStatus,
@@ -61,7 +74,6 @@ const STATUS_META: Record<
 };
 
 type StatusFilter = "all" | DriverOrderStatus;
-type ScopeFilter = "all" | "upcoming" | "today";
 
 const STATUS_FILTERS: [StatusFilter, string][] = [
   ["all", "كل الحالات"],
@@ -70,44 +82,40 @@ const STATUS_FILTERS: [StatusFilter, string][] = [
   ["pending", "بالانتظار"],
 ];
 
-const SCOPE_FILTERS: [ScopeFilter, string][] = [
-  ["all", "الكل"],
-  ["upcoming", "القادمة"],
-  ["today", "اليوم"],
-];
+type CalendarCell = { day: number; key: string } | null;
 
 /**
- * The dispatch log: every order that was pushed to a driver, with the recovery
- * action for a send that failed. Visible to employees too (they create the
- * orders) — prices are stripped server-side for them.
+ * طلبات اليوم: a month calendar over the dispatch log. Each day carries its
+ * order count; picking a day lists that day's orders, where a failed send can
+ * be pushed to the driver again. Searching switches to a flat cross-day view —
+ * a name lookup shouldn't require knowing the visit date. Visible to employees
+ * too (they create the orders) — prices are stripped server-side for them.
  */
 export function OrdersClient({
   initialOrders,
   isAdmin,
+  todayKey,
 }: {
   initialOrders: DriverOrderRow[];
   isAdmin: boolean;
+  /** Computed server-side so the first paint needs no client clock. */
+  todayKey: string;
 }) {
   const [orders, setOrders] = useState(initialOrders);
   const [status, setStatus] = useState<StatusFilter>("all");
-  const [scope, setScope] = useState<ScopeFilter>("all");
   const [driverId, setDriverId] = useState("all");
   const [query, setQuery] = useState("");
+  const [selectedDay, setSelectedDay] = useState(todayKey);
+  const [cursor, setCursor] = useState(() => ({
+    year: Number(todayKey.slice(0, 4)),
+    month: Number(todayKey.slice(5, 7)) - 1,
+  }));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Sampled in event handlers, never during render: the "القادمة"/"اليوم" scopes
-  // need a clock, but reading one while rendering makes the output unstable.
-  const [now, setNow] = useState(0);
-
-  const pickScope = useCallback((next: ScopeFilter) => {
-    setScope(next);
-    setNow(Date.now());
-  }, []);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
     setError(null);
-    setNow(Date.now());
     try {
       const res = await fetch("/api/orders", { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
@@ -136,20 +144,71 @@ export function OrdersClient({
     return [...map].sort((a, b) => a[1].localeCompare(b[1], "ar"));
   }, [orders]);
 
-  const filtered = useMemo(() => {
-    const todayKey = now ? DAY_KEY_FMT.format(new Date(now)) : null;
-    const q = query.trim().toLowerCase();
-
-    const rows = orders.filter((o) => {
+  const matchesFilters = useCallback(
+    (o: DriverOrderRow) => {
       if (status !== "all" && o.status !== status) return false;
       if (driverId !== "all" && o.driver_id !== driverId) return false;
-      // `now` is 0 until the clock effect runs; the time-based scopes only kick
-      // in once we have a real timestamp (they're not the default view).
-      if (scope === "upcoming" && now && new Date(o.arrival_at).getTime() < now)
-        return false;
-      if (scope === "today" && todayKey && DAY_KEY_FMT.format(new Date(o.arrival_at)) !== todayKey)
-        return false;
-      if (!q) return true;
+      return true;
+    },
+    [status, driverId]
+  );
+
+  // Everything keyed by arrival day — feeds both the grid badges and the
+  // selected-day list.
+  const ordersByDay = useMemo(() => {
+    const map = new Map<string, DriverOrderRow[]>();
+    for (const o of orders) {
+      const key = DAY_KEY_FMT.format(new Date(o.arrival_at));
+      const list = map.get(key);
+      if (list) list.push(o);
+      else map.set(key, [o]);
+    }
+    return map;
+  }, [orders]);
+
+  const cells = useMemo<CalendarCell[]>(() => {
+    // Pure calendar math in UTC: the weekday of a calendar date doesn't
+    // depend on the viewer's timezone.
+    const offset = new Date(Date.UTC(cursor.year, cursor.month, 1)).getUTCDay();
+    const daysInMonth = new Date(
+      Date.UTC(cursor.year, cursor.month + 1, 0)
+    ).getUTCDate();
+    const out: CalendarCell[] = Array.from({ length: offset }, () => null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      out.push({
+        day: d,
+        key: `${cursor.year}-${String(cursor.month + 1).padStart(2, "0")}-${String(
+          d
+        ).padStart(2, "0")}`,
+      });
+    }
+    while (out.length % 7) out.push(null);
+    return out;
+  }, [cursor]);
+
+  const moveMonth = useCallback((delta: number) => {
+    setCursor((c) => {
+      const next = new Date(Date.UTC(c.year, c.month + delta, 1));
+      return { year: next.getUTCFullYear(), month: next.getUTCMonth() };
+    });
+  }, []);
+
+  const goToday = useCallback(() => {
+    setSelectedDay(todayKey);
+    setCursor({
+      year: Number(todayKey.slice(0, 4)),
+      month: Number(todayKey.slice(5, 7)) - 1,
+    });
+  }, [todayKey]);
+
+  const searching = query.trim().length > 0;
+
+  // Search mode: one flat, day-grouped list across the whole log.
+  const searchGroups = useMemo(() => {
+    if (!searching) return [];
+    const q = query.trim().toLowerCase();
+    const rows = orders.filter((o) => {
+      if (!matchesFilters(o)) return false;
       return [
         o.driver_name,
         o.specialist_name,
@@ -161,25 +220,8 @@ export function OrdersClient({
         .filter(Boolean)
         .some((v) => (v as string).toLowerCase().includes(q));
     });
-
-    // Upcoming reads best soonest-first; history newest-first.
-    return scope === "upcoming"
-      ? [...rows].sort((a, b) => a.arrival_at.localeCompare(b.arrival_at))
-      : rows;
-  }, [orders, status, scope, driverId, query, now]);
-
-  const stats = useMemo(() => {
-    const total = filtered.length;
-    const sent = filtered.filter((o) => o.status === "sent").length;
-    const failed = filtered.filter((o) => o.status === "failed").length;
-    const revenue = filtered.reduce((sum, o) => sum + (o.price ?? 0), 0);
-    return { total, sent, failed, revenue };
-  }, [filtered]);
-
-  // Group by arrival day so a long log stays scannable.
-  const groups = useMemo(() => {
     const out: { key: string; label: string; rows: DriverOrderRow[] }[] = [];
-    for (const o of filtered) {
+    for (const o of rows) {
       const date = new Date(o.arrival_at);
       const key = DAY_KEY_FMT.format(date);
       const last = out.at(-1);
@@ -187,16 +229,39 @@ export function OrdersClient({
       else out.push({ key, label: DAY_FMT.format(date), rows: [o] });
     }
     return out;
-  }, [filtered]);
+  }, [searching, query, orders, matchesFilters]);
+
+  // Calendar mode: the selected day's orders, soonest visit first.
+  const dayRows = useMemo(() => {
+    if (searching) return [];
+    return (ordersByDay.get(selectedDay) ?? [])
+      .filter(matchesFilters)
+      .sort((a, b) => a.arrival_at.localeCompare(b.arrival_at));
+  }, [searching, ordersByDay, selectedDay, matchesFilters]);
+
+  const shown = searching ? searchGroups.flatMap((g) => g.rows) : dayRows;
+
+  const stats = useMemo(() => {
+    const total = shown.length;
+    const sent = shown.filter((o) => o.status === "sent").length;
+    const failed = shown.filter((o) => o.status === "failed").length;
+    const revenue = shown.reduce((sum, o) => sum + (o.price ?? 0), 0);
+    return { total, sent, failed, revenue };
+  }, [shown]);
+
+  const selectedLabel =
+    selectedDay === todayKey
+      ? "طلبات اليوم"
+      : DAY_FMT.format(dateOfKey(selectedDay));
 
   return (
     <div className="dashboard-page max-w-4xl">
       <div className="dashboard-page-header">
         <div>
-          <h1>طلبات السائقين</h1>
+          <h1>طلبات اليوم</h1>
           <p>
-            كل طلب أُرسل لسائق من صفحة المحادثات. الطلب الذي فشل إرساله يمكن إعادة
-            إرساله من هنا دون إنشائه من جديد.
+            تقويم الطلبات المرسلة للسائقين. اختاري يومًا لعرض طلباته، والطلب الذي
+            فشل إرساله يمكن إعادة إرساله من هنا دون إنشائه من جديد.
           </p>
         </div>
         <button
@@ -213,6 +278,134 @@ export function OrdersClient({
           تحديث
         </button>
       </div>
+
+      <div className="mb-4 space-y-2">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="ابحثي بالسائق أو الأخصائية أو رقم الزبونة أو الموقع…"
+          className="min-h-11 w-full rounded-xl border bg-[var(--surface)] px-3 text-sm outline-none focus:border-[var(--brand)]"
+        />
+        <div className="flex flex-wrap items-center gap-1.5">
+          {STATUS_FILTERS.map(([val, label]) => (
+            <Chip key={val} active={status === val} onClick={() => setStatus(val)}>
+              {label}
+            </Chip>
+          ))}
+          {driverOptions.length > 1 ? (
+            <select
+              value={driverId}
+              onChange={(e) => setDriverId(e.target.value)}
+              aria-label="تصفية بالسائق"
+              className="min-h-9 rounded-full border bg-[var(--surface)] px-3 text-xs text-[var(--muted)] outline-none focus:border-[var(--brand)]"
+            >
+              <option value="all">كل السائقين</option>
+              {driverOptions.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          ) : null}
+        </div>
+      </div>
+
+      {/* The search box doubles as an escape hatch from the calendar: typing
+          anything switches to a flat cross-day view. */}
+      {!searching ? (
+        <div className="mb-5 rounded-2xl border bg-[var(--surface)] p-3 sm:p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => moveMonth(-1)}
+              aria-label="الشهر السابق"
+              className="flex size-10 items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
+            >
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-[var(--foreground)]">
+                {MONTH_FMT.format(new Date(Date.UTC(cursor.year, cursor.month, 1)))}
+              </span>
+              {selectedDay !== todayKey ||
+              cursor.year !== Number(todayKey.slice(0, 4)) ||
+              cursor.month !== Number(todayKey.slice(5, 7)) - 1 ? (
+                <button
+                  type="button"
+                  onClick={goToday}
+                  className="rounded-full border px-2.5 py-1 text-[11px] font-medium text-[var(--brand)] hover:bg-[var(--brand-soft)]"
+                >
+                  اليوم
+                </button>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => moveMonth(1)}
+              aria-label="الشهر التالي"
+              className="flex size-10 items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
+            >
+              <ChevronLeft size={18} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="grid grid-cols-7 gap-1 text-center">
+            {WEEKDAYS.map((w) => (
+              <div
+                key={w}
+                className="pb-1 text-[10px] font-medium text-[var(--subtle)]"
+              >
+                {w}
+              </div>
+            ))}
+            {cells.map((cell, i) => {
+              if (!cell) return <div key={`empty-${i}`} aria-hidden="true" />;
+              const dayOrders = ordersByDay.get(cell.key) ?? [];
+              const isSelected = selectedDay === cell.key;
+              const isToday = cell.key === todayKey;
+              const hasFailed = dayOrders.some((o) => o.status === "failed");
+              return (
+                <button
+                  key={cell.key}
+                  type="button"
+                  onClick={() => setSelectedDay(cell.key)}
+                  aria-pressed={isSelected}
+                  aria-label={`${DAY_FMT.format(dateOfKey(cell.key))} — ${
+                    dayOrders.length
+                  } طلب`}
+                  className={cn(
+                    "flex min-h-12 flex-col items-center justify-center rounded-lg border text-sm tabular-nums transition-colors",
+                    isSelected
+                      ? "border-[var(--brand)] bg-[var(--brand)] text-white"
+                      : isToday
+                        ? "border-[var(--brand)] bg-[var(--brand-soft)] text-[var(--brand)] font-semibold"
+                        : "border-transparent text-[var(--foreground)] hover:bg-[var(--brand-soft)]"
+                  )}
+                >
+                  {cell.day.toLocaleString("ar")}
+                  {dayOrders.length ? (
+                    <span
+                      className={cn(
+                        "mt-0.5 min-w-4 rounded-full px-1 text-[9px] font-semibold leading-4",
+                        isSelected
+                          ? "bg-white/25 text-white"
+                          : hasFailed
+                            ? "bg-rose-100 text-rose-700"
+                            : "bg-[var(--brand-soft)] text-[var(--brand)]"
+                      )}
+                    >
+                      {dayOrders.length.toLocaleString("ar")}
+                    </span>
+                  ) : (
+                    <span className="mt-0.5 leading-4 text-transparent text-[9px]">
+                      ·
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       <div
         className={cn(
@@ -243,77 +436,70 @@ export function OrdersClient({
         ) : null}
       </div>
 
-      <div className="mb-4 space-y-2">
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="ابحثي بالسائق أو الأخصائية أو رقم الزبونة أو الموقع…"
-          className="min-h-11 w-full rounded-xl border bg-[var(--surface)] px-3 text-sm outline-none focus:border-[var(--brand)]"
-        />
-        <div className="flex flex-wrap items-center gap-1.5">
-          {SCOPE_FILTERS.map(([val, label]) => (
-            <Chip key={val} active={scope === val} onClick={() => pickScope(val)}>
-              {label}
-            </Chip>
-          ))}
-          <span className="mx-1 h-5 w-px bg-[var(--line)]" aria-hidden="true" />
-          {STATUS_FILTERS.map(([val, label]) => (
-            <Chip key={val} active={status === val} onClick={() => setStatus(val)}>
-              {label}
-            </Chip>
-          ))}
-          {driverOptions.length > 1 ? (
-            <select
-              value={driverId}
-              onChange={(e) => setDriverId(e.target.value)}
-              aria-label="تصفية بالسائق"
-              className="min-h-9 rounded-full border bg-[var(--surface)] px-3 text-xs text-[var(--muted)] outline-none focus:border-[var(--brand)]"
-            >
-              <option value="all">كل السائقين</option>
-              {driverOptions.map(([id, name]) => (
-                <option key={id} value={id}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          ) : null}
-        </div>
-      </div>
-
       {error ? (
         <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
       ) : null}
 
-      {groups.length ? (
-        <div className="space-y-5">
-          {groups.map((group) => (
-            <section key={group.key}>
-              <h2 className="mb-2 text-xs font-semibold text-[var(--muted)]">
-                {group.label}
-              </h2>
-              <ul className="space-y-2">
-                {group.rows.map((order) => (
-                  <OrderCard
-                    key={order.id}
-                    order={order}
-                    isAdmin={isAdmin}
-                    onUpdated={replaceOrder}
-                  />
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
+      {searching ? (
+        searchGroups.length ? (
+          <div className="space-y-5">
+            {searchGroups.map((group) => (
+              <section key={group.key}>
+                <h2 className="mb-2 text-xs font-semibold text-[var(--muted)]">
+                  {group.label}
+                </h2>
+                <ul className="space-y-2">
+                  {group.rows.map((order) => (
+                    <OrderCard
+                      key={order.id}
+                      order={order}
+                      isAdmin={isAdmin}
+                      onUpdated={replaceOrder}
+                    />
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        ) : (
+          <EmptyState text="لا طلبات مطابقة للبحث." />
+        )
       ) : (
-        <div className="rounded-2xl border border-dashed bg-[var(--surface)] p-8 text-center">
-          <Car size={22} className="mx-auto mb-2 text-[var(--subtle)]" aria-hidden="true" />
-          <p className="text-sm text-[var(--muted)]">
-            {orders.length
-              ? "لا طلبات مطابقة للتصفية."
-              : "لا توجد طلبات بعد. تُنشأ من زر «طلب سائق» داخل المحادثة."}
-          </p>
-        </div>
+        <section>
+          <h2 className="mb-2 text-xs font-semibold text-[var(--muted)]">
+            {selectedLabel}
+          </h2>
+          {dayRows.length ? (
+            <ul className="space-y-2">
+              {dayRows.map((order) => (
+                <OrderCard
+                  key={order.id}
+                  order={order}
+                  isAdmin={isAdmin}
+                  onUpdated={replaceOrder}
+                />
+              ))}
+            </ul>
+          ) : (
+            <EmptyState
+              text={
+                orders.length
+                  ? "لا توجد طلبات في هذا اليوم."
+                  : "لا توجد طلبات بعد. تُنشأ من زر «طلب سائق» داخل المحادثة."
+              }
+            />
+          )}
+        </section>
       )}
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed bg-[var(--surface)] p-8 text-center">
+      <Car size={22} className="mx-auto mb-2 text-[var(--subtle)]" aria-hidden="true" />
+      <p className="text-sm text-[var(--muted)]">{text}</p>
     </div>
   );
 }

@@ -6,8 +6,10 @@
  */
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { formatDuration, TRIP_TYPE_LABEL } from "@/lib/format";
+import { nationalityOf } from "@/lib/nationalities";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import { translateMessage } from "@/lib/translate";
 import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
 import type {
   Specialist,
@@ -21,7 +23,11 @@ import type {
 
 type AuthedClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
-const SPECIALIST_COLS = "id, full_name, phone, is_active";
+const SPECIALIST_COLS = "id, full_name, phone, is_active, nationality";
+/** Until the nationality migration runs, reads fall back to these columns. */
+const LEGACY_SPECIALIST_COLS = "id, full_name, phone, is_active";
+const missingNationality = (err: { message: string } | null) =>
+  Boolean(err?.message.includes("nationality"));
 const DRIVER_COLS = "id, full_name, phone, is_active";
 const ORDER_COLS =
   "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type, price, status, sent_at, created_at";
@@ -97,34 +103,43 @@ export async function listSpecialists(
   opts: { activeOnly?: boolean } = {}
 ): Promise<Specialist[]> {
   const supabase = await createServerSupabaseClient();
-  let q = supabase
-    .from("specialists")
-    .select(SPECIALIST_COLS)
-    .eq("restaurant_id", KIARA_RESTAURANT_ID);
-  if (opts.activeOnly) q = q.eq("is_active", true);
-  const { data, error } = await q.order("full_name");
+  const run = async (cols: string) => {
+    let q = supabase
+      .from("specialists")
+      .select(cols)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID);
+    if (opts.activeOnly) q = q.eq("is_active", true);
+    return q.order("full_name");
+  };
+  let { data, error } = await run(SPECIALIST_COLS);
+  if (missingNationality(error)) ({ data, error } = await run(LEGACY_SPECIALIST_COLS));
   if (error) throw new Error(error.message);
-  return (data ?? []) as Specialist[];
+  return (data ?? []) as unknown as Specialist[];
 }
 
 export async function createSpecialist(
   userId: string,
   fullName: string,
-  phone: string | null
+  phone: string | null,
+  nationality: string | null = null
 ): Promise<Specialist> {
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
-    .from("specialists")
-    .insert({
-      restaurant_id: KIARA_RESTAURANT_ID,
-      full_name: fullName.trim(),
-      phone: phone?.trim() || null,
-      created_by: userId,
-    })
-    .select(SPECIALIST_COLS)
-    .single();
+  const insert = (withNationality: boolean) =>
+    supabase
+      .from("specialists")
+      .insert({
+        restaurant_id: KIARA_RESTAURANT_ID,
+        full_name: fullName.trim(),
+        phone: phone?.trim() || null,
+        ...(withNationality ? { nationality } : {}),
+        created_by: userId,
+      })
+      .select(withNationality ? SPECIALIST_COLS : LEGACY_SPECIALIST_COLS)
+      .single();
+  let { data, error } = await insert(true);
+  if (missingNationality(error)) ({ data, error } = await insert(false));
   if (error) throw new Error(error.message);
-  return data as Specialist;
+  return data as unknown as Specialist;
 }
 
 /** Fields an admin may change on a roster row; omitted keys are left untouched. */
@@ -132,6 +147,8 @@ export interface RosterPatch {
   fullName?: string;
   phone?: string | null;
   isActive?: boolean;
+  /** Specialists only — the drivers table has no such column. */
+  nationality?: string | null;
 }
 
 function buildRosterPatch(patch: RosterPatch): Record<string, unknown> {
@@ -139,6 +156,7 @@ function buildRosterPatch(patch: RosterPatch): Record<string, unknown> {
   if (patch.fullName !== undefined) upd.full_name = patch.fullName.trim();
   if (patch.phone !== undefined) upd.phone = patch.phone?.trim() || null;
   if (patch.isActive !== undefined) upd.is_active = patch.isActive;
+  if (patch.nationality !== undefined) upd.nationality = patch.nationality;
   return upd;
 }
 
@@ -147,15 +165,22 @@ export async function updateSpecialist(
   patch: RosterPatch
 ): Promise<Specialist> {
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
-    .from("specialists")
-    .update(buildRosterPatch(patch))
-    .eq("id", id)
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .select(SPECIALIST_COLS)
-    .single();
+  const run = (cols: string, body: Record<string, unknown>) =>
+    supabase
+      .from("specialists")
+      .update(body)
+      .eq("id", id)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .select(cols)
+      .single();
+  let { data, error } = await run(SPECIALIST_COLS, buildRosterPatch(patch));
+  if (missingNationality(error)) {
+    const legacy = { ...patch };
+    delete legacy.nationality;
+    ({ data, error } = await run(LEGACY_SPECIALIST_COLS, buildRosterPatch(legacy)));
+  }
   if (error) throw new Error(error.message);
-  return data as Specialist;
+  return data as unknown as Specialist;
 }
 
 // ----------------------------------------------------------------- drivers
@@ -221,17 +246,21 @@ export interface CreateOrderInput {
   customerLocation: string;
   durationMinutes: number;
   tripType: TripType;
+  /** Optional staff note to the specialist — sent translated with her copy. */
+  specialistNote?: string;
 }
 
 /**
  * Record a dispatch order and push it to the driver's WhatsApp. The order row
  * is saved first (status "pending") so it survives even if the WhatsApp send
- * fails, then flipped to "sent"/"failed" from the transport result.
+ * fails, then flipped to "sent"/"failed" from the transport result. The
+ * specialist gets her own copy (translated to her mother language when her
+ * nationality implies one) — best-effort, never blocks the order.
  */
 export async function createAndDispatchOrder(
   userId: string,
   input: CreateOrderInput
-): Promise<{ order: DriverOrder; sent: boolean }> {
+): Promise<{ order: DriverOrder; sent: boolean; specialistSent: boolean | null }> {
   const supabase = await createServerSupabaseClient();
 
   // The conversation supplies the customer's phone — never trust a client value.
@@ -244,13 +273,23 @@ export async function createAndDispatchOrder(
   if (convErr) throw new Error(convErr.message);
   if (!conv) throw new Error("Conversation not found");
 
-  const [{ data: specialist }, { data: driver }] = await Promise.all([
-    supabase
+  type SpecialistContact = {
+    id: string;
+    full_name: string;
+    phone: string | null;
+    nationality?: string | null;
+  };
+  const fetchSpecialist = async (cols: string) => {
+    const { data, error } = await supabase
       .from("specialists")
-      .select("id, full_name")
+      .select(cols)
       .eq("id", input.specialistId)
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .maybeSingle(),
+      .maybeSingle();
+    return { data: data as SpecialistContact | null, error };
+  };
+  const [specRes, { data: driver }] = await Promise.all([
+    fetchSpecialist("id, full_name, phone, nationality"),
     supabase
       .from("drivers")
       .select("id, full_name, phone")
@@ -258,6 +297,9 @@ export async function createAndDispatchOrder(
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .maybeSingle(),
   ]);
+  let specialist = specRes.data;
+  if (missingNationality(specRes.error))
+    ({ data: specialist } = await fetchSpecialist("id, full_name, phone"));
   if (!specialist) throw new Error("Specialist not found");
   if (!driver) throw new Error("Driver not found");
 
@@ -285,7 +327,7 @@ export async function createAndDispatchOrder(
     .single();
   if (insErr) throw new Error(insErr.message);
 
-  const message = formatDriverOrderMessage({
+  const orderDetails = {
     specialistName: specialist.full_name as string,
     arrivalAt: input.arrivalAt,
     durationMinutes: input.durationMinutes,
@@ -293,7 +335,8 @@ export async function createAndDispatchOrder(
     customerName: (conv.customer_name as string | null) ?? null,
     customerPhone,
     tripType: input.tripType,
-  });
+  };
+  const message = formatDriverOrderMessage(orderDetails);
 
   let sent = false;
   if (isOpenWaConfigured()) {
@@ -302,6 +345,28 @@ export async function createAndDispatchOrder(
       sent = true;
     } catch {
       sent = false;
+    }
+  }
+
+  // The specialist's own copy — translated when her nationality implies a
+  // non-Arabic mother language. null = not attempted (no phone / no WhatsApp).
+  let specialistSent: boolean | null = null;
+  const specialistPhone = (specialist.phone as string | null)?.trim();
+  if (specialistPhone && isOpenWaConfigured()) {
+    const arabicCopy = formatSpecialistOrderMessage({
+      ...orderDetails,
+      driverName: driver.full_name as string,
+      note: input.specialistNote?.trim() || null,
+    });
+    const target = nationalityOf(
+      (specialist as { nationality?: string | null }).nationality
+    )?.targetLanguage;
+    const translated = target ? await translateMessage(arabicCopy, target) : null;
+    try {
+      await openWaTransport.sendText(specialistPhone, translated ?? arabicCopy);
+      specialistSent = true;
+    } catch {
+      specialistSent = false;
     }
   }
 
@@ -321,7 +386,7 @@ export async function createAndDispatchOrder(
   // The order IS the resolution of the bot's booking request — clear the badge.
   await clearBookingRequest(input.conversationId).catch(() => {});
 
-  return { order: (updated ?? created) as DriverOrder, sent };
+  return { order: (updated ?? created) as DriverOrder, sent, specialistSent };
 }
 
 /** Drop the bot-collected booking_request flag from a conversation, if any. */
@@ -545,4 +610,36 @@ export function formatDriverOrderMessage(o: {
     `📍 موقع الزبونة: ${o.customerLocation}`,
     `📞 رقم الزبونة: ${who}`,
   ].join("\n");
+}
+
+/**
+ * The specialist's copy of the order — written in Arabic and translated to her
+ * mother language before sending (see createAndDispatchOrder). No price: like
+ * the driver message, amounts stay owner-only.
+ */
+export function formatSpecialistOrderMessage(o: {
+  specialistName: string;
+  driverName: string;
+  arrivalAt: string;
+  durationMinutes: number;
+  customerLocation: string;
+  customerName: string | null;
+  customerPhone: string;
+  tripType: TripType;
+  note: string | null;
+}): string {
+  const arrival = ARRIVAL_FMT.format(new Date(o.arrivalAt));
+  const who = o.customerName ? `${o.customerName} (${o.customerPhone})` : o.customerPhone;
+  const lines = [
+    "🌸 *موعد جديد لكِ*",
+    "",
+    `👩 الأخصائية: ${o.specialistName}`,
+    `🕒 موعد الوصول: ${arrival}`,
+    `⏱️ مدة الجلسة: ${formatDuration(o.durationMinutes)}`,
+    `🚕 نوع الرحلة: ${TRIP_TYPE_LABEL[o.tripType]} — مع السائق ${o.driverName}`,
+    `📍 موقع الزبونة: ${o.customerLocation}`,
+    `📞 الزبونة: ${who}`,
+  ];
+  if (o.note) lines.push("", `📝 ملاحظة من الفريق: ${o.note}`);
+  return lines.join("\n");
 }

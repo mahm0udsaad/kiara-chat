@@ -3,10 +3,41 @@
 import { useCallback, useState } from "react";
 import { Loader2, UserPlus, Check, Pencil, Ban, RotateCcw, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NATIONALITIES, nationalityOf } from "@/lib/nationalities";
 import type { Specialist, Driver } from "@/lib/types";
 
 type Row = Specialist | Driver;
 type Kind = "specialist" | "driver";
+
+/** The picker used both for adding and editing a specialist. */
+function NationalitySelect({
+  value,
+  onChange,
+  className,
+}: {
+  value: string;
+  onChange: (code: string) => void;
+  className?: string;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label="جنسية الأخصائية"
+      className={cn(
+        "min-h-11 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm outline-none focus:border-[var(--brand)]",
+        className
+      )}
+    >
+      <option value="">الجنسية…</option>
+      {NATIONALITIES.map((n) => (
+        <option key={n.code} value={n.code}>
+          {n.label} — {n.languageLabel}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 const ENDPOINT: Record<Kind, string> = {
   specialist: "/api/specialists",
@@ -43,6 +74,7 @@ export function RosterManager({
           title="الأخصائيات"
           kind="specialist"
           phoneRequired={false}
+          withNationality
           items={specialists}
           onItems={setSpecialists}
         />
@@ -62,17 +94,21 @@ function RosterSection<T extends Row>({
   title,
   kind,
   phoneRequired,
+  withNationality = false,
   items,
   onItems,
 }: {
   title: string;
   kind: Kind;
   phoneRequired: boolean;
+  /** Specialists only: show the nationality picker (drives translation). */
+  withNationality?: boolean;
   items: T[];
   onItems: (updater: (prev: T[]) => T[]) => void;
 }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [nationality, setNationality] = useState("");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -89,20 +125,25 @@ function RosterSection<T extends Row>({
       const res = await fetch(ENDPOINT[kind], {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fullName: name.trim(), phone: phone.trim() || undefined }),
+        body: JSON.stringify({
+          fullName: name.trim(),
+          phone: phone.trim() || undefined,
+          nationality: (withNationality && nationality) || undefined,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return setError(data?.error ?? "تعذّرت الإضافة");
       onItems((p) => [...p, rowFromResponse(data)]);
       setName("");
       setPhone("");
+      setNationality("");
     } catch {
       setError("تعذّرت الإضافة");
     } finally {
       setAdding(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, phone, kind, phoneRequired, onItems]);
+  }, [name, phone, nationality, withNationality, kind, phoneRequired, onItems]);
 
   const patch = useCallback(
     async (id: string, body: Record<string, unknown>) => {
@@ -150,6 +191,9 @@ function RosterSection<T extends Row>({
           placeholder={phoneRequired ? "رقم واتساب (‎+9665…)" : "رقم (اختياري)"}
           className="min-h-11 w-full rounded-lg border px-3 text-sm outline-none focus:border-[var(--brand)]"
         />
+        {withNationality ? (
+          <NationalitySelect value={nationality} onChange={setNationality} />
+        ) : null}
         <button
           type="button"
           onClick={add}
@@ -172,7 +216,14 @@ function RosterSection<T extends Row>({
               key={it.id}
               row={it}
               busy={busyId === it.id}
-              onSave={(fullName, phoneVal) => patch(it.id, { fullName, phone: phoneVal })}
+              withNationality={withNationality}
+              onSave={(fullName, phoneVal, nat) =>
+                patch(it.id, {
+                  fullName,
+                  phone: phoneVal,
+                  ...(withNationality ? { nationality: nat || null } : {}),
+                })
+              }
               onToggleActive={() => patch(it.id, { isActive: !it.is_active })}
             />
           ))}
@@ -187,20 +238,25 @@ function RosterSection<T extends Row>({
 function RosterRow({
   row,
   busy,
+  withNationality,
   onSave,
   onToggleActive,
 }: {
   row: Row;
   busy: boolean;
-  onSave: (fullName: string, phone: string) => Promise<boolean>;
+  withNationality: boolean;
+  onSave: (fullName: string, phone: string, nationality: string) => Promise<boolean>;
   onToggleActive: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(row.full_name);
   const [phone, setPhone] = useState(row.phone ?? "");
+  const rowNationality = (row as Specialist).nationality ?? "";
+  const [nationality, setNationality] = useState(rowNationality);
+  const natInfo = nationalityOf(rowNationality);
 
   const save = async () => {
-    const ok = await onSave(name, phone);
+    const ok = await onSave(name, phone, nationality);
     if (ok) setEditing(false);
   };
 
@@ -219,6 +275,13 @@ function RosterRow({
           placeholder="الرقم"
           className="min-h-10 w-full rounded-lg border px-2 text-sm outline-none focus:border-[var(--brand)]"
         />
+        {withNationality ? (
+          <NationalitySelect
+            value={nationality}
+            onChange={setNationality}
+            className="min-h-10 px-2"
+          />
+        ) : null}
         <div className="flex shrink-0 gap-1.5">
           <button
             type="button"
@@ -235,6 +298,7 @@ function RosterRow({
               setEditing(false);
               setName(row.full_name);
               setPhone(row.phone ?? "");
+              setNationality(rowNationality);
             }}
             aria-label="إلغاء"
             className="flex size-10 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-black/5"
@@ -251,6 +315,14 @@ function RosterRow({
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-[var(--foreground)]">
           {row.full_name}
+          {natInfo ? (
+            <span
+              className="mr-2 rounded-full bg-[var(--brand-soft)] px-1.5 py-0.5 text-[10px] text-[var(--brand)]"
+              title={`تُرسل رسائلها مترجمة إلى ${natInfo.languageLabel}`}
+            >
+              {natInfo.label}
+            </span>
+          ) : null}
           {!row.is_active ? (
             <span className="mr-2 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600">
               موقوف

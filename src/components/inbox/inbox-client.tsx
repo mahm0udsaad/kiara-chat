@@ -333,6 +333,18 @@ export function InboxClient({
     [markRead]
   );
 
+  // `selected` is a snapshot of a list row. When the list refreshes (someone
+  // claimed, transferred, or resolved the chat — here or on another device),
+  // the open thread must pick up the new row too, or the header chip and the
+  // options modal keep showing stale ownership.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (!prev) return prev;
+      const fresh = conversations.find((c) => c.id === prev.id);
+      return fresh ?? prev;
+    });
+  }, [conversations]);
+
   // ---- live updates (Supabase Realtime) ----
   // Refs so the realtime callbacks always see the current selection without
   // resubscribing on every render.
@@ -468,12 +480,27 @@ export function InboxClient({
           headers: body ? { "Content-Type": "application/json" } : undefined,
           body: body ? JSON.stringify(body) : undefined,
         });
+        // Ownership changes must show without waiting for the server refresh —
+        // the row chip, the header chip, and the options modal all read
+        // selected.assigned_to.
+        const ownerPatch =
+          path === "take"
+            ? { assigned_to: myTeamMemberId }
+            : path === "release"
+              ? { assigned_to: null }
+              : path === "transfer"
+                ? {
+                    assigned_to: (body as { targetTeamMemberId: string })
+                      .targetTeamMemberId,
+                  }
+                : null;
+        if (ownerPatch) setSelected((p) => (p ? { ...p, ...ownerPatch } : p));
         router.refresh();
       } finally {
         setBusy(false);
       }
     },
-    [selected, router]
+    [selected, router, myTeamMemberId]
   );
 
   const sendReply = useCallback(async () => {
@@ -936,7 +963,8 @@ export function InboxClient({
                     </div>
                   ) : null}
                   {owner ? (
-                    <span className="text-[10px] text-[var(--subtle)]">
+                    <span className="flex items-center gap-1 self-start rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
+                      <UserCheck size={11} aria-hidden="true" />
                       المسؤول: {owner}
                     </span>
                   ) : null}
@@ -998,6 +1026,12 @@ export function InboxClient({
                           selected.last_message_at ?? selected.started_at
                         )}`}
                   </p>
+                  {selected.assigned_to ? (
+                    <span className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
+                      <UserCheck size={11} className="shrink-0" aria-hidden="true" />
+                      المسؤول: {ownerLabel(selected)}
+                    </span>
+                  ) : null}
                 </div>
                 {/* Dispatch the visit to a driver over WhatsApp. */}
                 <button

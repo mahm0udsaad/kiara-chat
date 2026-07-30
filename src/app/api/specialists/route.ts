@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { listSpecialists, createSpecialist } from "@/lib/dispatch";
+import { isNationalityCode } from "@/lib/nationalities";
 
 export async function GET() {
   const session = await getKiaraSession();
@@ -17,10 +18,13 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const fullName = (body?.fullName as string | undefined)?.trim();
   const phone = (body?.phone as string | undefined)?.trim() || null;
+  const rawNationality = (body?.nationality as string | undefined)?.trim();
+  const nationality =
+    rawNationality && isNationalityCode(rawNationality) ? rawNationality : null;
   if (!fullName) return NextResponse.json({ error: "الاسم مطلوب" }, { status: 400 });
 
   try {
-    const specialist = await createSpecialist(session.userId, fullName, phone);
+    const specialist = await createSpecialist(session.userId, fullName, phone, nationality);
     return NextResponse.json({ ok: true, specialist });
   } catch (e) {
     return NextResponse.json(

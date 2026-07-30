@@ -12,6 +12,7 @@ import type {
   BookingRequest,
 } from "@/lib/types";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
+import { NATIONALITIES, nationalityOf } from "@/lib/nationalities";
 
 const DURATION_PRESETS = [30, 45, 60, 90, 120];
 
@@ -71,18 +72,23 @@ export function CreateOrderSheet({
   // Default to one-way: the driver usually only drops the specialist off.
   const [tripType, setTripType] = useState<TripType>("one_way");
   const [prices, setPrices] = useState<DispatchSettings | null>(null);
+  const [specialistNote, setSpecialistNote] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<"sent" | "failed" | null>(null);
+  // The specialist's translated copy: null = not attempted (no phone).
+  const [specialistSent, setSpecialistSent] = useState<boolean | null>(null);
 
   const closeSheet = useCallback(() => {
     setError(null);
     setDone(null);
+    setSpecialistSent(null);
     setLocation("");
     setDuration(60);
     setCustomDuration(false);
     setTripType("one_way");
+    setSpecialistNote("");
     setArrival(defaultArrivalValue());
     onClose();
   }, [onClose]);
@@ -132,6 +138,7 @@ export function CreateOrderSheet({
           customerLocation: location.trim(),
           durationMinutes: duration,
           tripType,
+          specialistNote: specialistNote.trim() || undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -140,13 +147,16 @@ export function CreateOrderSheet({
         return;
       }
       setDone(data?.sent ? "sent" : "failed");
+      setSpecialistSent(
+        typeof data?.specialistSent === "boolean" ? data.specialistSent : null
+      );
       onOrderCreated?.();
     } catch {
       setError("تعذّر إنشاء الطلب");
     } finally {
       setSubmitting(false);
     }
-  }, [specialistId, driverId, arrival, location, duration, tripType, conversationId, onOrderCreated]);
+  }, [specialistId, driverId, arrival, location, duration, tripType, specialistNote, conversationId, onOrderCreated]);
 
   const canSuggest = useMemo(
     () => Boolean(suggestedLocation && suggestedLocation.trim()),
@@ -171,6 +181,15 @@ export function CreateOrderSheet({
           {done === "failed" ? (
             <p className="text-sm text-[var(--muted)]">
               تعذّر إرسال رسالة واتساب للسائق. الطلب محفوظ ويمكن إعادة إرساله لاحقًا.
+            </p>
+          ) : null}
+          {specialistSent === true ? (
+            <p className="text-sm text-emerald-700">
+              وصلت الأخصائية نسختها من الطلب بلغتها ✅
+            </p>
+          ) : specialistSent === false ? (
+            <p className="text-sm text-amber-700">
+              تعذّر إرسال نسخة الأخصائية — تأكدي من رقمها ومن ربط واتساب.
             </p>
           ) : null}
           <button
@@ -359,6 +378,34 @@ export function CreateOrderSheet({
                 ) : null}
               </label>
 
+              {(() => {
+                const chosen = specialists.find((s) => s.id === specialistId);
+                const nat = nationalityOf(chosen?.nationality);
+                const hasPhone = Boolean(chosen?.phone?.trim());
+                return (
+                  <label className="block space-y-1">
+                    <span className="text-sm font-medium text-[var(--foreground)]">
+                      رسالة للأخصائية <span className="font-normal text-[var(--subtle)]">(اختياري)</span>
+                    </span>
+                    <textarea
+                      value={specialistNote}
+                      onChange={(e) => setSpecialistNote(e.target.value)}
+                      rows={2}
+                      maxLength={500}
+                      placeholder="تعليمات خاصة بهذا الموعد…"
+                      className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
+                    />
+                    <span className="block text-xs text-[var(--subtle)]">
+                      {!hasPhone
+                        ? "لا يوجد رقم واتساب لهذه الأخصائية — لن تصلها نسخة من الطلب."
+                        : nat?.targetLanguage
+                          ? `تصل الأخصائية نسختها من الطلب مترجمة إلى ${nat.languageLabel}.`
+                          : "تصل الأخصائية نسختها من الطلب بالعربية."}
+                    </span>
+                  </label>
+                );
+              })()}
+
               <div className="rounded-xl bg-black/[0.03] px-3 py-2 text-sm">
                 <span className="text-[var(--muted)]">رقم الزبونة: </span>
                 <span dir="ltr" className="font-medium text-[var(--foreground)]">
@@ -413,6 +460,7 @@ function RosterField<T extends Specialist | Driver>({
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [nat, setNat] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -425,7 +473,11 @@ function RosterField<T extends Specialist | Driver>({
       const res = await fetch(kind === "driver" ? "/api/drivers" : "/api/specialists", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fullName: name.trim(), phone: phone.trim() || undefined }),
+        body: JSON.stringify({
+          fullName: name.trim(),
+          phone: phone.trim() || undefined,
+          nationality: (kind === "specialist" && nat) || undefined,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -435,13 +487,14 @@ function RosterField<T extends Specialist | Driver>({
       onAdded(kind === "driver" ? data.driver : data.specialist);
       setName("");
       setPhone("");
+      setNat("");
       setAdding(false);
     } catch {
       setErr("تعذّرت الإضافة");
     } finally {
       setBusy(false);
     }
-  }, [name, phone, kind, onAdded]);
+  }, [name, phone, nat, kind, onAdded]);
 
   return (
     <div className="space-y-1">
@@ -489,6 +542,21 @@ function RosterField<T extends Specialist | Driver>({
             placeholder={kind === "driver" ? "رقم واتساب (‎+9665…)" : "رقم (اختياري)"}
             className="min-h-10 w-full rounded-lg border px-2 text-sm outline-none focus:border-[var(--brand)]"
           />
+          {kind === "specialist" ? (
+            <select
+              value={nat}
+              onChange={(e) => setNat(e.target.value)}
+              aria-label="جنسية الأخصائية"
+              className="min-h-10 w-full rounded-lg border bg-[var(--surface)] px-2 text-sm outline-none focus:border-[var(--brand)]"
+            >
+              <option value="">الجنسية…</option>
+              {NATIONALITIES.map((n) => (
+                <option key={n.code} value={n.code}>
+                  {n.label} — {n.languageLabel}
+                </option>
+              ))}
+            </select>
+          ) : null}
           {err ? <p className="text-xs text-rose-600">{err}</p> : null}
           <button
             type="button"
