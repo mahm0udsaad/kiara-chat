@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Mic, FileText, ExternalLink, Loader2 } from "lucide-react";
+import {
+  Mic,
+  FileText,
+  ExternalLink,
+  Loader2,
+  Check,
+  CheckCheck,
+  Clock3,
+  AlertCircle,
+} from "lucide-react";
+import { formatDayLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Message, MediaSlot } from "@/lib/types";
 
@@ -16,10 +26,29 @@ const MEDIA_TYPES = new Set([
 
 const AR = /[؀-ۿ]/;
 
+/**
+ * Pinned to Riyadh: the salon runs on KSA wall-clock, and an explicit zone also
+ * keeps the server render and the client render agreeing (the server is UTC).
+ */
 const TIME_FMT = new Intl.DateTimeFormat("ar", {
   hour: "2-digit",
   minute: "2-digit",
+  timeZone: "Asia/Riyadh",
 });
+
+/**
+ * The thread used to render as one flat list, so a reply three days later sat
+ * flush against the message before it — you couldn't tell an hour from a week.
+ */
+export function DaySeparator({ iso }: { iso: string }) {
+  return (
+    <div className="flex justify-center py-1">
+      <span className="rounded-full bg-slate-200/80 px-3 py-1 text-[11px] font-medium text-slate-600">
+        {formatDayLabel(iso)}
+      </span>
+    </div>
+  );
+}
 
 function formatBytes(bytes?: number | null): string {
   if (!bytes || bytes <= 0) return "";
@@ -28,30 +57,63 @@ function formatBytes(bytes?: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} م.ب`;
 }
 
-function deliveryStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    queued: "في قائمة الإرسال",
-    sent: "مرسلة",
-    delivered: "تم التسليم",
-    read: "تمت القراءة",
-    failed: "فشلت",
-    undelivered: "لم يتم التسليم",
-    received: "",
-  };
-  return labels[status] ?? status;
+const STATUS_LABEL: Record<string, string> = {
+  queued: "في قائمة الإرسال",
+  sent: "مرسلة",
+  delivered: "تم التسليم",
+  read: "تمت القراءة",
+  failed: "فشلت",
+  undelivered: "لم يتم التسليم",
+  received: "",
+};
+
+/**
+ * Delivery state as a tick, not a sentence. "في قائمة الإرسال" under a
+ * four-word reply was longer than the reply. The Arabic stays as the accessible
+ * name, so nothing is lost for a screen reader or a long-press tooltip.
+ */
+function StatusTick({ status }: { status: string }) {
+  const label = STATUS_LABEL[status] ?? status;
+  if (!label) return null;
+
+  const icon =
+    status === "read" || status === "delivered" ? (
+      <CheckCheck size={13} aria-hidden="true" />
+    ) : status === "queued" ? (
+      <Clock3 size={11} aria-hidden="true" />
+    ) : status === "failed" || status === "undelivered" ? (
+      <AlertCircle size={12} aria-hidden="true" />
+    ) : (
+      <Check size={12} aria-hidden="true" />
+    );
+
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      role="img"
+      className={cn(
+        "flex shrink-0 items-center",
+        // Read is the one state worth a colour; failure needs to shout.
+        status === "read" && "text-sky-200",
+        (status === "failed" || status === "undelivered") && "text-rose-200"
+      )}
+    >
+      {icon}
+    </span>
+  );
 }
 
 function MetaFooter({ message }: { message: Message }) {
   const status = message.delivery_status || message.twilio_status || "";
-  const statusLabel = status ? deliveryStatusLabel(status) : "";
   return (
-    <p className="mt-1 flex items-center justify-between gap-2 text-[10px] opacity-70">
+    <p className="mt-1 flex items-center justify-end gap-1 text-[10px] opacity-70">
       {/* Rendered from the ISO string on both server and client, and pinned to
-          hour/minute so locale defaults can't cause a hydration mismatch. */}
+          hour/minute + Riyadh so locale defaults can't cause a mismatch. */}
       <time dateTime={message.created_at} className="tabular-nums">
         {TIME_FMT.format(new Date(message.created_at))}
       </time>
-      {statusLabel ? <span>{statusLabel}</span> : null}
+      <StatusTick status={status} />
     </p>
   );
 }
@@ -182,9 +244,11 @@ export function MessageBubble({ message }: { message: Message }) {
     );
   }
 
+  // Outgoing is the brand indigo, not WhatsApp green — green already means
+  // "handled on the WhatsApp app" on the conversation card.
   const bubbleColor = isCustomer
     ? "bg-white border border-slate-200 text-slate-900"
-    : "bg-emerald-600 text-white";
+    : "bg-[var(--brand)] text-white";
   const align = isCustomer ? "justify-start" : "justify-end";
   const dir = AR.test(message.content || "") ? "rtl" : "ltr";
 
@@ -196,7 +260,7 @@ export function MessageBubble({ message }: { message: Message }) {
       <div className={cn("flex", align)}>
         <div
           className={cn(
-            "max-w-[85%] break-words sm:max-w-[75%]space-y-2 rounded-2xl px-3 py-2 text-sm shadow-sm",
+            "max-w-[85%] space-y-2 break-words rounded-2xl px-3 py-2 text-sm shadow-sm sm:max-w-[75%]",
             bubbleColor
           )}
           dir={dir}
@@ -221,7 +285,7 @@ export function MessageBubble({ message }: { message: Message }) {
     <div className={cn("flex", align)}>
       <div
         className={cn(
-          "max-w-[85%] break-words sm:max-w-[75%]rounded-2xl px-3 py-2 text-sm shadow-sm",
+          "max-w-[85%] break-words rounded-2xl px-3 py-2 text-sm shadow-sm sm:max-w-[75%]",
           bubbleColor
         )}
         dir={dir}

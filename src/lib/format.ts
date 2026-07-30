@@ -27,6 +27,37 @@ export const TRIP_TYPE_LABEL: Record<TripType, string> = {
   round_trip: "ذهاب وعودة",
 };
 
+/**
+ * Riyadh day key (YYYY-MM-DD). The salon's wall-clock decides what "same day"
+ * means, not the reader's device.
+ */
+const DAY_KEY_FMT = new Intl.DateTimeFormat("en-CA", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  timeZone: "Asia/Riyadh",
+});
+
+const DAY_LABEL_FMT = new Intl.DateTimeFormat("ar", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  timeZone: "Asia/Riyadh",
+});
+
+export function dayKey(iso: string): string {
+  return DAY_KEY_FMT.format(new Date(iso));
+}
+
+/** "اليوم" / "أمس" / "الخميس، ٣٠ يوليو" for a thread's day separator. */
+export function formatDayLabel(iso: string): string {
+  const key = dayKey(iso);
+  const now = Date.now();
+  if (key === DAY_KEY_FMT.format(new Date(now))) return "اليوم";
+  if (key === DAY_KEY_FMT.format(new Date(now - 86_400_000))) return "أمس";
+  return DAY_LABEL_FMT.format(new Date(iso));
+}
+
 /** Relative Arabic timestamp (e.g. "قبل ٣ دقائق"). */
 export function formatRelativeTime(iso: string | null | undefined): string {
   if (!iso) return "";

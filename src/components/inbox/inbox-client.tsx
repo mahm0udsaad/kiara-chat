@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   lazy,
   Suspense,
   useCallback,
@@ -57,9 +58,9 @@ import type {
 } from "@/lib/types";
 import type { InternalNote } from "@/lib/notes";
 import type { SavedReply } from "@/lib/saved-replies";
-import { formatRelativeTime, agentDisplayName } from "@/lib/format";
+import { formatRelativeTime, agentDisplayName, dayKey } from "@/lib/format";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
-import { MessageBubble } from "./message-bubble";
+import { DaySeparator, MessageBubble } from "./message-bubble";
 import { useInboxRealtime } from "./use-inbox-realtime";
 import {
   AttachmentPreview,
@@ -95,6 +96,29 @@ const NEW_LABEL_COLORS: LabelColor[] = [
 ];
 
 type View = "all" | "mine" | "unassigned" | "unread";
+
+/** One row of the composer's "+" menu. */
+function MenuItem({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2.5 text-right text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--brand-soft)]"
+    >
+      <span className="text-[var(--brand)]">{icon}</span>
+      {label}
+    </button>
+  );
+}
 
 function csStatusOf(c: Conversation): CsStatus {
   const meta = (c.metadata as { cs_status?: CsStatus } | null) || {};
@@ -133,8 +157,10 @@ export function InboxClient({
   const [draft, setDraft] = useState("");
   const [notes, setNotes] = useState<InternalNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
-  const [repliesOpen, setRepliesOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  // The composer's "+" menu, and which level of it is showing.
+  const [plusOpen, setPlusOpen] = useState(false);
+  const [plusView, setPlusView] = useState<"menu" | "replies">("menu");
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
   const [orderSheetMounted, setOrderSheetMounted] = useState(false);
@@ -385,6 +411,19 @@ export function InboxClient({
     const onPop = () => setSelected(null);
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
+  }, [selectedId]);
+
+  // While a thread is open on a phone, the app-wide nav row (التقارير،
+  // الموظفون، ربط واتساب…) is 50px of things you can't act on from inside a
+  // conversation. Flag it on <html> and let CSS collapse it — the nav lives in
+  // the server layout, which has no idea a thread is open.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (selectedId) root.dataset.thread = "open";
+    else delete root.dataset.thread;
+    return () => {
+      delete root.dataset.thread;
+    };
   }, [selectedId]);
 
   const closeThread = useCallback(() => {
@@ -750,9 +789,18 @@ export function InboxClient({
               placeholder="بحث بالاسم أو الرقم…"
               className="min-h-10 w-full bg-transparent text-sm outline-none"
             />
+            {/* The count used to own a line of its own under the filters. */}
+            <span
+              aria-label={`${filtered.length} محادثة`}
+              className="shrink-0 text-[11px] tabular-nums text-[var(--subtle)]"
+            >
+              {filtered.length.toLocaleString("ar")}
+            </span>
           </div>
-          {/* Touch-sized filter controls (≥36px tall) rather than 11px pills. */}
-          <div className="flex flex-wrap gap-1.5">
+          {/* One scrolling row, not a wrapping block: the chips + both selects
+              used to stack into three lines and push the list down. Touch-sized
+              (≥36px) rather than 11px pills. */}
+          <div className="scroll-pane flex items-center gap-1.5 overflow-x-auto pb-0.5 [&::-webkit-scrollbar]:hidden">
             {(["all", "mine", "unassigned", "unread"] as View[]).map((v) => (
               <button
                 key={v}
@@ -760,7 +808,7 @@ export function InboxClient({
                 onClick={() => setView(v)}
                 aria-pressed={view === v}
                 className={cn(
-                  "min-h-9 rounded-full border px-3 text-xs transition-colors",
+                  "min-h-9 shrink-0 rounded-full border px-3 text-xs transition-colors",
                   view === v
                     ? "border-[var(--brand)] bg-[var(--brand)] text-white"
                     : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
@@ -773,7 +821,7 @@ export function InboxClient({
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as CsStatus | "all")}
               aria-label="تصفية حسب الحالة"
-              className="min-h-9 rounded-full border px-2 text-xs text-[var(--muted)]"
+              className="min-h-9 shrink-0 rounded-full border px-2 text-xs text-[var(--muted)]"
             >
               <option value="all">كل الحالات</option>
               {CS_STATUS_ORDER.map((s) => (
@@ -787,7 +835,7 @@ export function InboxClient({
                 value={labelFilter}
                 onChange={(e) => setLabelFilter(e.target.value)}
                 aria-label="تصفية حسب التصنيف"
-                className="min-h-9 rounded-full border px-2 text-xs text-[var(--muted)]"
+                className="min-h-9 shrink-0 rounded-full border px-2 text-xs text-[var(--muted)]"
               >
                 <option value="all">كل التصنيفات</option>
                 {labels.map((l) => (
@@ -798,7 +846,6 @@ export function InboxClient({
               </select>
             ) : null}
           </div>
-          <p className="text-[11px] text-[var(--subtle)]">{filtered.length} محادثة</p>
         </div>
 
         <div className="scroll-pane min-h-0 flex-1">
@@ -907,11 +954,30 @@ export function InboxClient({
                   <ChevronRight size={20} aria-hidden="true" />
                 </button>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold text-[var(--foreground)]">
+                  <p
+                    dir={selected.customer_name ? undefined : "ltr"}
+                    className={cn(
+                      "truncate font-semibold text-[var(--foreground)]",
+                      !selected.customer_name && "text-right"
+                    )}
+                  >
                     {selected.customer_name || selected.customer_phone}
                   </p>
-                  <p dir="ltr" className="truncate text-xs text-[var(--muted)]">
-                    {selected.customer_phone}
+                  {/* Second line: the number only when it isn't already the
+                      title (most customers have no saved name), otherwise the
+                      last activity — repeating the phone twice said nothing. */}
+                  <p
+                    dir={selected.customer_name ? "ltr" : undefined}
+                    className={cn(
+                      "truncate text-xs text-[var(--muted)]",
+                      selected.customer_name && "text-right"
+                    )}
+                  >
+                    {selected.customer_name
+                      ? selected.customer_phone
+                      : `آخر رسالة ${formatRelativeTime(
+                          selected.last_message_at ?? selected.started_at
+                        )}`}
                   </p>
                 </div>
                 {/* Dispatch the visit to a driver over WhatsApp. */}
@@ -985,7 +1051,17 @@ export function InboxClient({
                   لا توجد رسائل.
                 </p>
               ) : (
-                messages.map((m) => <MessageBubble key={m.id} message={m} />)
+                messages.map((m, i) => {
+                  const prev = i > 0 ? messages[i - 1] : null;
+                  const newDay =
+                    !prev || dayKey(prev.created_at) !== dayKey(m.created_at);
+                  return (
+                    <Fragment key={m.id}>
+                      {newDay ? <DaySeparator iso={m.created_at} /> : null}
+                      <MessageBubble message={m} />
+                    </Fragment>
+                  );
+                })
               )}
             </div>
 
@@ -1007,19 +1083,112 @@ export function InboxClient({
                 accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
                 onChange={onPickFile}
               />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading || recording}
-                aria-label="إرفاق صورة أو ملف"
-                className="flex size-11 shrink-0 items-center justify-center rounded-lg border text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)] disabled:opacity-60"
-              >
-                {uploading ? (
-                  <Loader2 size={18} className="animate-spin" aria-hidden="true" />
-                ) : (
-                  <Paperclip size={18} aria-hidden="true" />
-                )}
-              </button>
+              {/* One entry point for everything you *insert*. Four separate
+                  buttons left the text field 91px wide on a 375px phone — the
+                  box you actually type in was the smallest thing in the row. */}
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlusOpen((o) => !o);
+                    setPlusView("menu");
+                  }}
+                  disabled={uploading || recording}
+                  aria-label="إرفاق أو إدراج"
+                  aria-expanded={plusOpen}
+                  aria-haspopup="menu"
+                  className={cn(
+                    "flex size-11 items-center justify-center rounded-lg border transition-colors disabled:opacity-60",
+                    plusOpen
+                      ? "border-[var(--brand)] bg-[var(--brand-soft)] text-[var(--brand)]"
+                      : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                  )}
+                >
+                  {uploading ? (
+                    <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus
+                      size={20}
+                      aria-hidden="true"
+                      className={cn("transition-transform", plusOpen && "rotate-45")}
+                    />
+                  )}
+                </button>
+
+                {plusOpen ? (
+                  <>
+                    {/* Tap-away layer — a menu that only closes via its own
+                        button is a trap on touch. */}
+                    <button
+                      type="button"
+                      aria-label="إغلاق القائمة"
+                      onClick={() => setPlusOpen(false)}
+                      className="fixed inset-0 z-10 cursor-default"
+                    />
+                    <div
+                      role="menu"
+                      className="absolute bottom-13 right-0 z-20 w-60 overflow-hidden rounded-xl border bg-[var(--surface)] p-1 shadow-lg"
+                    >
+                      {plusView === "menu" ? (
+                        <>
+                          <MenuItem
+                            icon={<Paperclip size={16} aria-hidden="true" />}
+                            label="إرفاق صورة أو ملف"
+                            onClick={() => {
+                              setPlusOpen(false);
+                              fileInputRef.current?.click();
+                            }}
+                          />
+                          <MenuItem
+                            icon={<BookOpen size={16} aria-hidden="true" />}
+                            label="الباقات والخدمات"
+                            onClick={() => {
+                              setPlusOpen(false);
+                              setCatalogOpen(true);
+                            }}
+                          />
+                          {savedReplies.length ? (
+                            <MenuItem
+                              icon={<MessageSquareText size={16} aria-hidden="true" />}
+                              label="الرسائل الجاهزة"
+                              onClick={() => setPlusView("replies")}
+                            />
+                          ) : null}
+                        </>
+                      ) : (
+                        <div className="max-h-64 overflow-y-auto">
+                          <button
+                            type="button"
+                            onClick={() => setPlusView("menu")}
+                            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                          >
+                            <ChevronRight size={14} aria-hidden="true" /> رجوع
+                          </button>
+                          {savedReplies.map((r) => (
+                            <button
+                              key={r.id}
+                              type="button"
+                              onClick={() => {
+                                setDraft((d) => (d.trim() ? `${d.trim()}\n` : "") + r.body);
+                                setPlusOpen(false);
+                              }}
+                              title={r.body}
+                              className="block w-full rounded-lg px-2 py-2 text-right hover:bg-[var(--brand-soft)]"
+                            >
+                              <span className="block truncate text-sm font-medium text-[var(--foreground)]">
+                                {r.title}
+                              </span>
+                              <span className="block truncate text-[11px] text-[var(--muted)]">
+                                {r.body}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : null}
+              </div>
               <button
                 type="button"
                 onClick={recording ? stopRecording : startRecording}
@@ -1038,44 +1207,6 @@ export function InboxClient({
                   <Mic size={18} aria-hidden="true" />
                 )}
               </button>
-              <button
-                type="button"
-                onClick={() => setCatalogOpen(true)}
-                aria-label="الباقات والخدمات"
-                className="flex size-11 shrink-0 items-center justify-center rounded-lg border text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
-              >
-                <BookOpen size={18} aria-hidden="true" />
-              </button>
-              {savedReplies.length ? (
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setRepliesOpen((o) => !o)}
-                    aria-label="الردود المحفوظة"
-                    aria-expanded={repliesOpen}
-                    className="flex size-11 items-center justify-center rounded-lg border text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
-                  >
-                    <MessageSquareText size={18} aria-hidden="true" />
-                  </button>
-                  {repliesOpen ? (
-                    <div className="absolute bottom-12 right-0 z-10 w-56 rounded-lg border bg-white p-1 shadow-lg">
-                      {savedReplies.map((r) => (
-                        <button
-                          key={r.id}
-                          onClick={() => {
-                            setDraft((d) => (d ? d + " " : "") + r.body);
-                            setRepliesOpen(false);
-                          }}
-                          className="block w-full truncate rounded px-2 py-1.5 text-right text-xs hover:bg-[var(--brand-soft)]"
-                          title={r.body}
-                        >
-                          <span className="font-medium">{r.title}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
               <textarea
                 ref={composerRef}
                 value={draft}

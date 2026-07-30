@@ -100,6 +100,15 @@ body:has(.app-shell) {
   overscroll-behavior: none;
 }
 
+/* Inside a conversation on a phone, the app-wide nav is 50px of links you
+   can't act on from a chat. The inbox sets data-thread="open" on <html>; from
+   lg up the list and thread sit side by side, so the nav stays. */
+@media (max-width: 1023px) {
+  html[data-thread="open"] .app-nav {
+    display: none;
+  }
+}
+
 /* Scroll panes shouldn't chain their overscroll to the page behind them. */
 .scroll-pane {
   overflow-y: auto;

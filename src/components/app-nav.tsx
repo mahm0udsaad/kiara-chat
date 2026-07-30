@@ -21,8 +21,11 @@ export function AppNav({ isAdmin }: { isAdmin: boolean }) {
   if (items.length < 2) return null;
 
   return (
-    // Scrolls rather than squeezing — four labels don't fit a 375px row.
-    <nav className="scroll-pane flex items-center gap-1 overflow-x-auto px-2 pb-1.5 sm:px-3 [&::-webkit-scrollbar]:hidden">
+    // Scrolls rather than squeezing — four labels don't fit a 375px row. The
+    // app-nav class lets the inbox collapse it on a phone while a thread is
+    // open (see globals.css) — none of these are reachable actions from inside
+    // a conversation, and the row costs 50px of a chat screen.
+    <nav className="app-nav scroll-pane flex items-center gap-1 overflow-x-auto px-2 pb-1.5 sm:px-3 [&::-webkit-scrollbar]:hidden">
       {items.map(({ href, label, Icon }) => {
         const active = pathname === href || pathname.startsWith(`${href}/`);
         return (
