@@ -10,6 +10,7 @@ import {
   CheckCheck,
   Clock3,
   AlertCircle,
+  MapPin,
 } from "lucide-react";
 import { formatDayLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -254,6 +255,54 @@ export function MessageBubble({ message }: { message: Message }) {
 
   const meta = (message.metadata as { media?: MediaSlot[] }) || {};
   const slots = MEDIA_TYPES.has(message.message_type) ? meta.media || [] : [];
+
+  // A shared pin: the engine turns it into "name — address\nmaps link". Render
+  // the link as a button instead of raw URL text, keeping any label above it.
+  // ("locationMessage"/"liveLocationMessage" are pins ingested before the
+  // engine extracted coordinates — same bubble, no link to offer.)
+  if (
+    message.message_type === "location" ||
+    message.message_type === "locationMessage" ||
+    message.message_type === "liveLocationMessage"
+  ) {
+    const url = /https?:\/\/\S+/.exec(message.content ?? "")?.[0] ?? null;
+    const label = (message.content ?? "").replace(url ?? "", "").trim();
+    return (
+      <div className={cn("flex", align)}>
+        <div
+          className={cn(
+            "max-w-[85%] space-y-1.5 break-words rounded-2xl px-3 py-2 text-sm shadow-sm sm:max-w-[75%]",
+            bubbleColor
+          )}
+        >
+          {label ? <p className="whitespace-pre-wrap">{label}</p> : null}
+          {url ? (
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium underline underline-offset-2",
+                isCustomer
+                  ? "bg-[var(--brand-soft)] text-[var(--brand)]"
+                  : "bg-white/15 text-white"
+              )}
+            >
+              <MapPin size={14} aria-hidden="true" />
+              فتح الموقع على الخريطة
+            </a>
+          ) : (
+            // Pins ingested before the engine forwarded coordinates.
+            <p className="flex items-center gap-1.5 text-xs opacity-80">
+              <MapPin size={14} aria-hidden="true" />
+              موقع — لم تصل إحداثياته
+            </p>
+          )}
+          <MetaFooter message={message} />
+        </div>
+      </div>
+    );
+  }
 
   if (slots.length > 0) {
     return (

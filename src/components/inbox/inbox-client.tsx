@@ -753,16 +753,18 @@ export function InboxClient({
 
   const selectedLabelIds = selected ? assignments[selected.id] ?? [] : [];
 
-  // Offered as a one-tap fill for the order's location field — the latest thing
-  // the customer typed is usually where they said their address.
+  // Offered as a one-tap fill for the order's location field. A dropped pin
+  // (message_type "location", body = maps link) beats typed text — it IS the
+  // address — otherwise the latest thing the customer typed usually is.
   const lastCustomerText = (() => {
+    let lastText: string | null = null;
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
-      if (m.role === "customer" && m.message_type === "text" && m.content?.trim()) {
-        return m.content.trim();
-      }
+      if (m.role !== "customer" || !m.content?.trim()) continue;
+      if (m.message_type === "location") return m.content.trim();
+      if (m.message_type === "text" && !lastText) lastText = m.content.trim();
     }
-    return null;
+    return lastText;
   })();
 
   return (
