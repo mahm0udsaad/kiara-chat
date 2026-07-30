@@ -36,7 +36,7 @@ const RULES = [
 
 const HANDOFF_RULES = [
   "احجز/handoff = تحويل المحادثة لموظفة. اضبطي handoff=true في هذه الحالات:",
-  "• إذا أرادت الزبونة الحجز فعلًا: اجمعي أولًا الخدمة المطلوبة، واليوم والوقت المناسبين، والحي أو الموقع — ثم في الرسالة التي تكتمل فيها هذه التفاصيل اضبطي handoff=true مع handoffReason=\"booking\"، وضعي ملخّصها في bookingSummary.",
+  "• إذا أرادت الزبونة الحجز فعلًا: اجمعي أولًا الخدمة المطلوبة، واليوم والوقت المناسبين، والحي أو الموقع — ثم في الرسالة التي تكتمل فيها هذه التفاصيل اضبطي handoff=true مع handoffReason=\"booking\"، وضعي ملخّصها في bookingSummary واملئي bookingService وbookingTime وbookingLocation بما قالته الزبونة حرفيًا (اتركي الحقل فارغًا إن لم يُذكر).",
   "• أي شكوى أو استياء أو خلاف على سعر أو خدمة سابقة: handoff=true و handoffReason=\"complaint\"، وردّي باعتذار قصير وطمأنة بأن إحدى الموظفات ستتابع معها.",
   "• أي سؤال لا تجدين إجابته في معرفة كيارا: handoff=true و handoffReason=\"unknown\"، وقولي بصدق إنكِ ستحوّلينها لموظفة تجيبها بدقة — دون تخمين.",
   "في غير ذلك اتركي handoff=false و handoffReason=\"none\".",
@@ -96,8 +96,31 @@ export const REPLY_SCHEMA: JSONSchema7 = {
       description:
         "ملخص تفاصيل الحجز (الخدمة، الوقت، الموقع) عند handoffReason=booking، وإلا نص فارغ.",
     },
+    // Structured copies of the same details, so the dashboard can prefill the
+    // driver-order form instead of a human re-reading free text.
+    bookingService: {
+      type: "string",
+      description: "اسم الخدمة أو الباقة المطلوبة كما وردت في معرفة كيارا، أو نص فارغ.",
+    },
+    bookingTime: {
+      type: "string",
+      description:
+        "اليوم/الوقت الذي طلبته الزبونة بصيغتها هي (مثل: بكرة الساعة ٤ العصر)، أو نص فارغ.",
+    },
+    bookingLocation: {
+      type: "string",
+      description: "الموقع أو الحي أو رابط الخريطة الذي أعطته الزبونة، أو نص فارغ.",
+    },
   },
-  required: ["reply", "handoff", "handoffReason", "bookingSummary"],
+  required: [
+    "reply",
+    "handoff",
+    "handoffReason",
+    "bookingSummary",
+    "bookingService",
+    "bookingTime",
+    "bookingLocation",
+  ],
   additionalProperties: false,
 };
 
@@ -106,6 +129,9 @@ export interface BotDecision {
   handoff: boolean;
   handoffReason: "none" | "booking" | "complaint" | "unknown";
   bookingSummary: string;
+  bookingService: string;
+  bookingTime: string;
+  bookingLocation: string;
 }
 
 /** Arabic labels for the internal note left on the conversation at handoff. */

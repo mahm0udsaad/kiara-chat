@@ -76,6 +76,21 @@ export interface Driver {
   is_active: boolean;
 }
 
+/**
+ * Booking details the bot collected before handing the chat to staff. Lives in
+ * conversations.metadata.booking_request (no schema change on the shared DB).
+ * The bot only ever records it — a human picks specialist/driver and creates
+ * the actual order, which clears it.
+ */
+export interface BookingRequest {
+  status: "pending";
+  summary: string;
+  service: string;
+  time: string;
+  location: string;
+  at: string; // ISO — when the bot captured it
+}
+
 export type DriverOrderStatus = "pending" | "sent" | "failed";
 
 /**

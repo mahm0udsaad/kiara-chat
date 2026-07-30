@@ -29,6 +29,7 @@ import {
   Square,
   Truck,
   BookOpen,
+  X,
 } from "lucide-react";
 
 // Lazy — keep the large order form out of the initial inbox bundle. The module
@@ -49,6 +50,7 @@ import { Modal } from "@/components/ui/modal";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
 import type {
+  BookingRequest,
   Conversation,
   Message,
   AgentInfo,
@@ -120,6 +122,13 @@ function MenuItem({
   );
 }
 
+/** The bot-collected booking details awaiting a human, if any. */
+function bookingRequestOf(c: Conversation): BookingRequest | null {
+  const br = (c.metadata as { booking_request?: BookingRequest } | null)
+    ?.booking_request;
+  return br && br.status === "pending" ? br : null;
+}
+
 function csStatusOf(c: Conversation): CsStatus {
   const meta = (c.metadata as { cs_status?: CsStatus } | null) || {};
   if (meta.cs_status) return meta.cs_status;
@@ -161,6 +170,9 @@ export function InboxClient({
   // The composer's "+" menu, and which level of it is showing.
   const [plusOpen, setPlusOpen] = useState(false);
   const [plusView, setPlusView] = useState<"menu" | "replies">("menu");
+  // Booking requests resolved this session (order created / dismissed) — hides
+  // the badge instantly; the server-side metadata clear catches up on refresh.
+  const [clearedBookings, setClearedBookings] = useState<Set<string>>(new Set());
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
   const [orderSheetMounted, setOrderSheetMounted] = useState(false);
@@ -898,6 +910,11 @@ export function InboxClient({
                           {c.unread_count}
                         </span>
                       ) : null}
+                      {bookingRequestOf(c) && !clearedBookings.has(c.id) ? (
+                        <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                          🤖 طلب حجز
+                        </span>
+                      ) : null}
                       <span className="rounded-full bg-[var(--brand-soft)] px-2 py-0.5 text-[10px] text-[var(--brand)]">
                         {CS_STATUS_LABEL[cs]}
                       </span>
@@ -1038,6 +1055,62 @@ export function InboxClient({
                 <WhatsAppIcon size={13} /> تمت معالجة هذه المحادثة عبر تطبيق واتساب.
               </div>
             ) : null}
+
+            {/* The bot collected booking details and handed the chat over. It
+                never picks the specialist or driver — that (and creating the
+                order) is deliberately the humans' half of the flow. */}
+            {(() => {
+              const booking = bookingRequestOf(selected);
+              if (!booking || clearedBookings.has(selected.id)) return null;
+              return (
+                <div className="border-b border-amber-200 bg-amber-50 px-4 py-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <p className="text-xs font-semibold text-amber-800">
+                        🤖 جمع البوت تفاصيل حجز — تحتاج اختيار الأخصائية والسائق
+                      </p>
+                      <dl className="space-y-0.5 text-xs text-amber-900">
+                        {booking.service ? (
+                          <div>الخدمة: {booking.service}</div>
+                        ) : null}
+                        {booking.time ? <div>الموعد: {booking.time}</div> : null}
+                        {booking.location ? (
+                          <div className="break-words">الموقع: {booking.location}</div>
+                        ) : null}
+                        {!booking.service && !booking.time && !booking.location && booking.summary ? (
+                          <div className="break-words">{booking.summary}</div>
+                        ) : null}
+                      </dl>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOrderSheetMounted(true);
+                          setOrderOpen(true);
+                        }}
+                        className="min-h-8 rounded-lg bg-amber-600 px-3 text-xs font-medium text-white"
+                      >
+                        إنشاء الطلب
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="تجاهل طلب الحجز"
+                        onClick={() => {
+                          setClearedBookings((prev) => new Set(prev).add(selected.id));
+                          void fetch(`/api/conversations/${selected.id}/booking-request`, {
+                            method: "DELETE",
+                          }).catch(() => {});
+                        }}
+                        className="flex size-8 items-center justify-center rounded-lg text-amber-700 hover:bg-amber-100"
+                      >
+                        <X size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             <div
               ref={listRef}
@@ -1487,7 +1560,19 @@ export function InboxClient({
                   customerPhone={selected.customer_phone}
                   customerName={selected.customer_name ?? null}
                   isAdmin={isAdmin}
-                  suggestedLocation={lastCustomerText}
+                  suggestedLocation={
+                    (!clearedBookings.has(selected.id) &&
+                      bookingRequestOf(selected)?.location) ||
+                    lastCustomerText
+                  }
+                  booking={
+                    clearedBookings.has(selected.id)
+                      ? null
+                      : bookingRequestOf(selected)
+                  }
+                  onOrderCreated={() =>
+                    setClearedBookings((prev) => new Set(prev).add(selected.id))
+                  }
                 />
               </Suspense>
             ) : null}

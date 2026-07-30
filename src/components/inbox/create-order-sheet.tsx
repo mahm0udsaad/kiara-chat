@@ -4,7 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, MapPin, Check } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
-import type { Specialist, Driver, TripType, DispatchSettings } from "@/lib/types";
+import type {
+  Specialist,
+  Driver,
+  TripType,
+  DispatchSettings,
+  BookingRequest,
+} from "@/lib/types";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 
 const DURATION_PRESETS = [30, 45, 60, 90, 120];
@@ -36,6 +42,8 @@ export function CreateOrderSheet({
   customerName,
   isAdmin,
   suggestedLocation,
+  booking = null,
+  onOrderCreated,
 }: {
   open: boolean;
   onClose: () => void;
@@ -45,6 +53,10 @@ export function CreateOrderSheet({
   isAdmin: boolean;
   /** Last customer message — offered as a one-tap fill for the location field. */
   suggestedLocation: string | null;
+  /** Details the bot collected, shown as a reference while filling the form. */
+  booking?: BookingRequest | null;
+  /** Fired once the order is saved — lets the inbox clear the booking badge. */
+  onOrderCreated?: () => void;
 }) {
   const [specialists, setSpecialists] = useState<Specialist[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
@@ -128,12 +140,13 @@ export function CreateOrderSheet({
         return;
       }
       setDone(data?.sent ? "sent" : "failed");
+      onOrderCreated?.();
     } catch {
       setError("تعذّر إنشاء الطلب");
     } finally {
       setSubmitting(false);
     }
-  }, [specialistId, driverId, arrival, location, duration, tripType, conversationId]);
+  }, [specialistId, driverId, arrival, location, duration, tripType, conversationId, onOrderCreated]);
 
   const canSuggest = useMemo(
     () => Boolean(suggestedLocation && suggestedLocation.trim()),
@@ -170,6 +183,22 @@ export function CreateOrderSheet({
         </div>
       ) : (
         <div className="space-y-4">
+          {booking ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p className="mb-1 font-semibold text-amber-800">
+                🤖 ما جمعه البوت من الزبونة
+              </p>
+              {booking.service ? <p>الخدمة: {booking.service}</p> : null}
+              {booking.time ? <p>الموعد: {booking.time}</p> : null}
+              {booking.location ? (
+                <p className="break-words">الموقع: {booking.location}</p>
+              ) : null}
+              {!booking.service && !booking.time && !booking.location && booking.summary ? (
+                <p className="break-words">{booking.summary}</p>
+              ) : null}
+            </div>
+          ) : null}
+
           {rostersLoading ? (
             <div className="flex items-center justify-center gap-2 py-6 text-sm text-[var(--muted)]">
               <Loader2 size={14} className="animate-spin" /> جارٍ التحميل…

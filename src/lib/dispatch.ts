@@ -318,7 +318,30 @@ export async function createAndDispatchOrder(
     .select(ORDER_COLS)
     .single();
 
+  // The order IS the resolution of the bot's booking request — clear the badge.
+  await clearBookingRequest(input.conversationId).catch(() => {});
+
   return { order: (updated ?? created) as DriverOrder, sent };
+}
+
+/** Drop the bot-collected booking_request flag from a conversation, if any. */
+export async function clearBookingRequest(conversationId: string): Promise<void> {
+  const admin = getAdminSupabaseClient();
+  const { data: conv } = await admin
+    .from("conversations")
+    .select("metadata")
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  const metadata = (conv?.metadata as Record<string, unknown> | null) ?? null;
+  if (!metadata || !("booking_request" in metadata)) return;
+  const rest = { ...metadata };
+  delete rest.booking_request;
+  await admin
+    .from("conversations")
+    .update({ metadata: rest })
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID);
 }
 
 /** Recent orders for a conversation. */

@@ -107,13 +107,13 @@ async function turn(input: BotTurnInput): Promise<BotTurnOutcome> {
   });
   if (!decision) {
     // The model failed us — hand back rather than leaving her on read.
-    await handOff(input.conversationId, "unknown", "");
+    await handOff(input.conversationId, "unknown", null);
     return { replied: false, reason: "model_error" };
   }
 
   const reply = decision.reply.trim();
   if (!reply) {
-    await handOff(input.conversationId, "unknown", "");
+    await handOff(input.conversationId, "unknown", null);
     return { replied: false, reason: "empty_reply" };
   }
 
@@ -132,7 +132,7 @@ async function turn(input: BotTurnInput): Promise<BotTurnOutcome> {
   await bumpConversationActivity(input.conversationId, { inbound: false });
 
   if (decision.handoff && decision.handoffReason !== "none") {
-    await handOff(input.conversationId, decision.handoffReason, decision.bookingSummary);
+    await handOff(input.conversationId, decision.handoffReason, decision);
   }
 
   return { replied: true, handoff: decision.handoff };
@@ -241,21 +241,45 @@ async function decide(args: {
 
 /**
  * Give the conversation back to the team: unassign it so it surfaces in the
- * inbox as unclaimed, and leave an internal note saying why the bot stepped out.
+ * inbox as unclaimed, and leave an internal note saying why the bot stepped
+ * out. A booking handoff additionally pins a structured booking_request on the
+ * conversation's metadata — that's what drives the «طلب حجز» badge and the
+ * prefilled order form; specialist/driver choice stays with the humans.
  */
 async function handOff(
   conversationId: string,
   reason: Exclude<BotDecision["handoffReason"], "none">,
-  bookingSummary: string
+  decision: BotDecision | null
 ): Promise<void> {
   const admin = getAdminSupabaseClient();
+
+  const patch: Record<string, unknown> = { handler_mode: "unassigned" };
+  if (reason === "booking" && decision) {
+    const { data: conv } = await admin
+      .from("conversations")
+      .select("metadata")
+      .eq("id", conversationId)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .maybeSingle();
+    patch.metadata = {
+      ...((conv?.metadata as Record<string, unknown>) ?? {}),
+      booking_request: {
+        status: "pending",
+        summary: decision.bookingSummary.trim(),
+        service: decision.bookingService.trim(),
+        time: decision.bookingTime.trim(),
+        location: decision.bookingLocation.trim(),
+        at: new Date().toISOString(),
+      },
+    };
+  }
   await admin
     .from("conversations")
-    .update({ handler_mode: "unassigned" })
+    .update(patch)
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
 
-  const summary = bookingSummary.trim();
+  const summary = decision?.bookingSummary.trim() ?? "";
   const body = summary
     ? `🤖 حوّل البوت المحادثة — ${HANDOFF_LABEL[reason]}:\n${summary}`
     : `🤖 حوّل البوت المحادثة — ${HANDOFF_LABEL[reason]}.`;
