@@ -229,7 +229,7 @@ function RosterSection<T extends Row>({
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-[var(--muted)]">لا يوجد أحد بعد.</p>
+        <p className="text-sm text-muted-foreground">لا يوجد أحد بعد.</p>
       )}
     </section>
   );
@@ -301,7 +301,7 @@ function RosterRow({
               setNationality(rowNationality);
             }}
             aria-label="إلغاء"
-            className="flex size-10 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-black/5"
+            className="flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-black/5"
           >
             <X size={16} />
           </button>
@@ -330,7 +330,7 @@ function RosterRow({
           ) : null}
         </p>
         {row.phone ? (
-          <p dir="ltr" className="truncate text-right text-xs text-[var(--muted)]">
+          <p dir="ltr" className="truncate text-right text-xs text-muted-foreground">
             {row.phone}
           </p>
         ) : null}
@@ -340,7 +340,7 @@ function RosterRow({
           type="button"
           onClick={() => setEditing(true)}
           aria-label="تعديل"
-          className="flex size-9 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-black/5"
+          className="flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-black/5"
         >
           <Pencil size={15} />
         </button>

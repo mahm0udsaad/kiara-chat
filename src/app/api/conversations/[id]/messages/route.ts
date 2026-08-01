@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
+import { denyIfRouted } from "@/lib/conversation-access";
 import { getConversationMessages } from "@/lib/inbox";
 
 export async function GET(
@@ -11,6 +12,8 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { id } = await params;
+  const denied = await denyIfRouted(id, session);
+  if (denied) return denied;
   const messages = await getConversationMessages(id);
   return NextResponse.json({ messages });
 }

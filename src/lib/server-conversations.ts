@@ -72,6 +72,46 @@ export async function findOrCreateConversation(
   return { id: created.id as string, is_new: true };
 }
 
+/**
+ * WhatsApp increasingly addresses 1:1 chats by an anonymized `@lid` instead of
+ * the phone jid, and a reply typed in the phone app often carries nothing else
+ * — no phone number anywhere on the message. So the first time a chat's lid
+ * arrives alongside a resolvable phone, pin it to the conversation; lid-only
+ * messages are then matched back through it instead of being dropped.
+ */
+export async function rememberChatLid(
+  conversationId: string,
+  chatLid: string
+): Promise<void> {
+  const admin = getAdminSupabaseClient();
+  const { data } = await admin
+    .from("conversations")
+    .select("metadata")
+    .eq("id", conversationId)
+    .maybeSingle();
+  const metadata = (data?.metadata as Record<string, unknown>) ?? {};
+  if (metadata.wa_lid === chatLid) return;
+  await admin
+    .from("conversations")
+    .update({ metadata: { ...metadata, wa_lid: chatLid } })
+    .eq("id", conversationId);
+}
+
+/** The conversation a lid-only message belongs to, if we've seen the lid. */
+export async function findConversationByLid(
+  chatLid: string
+): Promise<{ id: string } | null> {
+  const { data } = await getAdminSupabaseClient()
+    .from("conversations")
+    .select("id")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("metadata->>wa_lid", chatLid)
+    .order("last_message_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.id ? { id: data.id as string } : null;
+}
+
 /** Idempotency check — the WhatsApp message id lives in external_message_sid. */
 export async function hasMessageWithSid(sid: string): Promise<boolean> {
   const { data } = await getAdminSupabaseClient()

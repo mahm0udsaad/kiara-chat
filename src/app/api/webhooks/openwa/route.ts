@@ -10,6 +10,8 @@ import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { runBotTurn } from "@/lib/bot/reply";
 import {
   findOrCreateConversation,
+  findConversationByLid,
+  rememberChatLid,
   hasMessageWithSid,
   saveMessage,
   bumpConversationActivity,
@@ -74,17 +76,37 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ deduped: true });
   }
 
-  const phone = normalizeE164(event.customerPhone);
-  if (!phone) {
+  const phone = normalizeE164(event.customerPhone ?? "");
+  const chatLid = event.chatLid?.trim() || null;
+  if (!phone && !chatLid) {
     return NextResponse.json({ error: "Missing customerPhone" }, { status: 400 });
   }
 
   // pushName is only the customer's name on an inbound message; on fromMe it's
   // Kiara's own account name (the engine already nulls it, belt and braces here).
-  const conv = await findOrCreateConversation(
-    phone,
-    event.fromMe ? null : event.customerName
-  );
+  let conv: { id: string } | null = null;
+  if (phone) {
+    conv = await findOrCreateConversation(
+      phone,
+      event.fromMe ? null : event.customerName
+    );
+    // Bind the lid to the thread while we still have the phone in hand.
+    if (chatLid) await rememberChatLid(conv.id, chatLid);
+  } else if (chatLid) {
+    // Lid-only: a phone-app reply on a chat WhatsApp no longer labels with a
+    // number. It belongs to whichever thread that lid was bound to.
+    conv = await findConversationByLid(chatLid);
+    if (!conv) {
+      // Nothing to attach it to yet — the binding arrives with the customer's
+      // next inbound message. Answer 200 so the engine doesn't retry forever.
+      console.warn(`[openwa] unbound lid, message not stored: ${chatLid}`);
+      return NextResponse.json({ ok: true, unresolved: "lid" });
+    }
+  }
+  if (!conv) {
+    return NextResponse.json({ error: "Unresolved chat" }, { status: 400 });
+  }
+  const conversationId = conv.id;
 
   let messageType = event.messageType || "text";
   const mediaSlots: StoredMediaSlot[] = [];
@@ -133,15 +155,15 @@ export async function POST(request: NextRequest) {
   // inbound only: the pairing-time history backfill replays old messages
   // through this same endpoint, and answering a week-old question is worse
   // than staying quiet.
-  if (!event.fromMe && isLive(event.timestamp)) {
+  if (!event.fromMe && phone && isLive(event.timestamp)) {
     after(() =>
       runBotTurn({
-        conversationId: conv.id,
+        conversationId,
         customerPhone: phone,
         body: event.body || "",
       })
     );
   }
 
-  return NextResponse.json({ ok: true, messageId, conversationId: conv.id });
+  return NextResponse.json({ ok: true, messageId, conversationId });
 }

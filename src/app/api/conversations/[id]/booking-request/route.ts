@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
+import { denyIfRouted } from "@/lib/conversation-access";
 import { clearBookingRequest } from "@/lib/dispatch";
 
 /**
@@ -15,6 +16,8 @@ export async function DELETE(
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
+  const denied = await denyIfRouted(id, session);
+  if (denied) return denied;
   try {
     await clearBookingRequest(id);
     return NextResponse.json({ ok: true });

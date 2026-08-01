@@ -57,7 +57,7 @@ export function BotSettingsCard({ initial }: { initial: BotSettings }) {
         <h2 className="font-semibold text-[var(--foreground)]">الرد الآلي (البوت)</h2>
       </div>
 
-      <p className="text-sm text-[var(--muted)]">
+      <p className="text-sm text-muted-foreground">
         يرد البوت على أسئلة الزبونات من معرفة كيارا (الخدمات والأسعار والمدد)،
         ويجمع تفاصيل الحجز ثم يحوّل المحادثة لكِ. الشكاوى وأي سؤال خارج معرفته
         تتحول لموظفة مباشرة.
@@ -194,7 +194,7 @@ function BotTester() {
   return (
     <div className="space-y-2 rounded-xl border border-dashed p-3">
       <p className="text-sm font-medium text-[var(--foreground)]">جرّبي البوت</p>
-      <p className="text-xs text-[var(--muted)]">
+      <p className="text-xs text-muted-foreground">
         اكتبي سؤالًا كما تكتبه الزبونة — يظهر الرد هنا فقط ولا يُرسل لأحد.
       </p>
       <textarea
@@ -219,7 +219,7 @@ function BotTester() {
       {result ? (
         <div className="space-y-1.5 rounded-lg bg-black/[0.03] p-3">
           <p className="whitespace-pre-wrap text-sm text-[var(--foreground)]">{result.reply}</p>
-          <p className="text-[11px] text-[var(--muted)]">
+          <p className="text-[11px] text-muted-foreground">
             {result.handoff ? `سيحوّل المحادثة (${result.handoffReason})` : "سيكمل بنفسه"} ·{" "}
             {result.grounded ? "مستند لمعرفة كيارا" : "لم يجد معرفة قوية"} · تطابق{" "}
             <span className="tabular-nums">{result.similarity.toFixed(2)}</span>
@@ -245,7 +245,7 @@ function Toggle({
     <label className="flex cursor-pointer items-start justify-between gap-3">
       <span className="min-w-0">
         <span className="block text-sm font-medium text-[var(--foreground)]">{label}</span>
-        {hint ? <span className="block text-xs text-[var(--muted)]">{hint}</span> : null}
+        {hint ? <span className="block text-xs text-muted-foreground">{hint}</span> : null}
       </span>
       <input
         type="checkbox"

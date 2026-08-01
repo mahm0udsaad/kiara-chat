@@ -145,7 +145,7 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
         </h2>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block">
-            <span className="mb-1 block text-sm text-[var(--muted)]">الاسم</span>
+            <span className="mb-1 block text-sm text-muted-foreground">الاسم</span>
             <input
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
@@ -157,7 +157,7 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm text-[var(--muted)]">البريد الإلكتروني</span>
+            <span className="mb-1 block text-sm text-muted-foreground">البريد الإلكتروني</span>
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -172,7 +172,7 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm text-[var(--muted)]">كلمة المرور</span>
+            <span className="mb-1 block text-sm text-muted-foreground">كلمة المرور</span>
             <input
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -188,7 +188,7 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm text-[var(--muted)]">الصلاحية</span>
+            <span className="mb-1 block text-sm text-muted-foreground">الصلاحية</span>
             <select
               value={role}
               onChange={(e) => setRole(e.target.value as "agent" | "admin")}
@@ -249,7 +249,7 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
                   </span>
                 ) : null}
               </p>
-              <p dir="ltr" className="truncate text-xs text-[var(--muted)]">
+              <p dir="ltr" className="truncate text-xs text-muted-foreground">
                 {m.email}
               </p>
             </div>
@@ -264,7 +264,7 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
                   setCopied(false);
                 }}
                 disabled={busyId === m.id}
-                className="flex min-h-10 items-center gap-1 rounded-lg border px-3 text-xs text-[var(--muted)] hover:bg-[var(--brand-soft)] disabled:opacity-60"
+                className="flex min-h-10 items-center gap-1 rounded-lg border px-3 text-xs text-muted-foreground hover:bg-[var(--brand-soft)] disabled:opacity-60"
               >
                 <KeyRound size={14} aria-hidden="true" /> كلمة المرور
               </button>
@@ -272,7 +272,7 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
                 type="button"
                 onClick={() => toggleActive(m)}
                 disabled={busyId === m.id}
-                className="flex min-h-10 items-center gap-1 rounded-lg border px-3 text-xs text-[var(--muted)] hover:bg-[var(--brand-soft)] disabled:opacity-60"
+                className="flex min-h-10 items-center gap-1 rounded-lg border px-3 text-xs text-muted-foreground hover:bg-[var(--brand-soft)] disabled:opacity-60"
               >
                 {busyId === m.id ? (
                   <Loader2 size={14} className="animate-spin" aria-hidden="true" />
@@ -299,7 +299,7 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
               <Check size={14} aria-hidden="true" /> تم تعيين كلمة المرور الجديدة.
             </p>
             <div>
-              <p className="mb-1 text-xs text-[var(--muted)]">
+              <p className="mb-1 text-xs text-muted-foreground">
                 انسخيها الآن وسلّميها للموظفة — لن تظهر مرة أخرى.
               </p>
               <div className="flex items-center gap-2">
@@ -320,7 +320,7 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
                     }
                   }}
                   aria-label="نسخ كلمة المرور"
-                  className="flex size-11 shrink-0 items-center justify-center rounded-lg border text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                  className="flex size-11 shrink-0 items-center justify-center rounded-lg border text-muted-foreground hover:bg-[var(--brand-soft)]"
                 >
                   {copied ? (
                     <Check size={16} className="text-emerald-600" aria-hidden="true" />
@@ -347,12 +347,12 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
           <div className="space-y-3">
             {/* Passwords are stored as a one-way hash, so the current one can't
                 be shown — only replaced. Say so rather than leave it puzzling. */}
-            <p className="rounded-lg bg-[var(--brand-soft)] px-3 py-2 text-xs text-[var(--muted)]">
+            <p className="rounded-lg bg-[var(--brand-soft)] px-3 py-2 text-xs text-muted-foreground">
               كلمة المرور الحالية محفوظة مشفّرة ولا يمكن عرضها لأي شخص. يمكنكِ تعيين
               كلمة مرور جديدة وتسليمها للموظفة.
             </p>
             <label className="block">
-              <span className="mb-1 block text-sm text-[var(--muted)]">
+              <span className="mb-1 block text-sm text-muted-foreground">
                 كلمة المرور الجديدة
               </span>
               <div className="flex items-center gap-2">
@@ -370,7 +370,7 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
                   type="button"
                   onClick={() => setNewPassword(generatePassword())}
                   aria-label="توليد كلمة مرور"
-                  className="flex size-11 shrink-0 items-center justify-center rounded-lg border text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                  className="flex size-11 shrink-0 items-center justify-center rounded-lg border text-muted-foreground hover:bg-[var(--brand-soft)]"
                 >
                   <Wand2 size={16} aria-hidden="true" />
                 </button>

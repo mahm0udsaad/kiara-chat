@@ -9,9 +9,15 @@ export const dynamic = "force-dynamic";
 
 export default async function InboxPage() {
   const session = await getKiaraSession();
+  // Exclusively-routed chats are filtered out for everyone but their owner and
+  // the admins — that filter is what keeps them out of the list *and* silent.
+  const viewer = {
+    isAdmin: session?.role === "admin",
+    teamMemberId: session?.teamMemberId ?? null,
+  };
   const [conversations, agents, labels, labelAssignments, savedReplies] =
     await Promise.all([
-      listConversations(200),
+      listConversations(200, viewer),
       listAgents(),
       listLabels(),
       getLabelAssignments(),

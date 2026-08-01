@@ -24,7 +24,7 @@ export function CatalogManager({ initial }: { initial: CatalogItem[] }) {
         <BookOpen size={18} className="text-[var(--brand)]" aria-hidden="true" />
         <h2 className="font-semibold text-[var(--foreground)]">الباقات والخدمات</h2>
       </div>
-      <p className="text-sm text-[var(--muted)]">
+      <p className="text-sm text-muted-foreground">
         شرح كل باقة وسعرها. يظهر لكِ في زر الباقات داخل المحادثة لإدراجه بضغطة،
         ويعتمد عليه البوت في رده على الأسعار.
       </p>
@@ -240,7 +240,7 @@ function AddForm({
           type="button"
           onClick={onCancel}
           aria-label="إلغاء"
-          className="flex size-10 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-black/5"
+          className="flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-black/5"
         >
           <X size={16} />
         </button>
@@ -341,7 +341,7 @@ function ItemRow({
               setDescription(item.description);
             }}
             aria-label="إلغاء"
-            className="flex size-9 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-black/5"
+            className="flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-black/5"
           >
             <X size={16} />
           </button>
@@ -362,7 +362,7 @@ function ItemRow({
               </span>
             ) : null}
           </p>
-          <p className="mt-0.5 whitespace-pre-wrap text-xs text-[var(--muted)]">
+          <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted-foreground">
             {item.description || "لا يوجد شرح — أضيفيه ليظهر للزبونة."}
           </p>
         </div>
@@ -371,7 +371,7 @@ function ItemRow({
             type="button"
             onClick={() => setEditing(true)}
             aria-label="تعديل"
-            className="flex size-9 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-black/5"
+            className="flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-black/5"
           >
             <Pencil size={15} />
           </button>
@@ -382,7 +382,7 @@ function ItemRow({
             aria-label={item.isAvailable ? "إخفاء" : "إظهار"}
             className={cn(
               "flex size-9 items-center justify-center rounded-lg hover:bg-black/5 disabled:opacity-50",
-              item.isAvailable ? "text-[var(--muted)]" : "text-emerald-600"
+              item.isAvailable ? "text-muted-foreground" : "text-emerald-600"
             )}
           >
             {busy ? (
@@ -418,7 +418,7 @@ function Chip({
         "min-h-8 rounded-full border px-2.5 text-[11px] transition-colors",
         active
           ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-          : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+          : "text-muted-foreground hover:bg-[var(--brand-soft)]"
       )}
     >
       {children}

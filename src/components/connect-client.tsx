@@ -37,9 +37,12 @@ export function ConnectClient() {
   }, []);
 
   useEffect(() => {
-    void poll();
+    const initial = window.setTimeout(() => void poll(), 0);
     const t = setInterval(poll, 3000);
-    return () => clearInterval(t);
+    return () => {
+      window.clearTimeout(initial);
+      clearInterval(t);
+    };
   }, [poll]);
 
   useEffect(() => {
@@ -78,7 +81,7 @@ export function ConnectClient() {
 
       <div className="rounded-2xl border bg-[var(--surface)] p-6">
         {!data ? (
-          <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> جارٍ التحقق من حالة الخدمة…
           </div>
         ) : !data.configured ? (
@@ -162,7 +165,7 @@ export function ConnectClient() {
           </div>
         ) : (
           <div className="flex flex-col items-center gap-3">
-            <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" /> الحالة: {state} — بانتظار الرمز…
             </div>
             <button

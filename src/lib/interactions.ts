@@ -14,7 +14,12 @@ import {
   messageTypeFromContentType,
   MAX_MEDIA_BYTES,
 } from "@/lib/storage-media";
-import type { CsStatus, AgentInfo } from "@/lib/types";
+import type {
+  CsStatus,
+  AgentInfo,
+  Conversation,
+  ConversationSection,
+} from "@/lib/types";
 
 export type { CsStatus, AgentInfo };
 
@@ -140,6 +145,76 @@ export async function setCsStatus(conversationId: string, csStatus: CsStatus) {
     .update({ metadata, status: dbStatus })
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
+}
+
+/** Read-modify-write one key of a conversation's metadata. Owner-only callers. */
+async function patchMetadata(
+  conversationId: string,
+  patch: Record<string, unknown>
+): Promise<Conversation | null> {
+  const admin = getAdminSupabaseClient();
+  const { data } = await admin
+    .from("conversations")
+    .select("metadata")
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  const metadata = { ...((data?.metadata as Record<string, unknown>) ?? {}), ...patch };
+  for (const [k, v] of Object.entries(patch)) if (v === null) delete metadata[k];
+
+  const { data: updated } = await admin
+    .from("conversations")
+    .update({ metadata })
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .select(
+      "id, restaurant_id, customer_phone, customer_name, status, started_at, last_message_at, last_inbound_at, handler_mode, assigned_to, unread_count, metadata"
+    )
+    .maybeSingle();
+  return (updated as Conversation) ?? null;
+}
+
+/** Tag the chat with the desk that handles it (الطلبات / الردود). Owner-only. */
+export async function setConversationSection(
+  conversationId: string,
+  section: ConversationSection | null
+) {
+  return patchMetadata(conversationId, { section });
+}
+
+/**
+ * Route a chat exclusively to one employee — nobody else sees it or is notified
+ * about it (lib/conversation-meta.ts). Routing also assigns the chat to them so
+ * it lands under "لي" with their name on it; un-routing leaves ownership alone,
+ * since the assignee is usually still the right person to answer.
+ *
+ * Writes with the admin client on purpose: the owner may have no team_members
+ * row of their own, so the claim RPC (which needs the caller's member id) is
+ * not an option here.
+ */
+export async function setConversationRouting(
+  conversationId: string,
+  targetTeamMemberId: string | null
+) {
+  const conversation = await patchMetadata(conversationId, {
+    routed_to: targetTeamMemberId,
+  });
+  if (!targetTeamMemberId) return conversation;
+
+  const { data } = await getAdminSupabaseClient()
+    .from("conversations")
+    .update({
+      assigned_to: targetTeamMemberId,
+      handler_mode: "human",
+      assigned_at: new Date().toISOString(),
+    })
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .select(
+      "id, restaurant_id, customer_phone, customer_name, status, started_at, last_message_at, last_inbound_at, handler_mode, assigned_to, unread_count, metadata"
+    )
+    .maybeSingle();
+  return ((data as Conversation) ?? conversation) ?? null;
 }
 
 /** Send an agent reply through the transport layer; records it either way. */

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Noto_Sans_Arabic } from "next/font/google";
 import "./globals.css";
+import { cn } from "@/lib/utils";
 
 // globals.css already referenced these variables but nothing defined them, so
 // every screen — Arabic included — was falling back to Arial.
@@ -45,7 +46,7 @@ export default function RootLayout({
     <html
       lang="ar"
       dir="rtl"
-      className={`${notoSansArabic.variable} ${inter.variable}`}
+      className={cn(notoSansArabic.variable, inter.variable, "font-sans")}
     >
       <body>{children}</body>
     </html>

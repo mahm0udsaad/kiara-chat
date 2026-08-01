@@ -27,8 +27,10 @@ import {
   Paperclip,
   Mic,
   Square,
-  Truck,
+  CalendarDays,
   BookOpen,
+  Inbox,
+  Lock,
   X,
 } from "lucide-react";
 
@@ -47,20 +49,30 @@ const CatalogSheet = lazy(() =>
   import("./catalog-sheet").then((module) => ({ default: module.CatalogSheet }))
 );
 import { Modal } from "@/components/ui/modal";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
 import type {
   BookingRequest,
   Conversation,
+  ConversationSection,
   Message,
   AgentInfo,
   CsStatus,
   Label,
   LabelColor,
 } from "@/lib/types";
+import {
+  SECTION_LABEL,
+  SECTION_ORDER,
+  routedToOf,
+  sectionOf,
+} from "@/lib/conversation-meta";
 import type { InternalNote } from "@/lib/notes";
 import type { SavedReply } from "@/lib/saved-replies";
 import { formatRelativeTime, agentDisplayName, dayKey } from "@/lib/format";
+import { findSharedLocation } from "@/lib/location";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 import { DaySeparator, MessageBubble } from "./message-bubble";
 import { useInboxRealtime } from "./use-inbox-realtime";
@@ -239,6 +251,9 @@ export function InboxClient({
   const [view, setView] = useState<View>("all");
   const [statusFilter, setStatusFilter] = useState<CsStatus | "all">("all");
   const [labelFilter, setLabelFilter] = useState<string>("all");
+  const [sectionFilter, setSectionFilter] = useState<ConversationSection | "all">(
+    "all"
+  );
   // Conversations read in this session — clears the badge before the server
   // render catches up, and keeps it clear while the thread stays open.
   const [locallyRead, setLocallyRead] = useState<Set<string>>(() => new Set());
@@ -267,6 +282,7 @@ export function InboxClient({
       if (view === "unassigned" && c.assigned_to) return false;
       if (view === "unread" && !unreadOf(c)) return false;
       if (statusFilter !== "all" && csStatusOf(c) !== statusFilter) return false;
+      if (sectionFilter !== "all" && sectionOf(c) !== sectionFilter) return false;
       if (labelFilter !== "all" && !(assignments[c.id] ?? []).includes(labelFilter))
         return false;
       return true;
@@ -276,6 +292,7 @@ export function InboxClient({
     search,
     view,
     statusFilter,
+    sectionFilter,
     labelFilter,
     assignments,
     myTeamMemberId,
@@ -337,13 +354,24 @@ export function InboxClient({
   // claimed, transferred, or resolved the chat — here or on another device),
   // the open thread must pick up the new row too, or the header chip and the
   // options modal keep showing stale ownership.
-  useEffect(() => {
+  // Adjusted during render rather than in an effect (the React-documented
+  // "state derived from props" pattern) so the re-sync happens before paint —
+  // and only when the server actually sent a new list, which is what keeps the
+  // optimistic patches in `act` visible in between.
+  const [syncedList, setSyncedList] = useState(conversations);
+  if (syncedList !== conversations) {
+    setSyncedList(conversations);
     setSelected((prev) => {
       if (!prev) return prev;
       const fresh = conversations.find((c) => c.id === prev.id);
-      return fresh ?? prev;
+      if (fresh) return fresh;
+      // Gone from an employee's list means the owner just routed it to someone
+      // else — close the thread instead of leaving a view they can no longer
+      // act on. Admins keep it: their list is never filtered, so a miss there
+      // only means the row fell past the 200-row window.
+      return isAdmin ? prev : null;
     });
-  }, [conversations]);
+  }
 
   // ---- live updates (Supabase Realtime) ----
   // Refs so the realtime callbacks always see the current selection without
@@ -495,6 +523,31 @@ export function InboxClient({
                   }
                 : null;
         if (ownerPatch) setSelected((p) => (p ? { ...p, ...ownerPatch } : p));
+
+        // Section/routing live in metadata — mirror them locally for the same
+        // reason: the modal reads them straight off `selected`.
+        if (path === "section" || path === "routing") {
+          const routedTo =
+            path === "routing"
+              ? ((body as { targetTeamMemberId: string | null }).targetTeamMemberId ??
+                null)
+              : undefined;
+          setSelected((p) =>
+            p
+              ? {
+                  ...p,
+                  metadata: {
+                    ...(p.metadata ?? {}),
+                    ...(path === "section"
+                      ? { section: (body as { section: string | null }).section }
+                      : { routed_to: routedTo }),
+                  },
+                  // Routing hands the chat to that employee as well.
+                  ...(routedTo ? { assigned_to: routedTo } : {}),
+                }
+              : p
+          );
+        }
         router.refresh();
       } finally {
         setBusy(false);
@@ -790,21 +843,22 @@ export function InboxClient({
     return agentDisplayName(agentMap[c.assigned_to]);
   };
 
+  /**
+   * What an exclusive route reads as. Only two kinds of people ever see a
+   * routed chat: the employee it belongs to, and the admins.
+   */
+  const routeLabel = (c: Conversation): string | null => {
+    const routedTo = routedToOf(c);
+    if (!routedTo) return null;
+    if (routedTo === myTeamMemberId) return "موجّهة لك";
+    return `موجّهة: ${agentDisplayName(agentMap[routedTo])}`;
+  };
+
   const selectedLabelIds = selected ? assignments[selected.id] ?? [] : [];
 
-  // Offered as a one-tap fill for the order's location field. A dropped pin
-  // (message_type "location", body = maps link) beats typed text — it IS the
-  // address — otherwise the latest thing the customer typed usually is.
-  const lastCustomerText = (() => {
-    let lastText: string | null = null;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m.role !== "customer" || !m.content?.trim()) continue;
-      if (m.message_type === "location") return m.content.trim();
-      if (m.message_type === "text" && !lastText) lastText = m.content.trim();
-    }
-    return lastText;
-  })();
+  // Feeds the order's location field: a pin or a maps link she shared fills it
+  // outright, a typed line is only offered as a suggestion.
+  const sharedLocation = findSharedLocation(messages);
 
   return (
     <div className="flex h-full">
@@ -852,7 +906,7 @@ export function InboxClient({
                   "min-h-9 shrink-0 rounded-full border px-3 text-xs transition-colors",
                   view === v
                     ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                    : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                    : "text-muted-foreground hover:bg-[var(--brand-soft)]"
                 )}
               >
                 {v === "all" ? "الكل" : v === "mine" ? "لي" : v === "unassigned" ? "غير مسندة" : "غير مقروءة"}
@@ -862,7 +916,7 @@ export function InboxClient({
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as CsStatus | "all")}
               aria-label="تصفية حسب الحالة"
-              className="min-h-9 shrink-0 rounded-full border px-2 text-xs text-[var(--muted)]"
+              className="min-h-9 shrink-0 rounded-full border px-2 text-xs text-muted-foreground"
             >
               <option value="all">كل الحالات</option>
               {CS_STATUS_ORDER.map((s) => (
@@ -871,12 +925,27 @@ export function InboxClient({
                 </option>
               ))}
             </select>
+            <select
+              value={sectionFilter}
+              onChange={(e) =>
+                setSectionFilter(e.target.value as ConversationSection | "all")
+              }
+              aria-label="تصفية حسب القسم"
+              className="min-h-9 shrink-0 rounded-full border px-2 text-xs text-muted-foreground"
+            >
+              <option value="all">كل الأقسام</option>
+              {SECTION_ORDER.map((s) => (
+                <option key={s} value={s}>
+                  {SECTION_LABEL[s]}
+                </option>
+              ))}
+            </select>
             {labels.length > 0 ? (
               <select
                 value={labelFilter}
                 onChange={(e) => setLabelFilter(e.target.value)}
                 aria-label="تصفية حسب التصنيف"
-                className="min-h-9 shrink-0 rounded-full border px-2 text-xs text-[var(--muted)]"
+                className="min-h-9 shrink-0 rounded-full border px-2 text-xs text-muted-foreground"
               >
                 <option value="all">كل التصنيفات</option>
                 {labels.map((l) => (
@@ -891,11 +960,13 @@ export function InboxClient({
 
         <div className="scroll-pane min-h-0 flex-1">
           {filtered.length === 0 ? (
-            <p className="p-4 text-sm text-[var(--muted)]">لا توجد نتائج.</p>
+            <p className="p-4 text-sm text-muted-foreground">لا توجد نتائج.</p>
           ) : (
             filtered.map((c) => {
               const cs = csStatusOf(c);
               const owner = ownerLabel(c);
+              const route = routeLabel(c);
+              const section = sectionOf(c);
               const wa = isHandledOnWhatsApp(c);
               const cLabels = (assignments[c.id] ?? [])
                 .map((id) => labelMap[id])
@@ -919,7 +990,7 @@ export function InboxClient({
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <span dir="ltr" className="truncate text-xs text-[var(--muted)]">
+                    <span dir="ltr" className="truncate text-xs text-muted-foreground">
                       {c.customer_phone}
                     </span>
                     <div className="flex items-center gap-1">
@@ -942,6 +1013,11 @@ export function InboxClient({
                           🤖 طلب حجز
                         </span>
                       ) : null}
+                      {section ? (
+                        <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] text-sky-700">
+                          {SECTION_LABEL[section]}
+                        </span>
+                      ) : null}
                       <span className="rounded-full bg-[var(--brand-soft)] px-2 py-0.5 text-[10px] text-[var(--brand)]">
                         {CS_STATUS_LABEL[cs]}
                       </span>
@@ -962,11 +1038,21 @@ export function InboxClient({
                       ))}
                     </div>
                   ) : null}
-                  {owner ? (
-                    <span className="flex items-center gap-1 self-start rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
-                      <UserCheck size={11} aria-hidden="true" />
-                      المسؤول: {owner}
-                    </span>
+                  {owner || route ? (
+                    <div className="flex flex-wrap items-center gap-1">
+                      {owner ? (
+                        <span className="flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
+                          <UserCheck size={11} aria-hidden="true" />
+                          المسؤول: {owner}
+                        </span>
+                      ) : null}
+                      {route ? (
+                        <span className="flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                          <Lock size={11} aria-hidden="true" />
+                          {route}
+                        </span>
+                      ) : null}
+                    </div>
                   ) : null}
                 </button>
               );
@@ -983,7 +1069,7 @@ export function InboxClient({
         )}
       >
         {!selected ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-[var(--muted)]">
+          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
             اختر محادثة لعرضها
           </div>
         ) : (
@@ -996,7 +1082,7 @@ export function InboxClient({
                   type="button"
                   onClick={closeThread}
                   aria-label="العودة إلى قائمة المحادثات"
-                  className="flex size-10 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)] lg:hidden"
+                  className="flex size-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-[var(--brand-soft)] lg:hidden"
                 >
                   <ChevronRight size={20} aria-hidden="true" />
                 </button>
@@ -1016,7 +1102,7 @@ export function InboxClient({
                   <p
                     dir={selected.customer_name ? "ltr" : undefined}
                     className={cn(
-                      "truncate text-xs text-[var(--muted)]",
+                      "truncate text-xs text-muted-foreground",
                       selected.customer_name && "text-right"
                     )}
                   >
@@ -1026,15 +1112,28 @@ export function InboxClient({
                           selected.last_message_at ?? selected.started_at
                         )}`}
                   </p>
-                  {selected.assigned_to ? (
-                    <span className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
-                      <UserCheck size={11} className="shrink-0" aria-hidden="true" />
-                      المسؤول: {ownerLabel(selected)}
-                    </span>
-                  ) : null}
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                    {selected.assigned_to ? (
+                      <span className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
+                        <UserCheck size={11} className="shrink-0" aria-hidden="true" />
+                        المسؤول: {ownerLabel(selected)}
+                      </span>
+                    ) : null}
+                    {routeLabel(selected) ? (
+                      <span className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                        <Lock size={11} className="shrink-0" aria-hidden="true" />
+                        {routeLabel(selected)}
+                      </span>
+                    ) : null}
+                    {sectionOf(selected) ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-700">
+                        {SECTION_LABEL[sectionOf(selected)!]}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
-                {/* Dispatch the visit to a driver over WhatsApp. */}
-                <button
+                {/* Create the visit first; dispatch happens from /orders. */}
+                <Button
                   type="button"
                   onClick={() => {
                     setOrderSheetMounted(true);
@@ -1043,13 +1142,15 @@ export function InboxClient({
                   onPointerEnter={preloadOrderSheet}
                   onFocus={preloadOrderSheet}
                   onPointerDown={preloadOrderSheet}
-                  aria-label="إنشاء طلب للسائق"
+                  aria-label="حجز موعد"
                   aria-haspopup="dialog"
-                  className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--brand-soft)] px-2.5 text-sm font-medium text-[var(--brand)] transition-colors hover:bg-[var(--brand)] hover:text-white sm:px-3"
+                  variant="secondary"
+                  size="lg"
+                  className="min-h-10 shrink-0"
                 >
-                  <Truck size={16} aria-hidden="true" />
-                  <span className="hidden sm:inline">طلب سائق</span>
-                </button>
+                  <CalendarDays data-icon="inline-start" aria-hidden="true" />
+                  <span className="hidden sm:inline">حجز</span>
+                </Button>
                 {/* Every other control lives behind this one button so the chat
                     screen itself stays free of chrome. */}
                 <button
@@ -1057,7 +1158,7 @@ export function InboxClient({
                   onClick={() => setOptionsOpen(true)}
                   aria-label="خيارات المحادثة"
                   aria-haspopup="dialog"
-                  className="flex size-10 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--brand-soft)]"
+                  className="flex size-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-[var(--brand-soft)]"
                 >
                   <MoreVertical size={20} aria-hidden="true" />
                 </button>
@@ -1090,20 +1191,18 @@ export function InboxClient({
               </div>
             ) : null}
 
-            {/* The bot collected booking details and handed the chat over. It
-                never picks the specialist or driver — that (and creating the
-                order) is deliberately the humans' half of the flow. */}
+            {/* The bot collected booking details; the employee confirms the
+                date now, while specialist/driver assignment happens later. */}
             {(() => {
               const booking = bookingRequestOf(selected);
               if (!booking || clearedBookings.has(selected.id)) return null;
               return (
-                <div className="border-b border-amber-200 bg-amber-50 px-4 py-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <p className="text-xs font-semibold text-amber-800">
-                        🤖 جمع البوت تفاصيل حجز — تحتاج اختيار الأخصائية والسائق
-                      </p>
-                      <dl className="space-y-0.5 text-xs text-amber-900">
+                <div className="border-b bg-background px-4 py-2.5">
+                  <Alert>
+                    <CalendarDays />
+                    <AlertTitle>جمع المساعد تفاصيل حجز</AlertTitle>
+                    <AlertDescription className="flex flex-col gap-3">
+                      <dl className="flex flex-col gap-0.5 text-xs">
                         {booking.service ? (
                           <div>الخدمة: {booking.service}</div>
                         ) : null}
@@ -1115,19 +1214,18 @@ export function InboxClient({
                           <div className="break-words">{booking.summary}</div>
                         ) : null}
                       </dl>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <button
+                      <div className="flex items-center gap-2">
+                      <Button
                         type="button"
                         onClick={() => {
                           setOrderSheetMounted(true);
                           setOrderOpen(true);
                         }}
-                        className="min-h-8 rounded-lg bg-amber-600 px-3 text-xs font-medium text-white"
+                        size="sm"
                       >
-                        إنشاء الطلب
-                      </button>
-                      <button
+                        تأكيد الحجز
+                      </Button>
+                      <Button
                         type="button"
                         aria-label="تجاهل طلب الحجز"
                         onClick={() => {
@@ -1136,12 +1234,14 @@ export function InboxClient({
                             method: "DELETE",
                           }).catch(() => {});
                         }}
-                        className="flex size-8 items-center justify-center rounded-lg text-amber-700 hover:bg-amber-100"
+                        variant="ghost"
+                        size="icon-sm"
                       >
-                        <X size={14} aria-hidden="true" />
-                      </button>
-                    </div>
-                  </div>
+                        <X aria-hidden="true" />
+                      </Button>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
                 </div>
               );
             })()}
@@ -1152,11 +1252,11 @@ export function InboxClient({
               className="scroll-pane min-h-0 flex-1 space-y-2 p-3 sm:p-5"
             >
               {loading ? (
-                <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--muted)]">
+                <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                   <Loader2 size={14} className="animate-spin" /> جارٍ التحميل…
                 </div>
               ) : messages.length === 0 ? (
-                <p className="py-8 text-center text-sm text-[var(--muted)]">
+                <p className="py-8 text-center text-sm text-muted-foreground">
                   لا توجد رسائل.
                 </p>
               ) : (
@@ -1210,7 +1310,7 @@ export function InboxClient({
                     "flex size-11 items-center justify-center rounded-lg border transition-colors disabled:opacity-60",
                     plusOpen
                       ? "border-[var(--brand)] bg-[var(--brand-soft)] text-[var(--brand)]"
-                      : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                      : "text-muted-foreground hover:bg-[var(--brand-soft)]"
                   )}
                 >
                   {uploading ? (
@@ -1269,7 +1369,7 @@ export function InboxClient({
                           <button
                             type="button"
                             onClick={() => setPlusView("menu")}
-                            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs text-muted-foreground hover:bg-[var(--brand-soft)]"
                           >
                             <ChevronRight size={14} aria-hidden="true" /> رجوع
                           </button>
@@ -1287,7 +1387,7 @@ export function InboxClient({
                               <span className="block truncate text-sm font-medium text-[var(--foreground)]">
                                 {r.title}
                               </span>
-                              <span className="block truncate text-[11px] text-[var(--muted)]">
+                              <span className="block truncate text-[11px] text-muted-foreground">
                                 {r.body}
                               </span>
                             </button>
@@ -1307,7 +1407,7 @@ export function InboxClient({
                   "flex size-11 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-60",
                   recording
                     ? "animate-pulse border-red-300 bg-red-50 text-red-600"
-                    : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+                    : "text-muted-foreground hover:bg-[var(--brand-soft)]"
                 )}
               >
                 {recording ? (
@@ -1393,7 +1493,7 @@ export function InboxClient({
                       type="button"
                       onClick={() => act("release")}
                       disabled={busy}
-                      className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border text-sm text-[var(--muted)] hover:bg-[var(--brand-soft)] disabled:opacity-60"
+                      className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border text-sm text-muted-foreground hover:bg-[var(--brand-soft)] disabled:opacity-60"
                     >
                       <UserX size={16} aria-hidden="true" /> إطلاق المحادثة
                     </button>
@@ -1408,7 +1508,7 @@ export function InboxClient({
                     </button>
                   )}
                   <div className="flex items-center gap-2">
-                    <Repeat size={16} className="shrink-0 text-[var(--muted)]" aria-hidden="true" />
+                    <Repeat size={16} className="shrink-0 text-muted-foreground" aria-hidden="true" />
                     <select
                       value=""
                       disabled={busy}
@@ -1429,6 +1529,62 @@ export function InboxClient({
                     </select>
                   </div>
                 </section>
+
+                {/* Owner-only desk routing. Employees never see this block —
+                    and the API rejects them even if they find the endpoint. */}
+                {isAdmin ? (
+                  <section className="space-y-2">
+                    <h3 className="flex items-center gap-1.5 text-xs font-semibold text-[var(--subtle)]">
+                      <Inbox size={13} aria-hidden="true" /> القسم والتوجيه
+                    </h3>
+                    <select
+                      value={sectionOf(selected) ?? ""}
+                      disabled={busy}
+                      onChange={(e) =>
+                        act("section", { section: e.target.value || null })
+                      }
+                      aria-label="قسم المحادثة"
+                      className="min-h-11 w-full rounded-lg border bg-white px-3 text-sm"
+                    >
+                      <option value="">بدون قسم</option>
+                      {SECTION_ORDER.map((s) => (
+                        <option key={s} value={s}>
+                          {SECTION_LABEL[s]}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <Lock
+                        size={16}
+                        className="shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      <select
+                        value={routedToOf(selected) ?? ""}
+                        disabled={busy}
+                        onChange={(e) =>
+                          act("routing", {
+                            targetTeamMemberId: e.target.value || null,
+                          })
+                        }
+                        aria-label="توجيه المحادثة لموظف واحد"
+                        className="min-h-11 flex-1 rounded-lg border bg-white px-3 text-sm"
+                      >
+                        <option value="">متاحة لكل الموظفين</option>
+                        {agents.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {agentDisplayName(a)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <p className="text-[11px] leading-5 text-[var(--subtle)]">
+                      {routedToOf(selected)
+                        ? "هذه المحادثة تظهر لهذا الموظف وللمديرين فقط — لا يراها بقية الموظفين ولا تصلهم إشعاراتها."
+                        : "اختاري موظفًا لتوجيه المحادثة له وحده؛ عندها تختفي عن بقية الموظفين."}
+                    </p>
+                  </section>
+                ) : null}
 
                 <section className="space-y-2">
                   <h3 className="flex items-center gap-1.5 text-xs font-semibold text-[var(--subtle)]">
@@ -1575,10 +1731,10 @@ export function InboxClient({
                   <Modal
                     open={orderOpen}
                     onClose={() => setOrderOpen(false)}
-                    title="إنشاء طلب للسائق"
+                    title="حجز موعد"
                   >
                     <div
-                      className="flex items-center justify-center gap-2 py-10 text-sm text-[var(--muted)]"
+                      className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground"
                       aria-live="polite"
                     >
                       <Loader2 size={16} className="animate-spin" aria-hidden="true" />
@@ -1588,17 +1744,11 @@ export function InboxClient({
                 }
               >
                 <CreateOrderSheet
+                  key={selected.id}
                   open={orderOpen}
                   onClose={() => setOrderOpen(false)}
                   conversationId={selected.id}
-                  customerPhone={selected.customer_phone}
-                  customerName={selected.customer_name ?? null}
-                  isAdmin={isAdmin}
-                  suggestedLocation={
-                    (!clearedBookings.has(selected.id) &&
-                      bookingRequestOf(selected)?.location) ||
-                    lastCustomerText
-                  }
+                  sharedLocation={sharedLocation}
                   booking={
                     clearedBookings.has(selected.id)
                       ? null

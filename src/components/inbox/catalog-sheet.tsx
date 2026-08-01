@@ -104,7 +104,7 @@ export function CatalogSheet({
         ) : null}
 
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--muted)]">
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
             <Loader2 size={14} className="animate-spin" /> جارٍ التحميل…
           </div>
         ) : error ? (
@@ -113,7 +113,7 @@ export function CatalogSheet({
           <div className="space-y-4">
             {groups.map((group) => (
               <section key={group.category}>
-                <h3 className="mb-1.5 text-xs font-semibold text-[var(--muted)]">
+                <h3 className="mb-1.5 text-xs font-semibold text-muted-foreground">
                   {group.category}
                 </h3>
                 <ul className="space-y-1.5">
@@ -138,7 +138,7 @@ export function CatalogSheet({
                           ) : null}
                         </span>
                         {item.description ? (
-                          <span className="mt-1 line-clamp-2 block text-xs text-[var(--muted)]">
+                          <span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">
                             {item.description}
                           </span>
                         ) : null}
@@ -150,7 +150,7 @@ export function CatalogSheet({
             ))}
           </div>
         ) : (
-          <p className="py-8 text-center text-sm text-[var(--muted)]">
+          <p className="py-8 text-center text-sm text-muted-foreground">
             {items.length ? "لا نتائج مطابقة." : "لا توجد باقات بعد — تُضاف من الإعدادات."}
           </p>
         )}
@@ -186,7 +186,7 @@ function Chip({
         "min-h-8 rounded-full border px-2.5 text-[11px] transition-colors",
         active
           ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-          : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
+          : "text-muted-foreground hover:bg-[var(--brand-soft)]"
       )}
     >
       {children}

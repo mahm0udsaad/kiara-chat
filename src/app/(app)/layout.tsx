@@ -30,7 +30,7 @@ export default async function AppLayout({
               {session.role === "admin" ? "مدير" : "موظف"}
             </span>
           </div>
-          <div className="flex shrink-0 items-center gap-2 text-sm text-[var(--muted)]">
+          <div className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
             {/* The email is the first thing to drop when space is tight. */}
             <span dir="ltr" className="hidden max-w-[220px] truncate md:block">
               {session.email}

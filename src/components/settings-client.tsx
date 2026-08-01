@@ -70,7 +70,7 @@ export function SettingsClient({
         </h1>
       </div>
 
-      <p className="mb-5 text-sm text-[var(--muted)]">
+      <p className="mb-5 text-sm text-muted-foreground">
         يُحسب سعر كل طلب حسب نوع الرحلة وقت إنشائه. هذه الأسعار تظهر للمالك
         والمديرين فقط.
       </p>
@@ -151,7 +151,7 @@ function PriceInput({
           onChange={(e) => onChange(e.target.value)}
           className="min-h-11 w-full bg-transparent text-sm outline-none tabular-nums"
         />
-        <span className="shrink-0 text-sm text-[var(--muted)]">ر.س</span>
+        <span className="shrink-0 text-sm text-muted-foreground">ر.س</span>
       </div>
     </div>
   );

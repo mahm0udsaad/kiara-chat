@@ -237,30 +237,24 @@ export async function updateDriver(
 
 // ------------------------------------------------------------------ orders
 
-export interface CreateOrderInput {
+export interface CreateBookingInput {
   conversationId: string;
-  specialistId: string;
-  driverId: string;
   /** ISO 8601 with offset — the client converts the datetime-local field. */
   arrivalAt: string;
   customerLocation: string;
   durationMinutes: number;
   tripType: TripType;
-  /** Optional staff note to the specialist — sent translated with her copy. */
-  specialistNote?: string;
 }
 
 /**
- * Record a dispatch order and push it to the driver's WhatsApp. The order row
- * is saved first (status "pending") so it survives even if the WhatsApp send
- * fails, then flipped to "sent"/"failed" from the transport result. The
- * specialist gets her own copy (translated to her mother language when her
- * nationality implies one) — best-effort, never blocks the order.
+ * Create the visit before a specialist or driver is chosen. Both roster FKs
+ * are nullable in the shared schema, so a pending row is the booking itself;
+ * dispatching it later enriches that same row rather than creating a duplicate.
  */
-export async function createAndDispatchOrder(
+export async function createBooking(
   userId: string,
-  input: CreateOrderInput
-): Promise<{ order: DriverOrder; sent: boolean; specialistSent: boolean | null }> {
+  input: CreateBookingInput
+): Promise<DriverOrder> {
   const supabase = await createServerSupabaseClient();
 
   // The conversation supplies the customer's phone — never trust a client value.
@@ -272,6 +266,79 @@ export async function createAndDispatchOrder(
     .maybeSingle();
   if (convErr) throw new Error(convErr.message);
   if (!conv) throw new Error("Conversation not found");
+
+  const { data: created, error: insErr } = await supabase
+    .from("driver_orders")
+    .insert({
+      restaurant_id: KIARA_RESTAURANT_ID,
+      conversation_id: input.conversationId,
+      specialist_id: null,
+      driver_id: null,
+      arrival_at: input.arrivalAt,
+      customer_location: input.customerLocation.trim(),
+      customer_phone: conv.customer_phone as string,
+      duration_minutes: input.durationMinutes,
+      trip_type: input.tripType,
+      price: null,
+      status: "pending",
+      created_by: userId,
+    })
+    .select(ORDER_COLS)
+    .single();
+  if (insErr) throw new Error(insErr.message);
+
+  await clearBookingRequest(input.conversationId).catch(() => {});
+  return created as DriverOrder;
+}
+
+export interface DispatchBookingInput {
+  specialistId: string;
+  driverId: string;
+  /** Optional staff note included in the translated specialist message. */
+  specialistNote?: string;
+}
+
+/** Resolve the conversation before an order mutation so the route can apply
+ * the same exclusive-routing authorization used by conversation actions. */
+export async function getOrderConversationId(id: string): Promise<string | null> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("driver_orders")
+    .select("conversation_id")
+    .eq("id", id)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data?.conversation_id as string | undefined) ?? null;
+}
+
+/**
+ * Assign a specialist and driver to an existing booking, then send both
+ * WhatsApp messages. The specialist receives the booking copy translated to
+ * her mother language when configured; the driver receives the dispatch copy.
+ */
+export async function dispatchBooking(
+  id: string,
+  input: DispatchBookingInput
+): Promise<{
+  order: DriverOrderRow;
+  sent: boolean;
+  specialistSent: boolean | null;
+}> {
+  const supabase = await createServerSupabaseClient();
+  const { data: saved, error: orderErr } = await supabase
+    .from("driver_orders")
+    .select(ORDER_COLS)
+    .eq("id", id)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (orderErr) throw new Error(orderErr.message);
+  if (!saved) throw new Error("الطلب غير موجود");
+
+  const order = saved as DriverOrder;
+  if (order.status === "sent") {
+    throw new Error("تم إرسال هذا الطلب بالفعل");
+  }
 
   type SpecialistContact = {
     id: string;
@@ -288,87 +355,92 @@ export async function createAndDispatchOrder(
       .maybeSingle();
     return { data: data as SpecialistContact | null, error };
   };
-  const [specRes, { data: driver }] = await Promise.all([
-    fetchSpecialist("id, full_name, phone, nationality"),
+  const specialistPromise = fetchSpecialist(
+    "id, full_name, phone, nationality"
+  ).then(async (result) =>
+    missingNationality(result.error)
+      ? (await fetchSpecialist("id, full_name, phone")).data
+      : result.data
+  );
+  const [specialist, { data: driver }, { data: conv }, price] = await Promise.all([
+    specialistPromise,
     supabase
       .from("drivers")
       .select("id, full_name, phone")
       .eq("id", input.driverId)
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .maybeSingle(),
+    supabase
+      .from("conversations")
+      .select("id, customer_name")
+      .eq("id", order.conversation_id)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .maybeSingle(),
+    priceForTrip(order.trip_type),
   ]);
-  let specialist = specRes.data;
-  if (missingNationality(specRes.error))
-    ({ data: specialist } = await fetchSpecialist("id, full_name, phone"));
   if (!specialist) throw new Error("Specialist not found");
   if (!driver) throw new Error("Driver not found");
+  if (!conv) throw new Error("Conversation not found");
 
-  const customerPhone = conv.customer_phone as string;
-  // Snapshot the price at creation so later price changes don't rewrite history.
-  const price = await priceForTrip(input.tripType);
-
-  const { data: created, error: insErr } = await supabase
+  // Persist the choices before external sends so a transport failure never
+  // loses the dispatch work the employee just completed.
+  const { data: assigned, error: assignErr } = await supabase
     .from("driver_orders")
-    .insert({
-      restaurant_id: KIARA_RESTAURANT_ID,
-      conversation_id: input.conversationId,
+    .update({
       specialist_id: input.specialistId,
       driver_id: input.driverId,
-      arrival_at: input.arrivalAt,
-      customer_location: input.customerLocation.trim(),
-      customer_phone: customerPhone,
-      duration_minutes: input.durationMinutes,
-      trip_type: input.tripType,
       price,
       status: "pending",
-      created_by: userId,
+      updated_at: new Date().toISOString(),
     })
+    .eq("id", order.id)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .select(ORDER_COLS)
     .single();
-  if (insErr) throw new Error(insErr.message);
+  if (assignErr) throw new Error(assignErr.message);
 
   const orderDetails = {
     specialistName: specialist.full_name as string,
-    arrivalAt: input.arrivalAt,
-    durationMinutes: input.durationMinutes,
-    customerLocation: input.customerLocation.trim(),
+    arrivalAt: order.arrival_at,
+    durationMinutes: order.duration_minutes,
+    customerLocation: order.customer_location,
     customerName: (conv.customer_name as string | null) ?? null,
-    customerPhone,
-    tripType: input.tripType,
+    customerPhone: order.customer_phone,
+    tripType: order.trip_type,
   };
-  const message = formatDriverOrderMessage(orderDetails);
-
-  let sent = false;
-  if (isOpenWaConfigured()) {
-    try {
-      await openWaTransport.sendText(driver.phone as string, message);
-      sent = true;
-    } catch {
-      sent = false;
-    }
-  }
-
-  // The specialist's own copy — translated when her nationality implies a
-  // non-Arabic mother language. null = not attempted (no phone / no WhatsApp).
-  let specialistSent: boolean | null = null;
+  const driverMessage = formatDriverOrderMessage(orderDetails);
   const specialistPhone = (specialist.phone as string | null)?.trim();
-  if (specialistPhone && isOpenWaConfigured()) {
-    const arabicCopy = formatSpecialistOrderMessage({
-      ...orderDetails,
-      driverName: driver.full_name as string,
-      note: input.specialistNote?.trim() || null,
-    });
-    const target = nationalityOf(
-      (specialist as { nationality?: string | null }).nationality
-    )?.targetLanguage;
-    const translated = target ? await translateMessage(arabicCopy, target) : null;
-    try {
-      await openWaTransport.sendText(specialistPhone, translated ?? arabicCopy);
-      specialistSent = true;
-    } catch {
-      specialistSent = false;
-    }
-  }
+  const arabicSpecialistMessage = formatSpecialistOrderMessage({
+    ...orderDetails,
+    driverName: driver.full_name as string,
+    note: input.specialistNote?.trim() || null,
+  });
+
+  const configured = isOpenWaConfigured();
+  const driverSend = configured
+    ? openWaTransport
+        .sendText(driver.phone as string, driverMessage)
+        .then(() => true)
+        .catch(() => false)
+    : Promise.resolve(false);
+
+  const specialistSend: Promise<boolean | null> =
+    configured && specialistPhone
+      ? (async () => {
+          const target = nationalityOf(
+            (specialist as { nationality?: string | null }).nationality
+          )?.targetLanguage;
+          const translated = target
+            ? await translateMessage(arabicSpecialistMessage, target)
+            : null;
+          return openWaTransport
+            .sendText(specialistPhone, translated ?? arabicSpecialistMessage)
+            .then(() => true)
+            .catch(() => false);
+        })()
+      : Promise.resolve(null);
+
+  const [sent, specialistSent] = await Promise.all([driverSend, specialistSend]);
 
   const status: DriverOrderStatus = sent ? "sent" : "failed";
   const { data: updated } = await supabase
@@ -378,15 +450,15 @@ export async function createAndDispatchOrder(
       sent_at: sent ? new Date().toISOString() : null,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", created.id)
+    .eq("id", order.id)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .select(ORDER_COLS)
     .single();
 
-  // The order IS the resolution of the bot's booking request — clear the badge.
-  await clearBookingRequest(input.conversationId).catch(() => {});
-
-  return { order: (updated ?? created) as DriverOrder, sent, specialistSent };
+  const [enriched] = await withNames(supabase, [
+    (updated ?? assigned) as DriverOrder,
+  ]);
+  return { order: enriched, sent, specialistSent };
 }
 
 /** Drop the bot-collected booking_request flag from a conversation, if any. */
@@ -614,7 +686,7 @@ export function formatDriverOrderMessage(o: {
 
 /**
  * The specialist's copy of the order — written in Arabic and translated to her
- * mother language before sending (see createAndDispatchOrder). No price: like
+ * mother language before sending (see dispatchBooking). No price: like
  * the driver message, amounts stay owner-only.
  */
 export function formatSpecialistOrderMessage(o: {

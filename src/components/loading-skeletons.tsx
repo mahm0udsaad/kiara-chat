@@ -1,15 +1,6 @@
-type SkeletonProps = {
-  className?: string;
-};
+import { Skeleton } from "@/components/ui/skeleton";
 
-function Skeleton({ className = "" }: SkeletonProps) {
-  return (
-    <div
-      className={`rounded-md bg-[var(--line)] ${className}`}
-      aria-hidden="true"
-    />
-  );
-}
+type SkeletonProps = { className?: string };
 
 function LoadingFrame({
   children,
@@ -17,7 +8,7 @@ function LoadingFrame({
 }: SkeletonProps & { children: React.ReactNode }) {
   return (
     <div
-      className={`animate-pulse ${className}`}
+      className={className}
       aria-busy="true"
       aria-live="polite"
     >

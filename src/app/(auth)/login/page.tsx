@@ -30,11 +30,11 @@ export default function LoginPage() {
     <div className="w-full max-w-sm rounded-2xl border bg-[var(--surface)] p-8 shadow-sm">
       <div className="mb-6 text-center">
         <h1 className="text-2xl font-bold text-[var(--brand)]">Kiara Chat</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">تسجيل دخول الموظفين</p>
+        <p className="mt-1 text-sm text-muted-foreground">تسجيل دخول الموظفين</p>
       </div>
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
-          <label className="mb-1 block text-sm text-[var(--muted)]">
+          <label className="mb-1 block text-sm text-muted-foreground">
             البريد الإلكتروني
           </label>
           <input
@@ -48,7 +48,7 @@ export default function LoginPage() {
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm text-[var(--muted)]">
+          <label className="mb-1 block text-sm text-muted-foreground">
             كلمة المرور
           </label>
           <input

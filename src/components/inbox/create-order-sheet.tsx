@@ -1,573 +1,464 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Plus, MapPin, Check } from "lucide-react";
-import { Modal } from "@/components/ui/modal";
-import { cn } from "@/lib/utils";
-import type {
-  Specialist,
-  Driver,
-  TripType,
-  DispatchSettings,
-  BookingRequest,
-} from "@/lib/types";
-import { loadDispatchOptions } from "@/lib/dispatch-options-client";
-import { NATIONALITIES, nationalityOf } from "@/lib/nationalities";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { arSA } from "date-fns/locale";
+import {
+  CalendarCheck2,
+  CheckCircle2,
+  Clock3,
+  MapPin,
+} from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/components/ui/toggle-group";
+import { formatRelativeTime } from "@/lib/format";
+import type { SharedLocation, SharedLocationSource } from "@/lib/location";
+import type { BookingRequest, TripType } from "@/lib/types";
 
-const DURATION_PRESETS = [30, 45, 60, 90, 120];
+const SHARED_LABEL: Record<SharedLocationSource, string> = {
+  pin: "موقع أرسلته الزبونة",
+  link: "رابط خريطة من المحادثة",
+  text: "آخر عنوان كتبته الزبونة",
+};
 
-const TRIP_TYPES: [TripType, string][] = [
-  ["one_way", "ذهاب فقط"],
-  ["round_trip", "ذهاب وعودة"],
-];
+const DURATION_PRESETS = [30, 45, 60, 90, 120] as const;
+const TIME_OPTIONS = Array.from({ length: 29 }, (_, index) => {
+  const minutes = 8 * 60 + index * 30;
+  const hour = String(Math.floor(minutes / 60)).padStart(2, "0");
+  const minute = String(minutes % 60).padStart(2, "0");
+  return `${hour}:${minute}`;
+});
 
-/** Local Date → the value a datetime-local input expects (no timezone shift). */
-function toLocalInputValue(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours()
-  )}:${pad(d.getMinutes())}`;
+function roundedDefault(): Date {
+  const date = new Date(Date.now() + 60 * 60 * 1000);
+  date.setMinutes(Math.ceil(date.getMinutes() / 30) * 30, 0, 0);
+  if (date.getHours() < 8) {
+    date.setHours(8, 0, 0, 0);
+  } else if (date.getHours() > 22) {
+    date.setDate(date.getDate() + 1);
+    date.setHours(8, 0, 0, 0);
+  }
+  return date;
 }
 
-function defaultArrivalValue(): string {
-  const date = new Date(Date.now() + 60 * 60 * 1000);
-  date.setMinutes(Math.ceil(date.getMinutes() / 5) * 5, 0, 0);
-  return toLocalInputValue(date);
+function timeOf(date: Date): string {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(
+    date.getMinutes()
+  ).padStart(2, "0")}`;
+}
+
+function startOfToday(): Date {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+/**
+ * What the location field starts as. A pin or a maps link she shared IS the
+ * address, so it outranks the line the bot wrote down and fills the field; a
+ * line she typed is only a guess, so it stays a suggestion to accept by hand.
+ */
+function initialLocation(
+  booking: BookingRequest | null,
+  shared: SharedLocation | null,
+  suggested: string | null
+): string {
+  return (
+    (shared && shared.source !== "text" ? shared.value : "") ||
+    booking?.location?.trim() ||
+    suggested?.trim() ||
+    ""
+  );
 }
 
 export function CreateOrderSheet({
   open,
   onClose,
   conversationId,
-  customerPhone,
-  customerName,
-  isAdmin,
-  suggestedLocation,
+  suggestedLocation = null,
+  sharedLocation = null,
   booking = null,
   onOrderCreated,
 }: {
   open: boolean;
   onClose: () => void;
   conversationId: string;
-  customerPhone: string;
-  customerName: string | null;
-  isAdmin: boolean;
-  /** Last customer message — offered as a one-tap fill for the location field. */
-  suggestedLocation: string | null;
-  /** Details the bot collected, shown as a reference while filling the form. */
+  suggestedLocation?: string | null;
+  /** Whatever location the customer already shared in this thread. */
+  sharedLocation?: SharedLocation | null;
   booking?: BookingRequest | null;
-  /** Fired once the order is saved — lets the inbox clear the booking badge. */
   onOrderCreated?: () => void;
 }) {
-  const [specialists, setSpecialists] = useState<Specialist[]>([]);
-  const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [rostersLoading, setRostersLoading] = useState(true);
-
-  const [specialistId, setSpecialistId] = useState("");
-  const [driverId, setDriverId] = useState("");
-  const [arrival, setArrival] = useState(defaultArrivalValue);
-  const [location, setLocation] = useState("");
-  const [duration, setDuration] = useState(60);
-  const [customDuration, setCustomDuration] = useState(false);
-  // Default to one-way: the driver usually only drops the specialist off.
+  const router = useRouter();
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(() =>
+    roundedDefault()
+  );
+  const [selectedTime, setSelectedTime] = useState(() =>
+    timeOf(roundedDefault())
+  );
+  const [location, setLocation] = useState(() =>
+    initialLocation(booking, sharedLocation, suggestedLocation)
+  );
+  const [duration, setDuration] = useState("60");
   const [tripType, setTripType] = useState<TripType>("one_way");
-  const [prices, setPrices] = useState<DispatchSettings | null>(null);
-  const [specialistNote, setSpecialistNote] = useState("");
-
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<"sent" | "failed" | null>(null);
-  // The specialist's translated copy: null = not attempted (no phone).
-  const [specialistSent, setSpecialistSent] = useState<boolean | null>(null);
+  const [done, setDone] = useState(false);
 
-  const closeSheet = useCallback(() => {
-    setError(null);
-    setDone(null);
-    setSpecialistSent(null);
-    setLocation("");
-    setDuration(60);
-    setCustomDuration(false);
+  const reset = useCallback(() => {
+    const next = roundedDefault();
+    setSelectedDate(next);
+    setSelectedTime(timeOf(next));
+    setLocation(initialLocation(booking, sharedLocation, suggestedLocation));
+    setDuration("60");
     setTripType("one_way");
-    setSpecialistNote("");
-    setArrival(defaultArrivalValue());
+    setSubmitting(false);
+    setError(null);
+    setDone(false);
+  }, [booking, sharedLocation, suggestedLocation]);
+
+  const closeDialog = useCallback(() => {
+    reset();
     onClose();
-  }, [onClose]);
+  }, [onClose, reset]);
 
+  // The sheet mounts with the conversation, long before it opens, so a pin
+  // that lands in the meantime would otherwise be missed. Re-seed once per
+  // opening — never while it is open, which would wipe what was typed.
+  const seeded = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
+    if (!open) {
+      seeded.current = false;
+      return;
+    }
+    if (seeded.current) return;
+    seeded.current = true;
+    reset();
+  }, [open, reset]);
 
-    void loadDispatchOptions()
-      .then((options) => {
-        if (cancelled) return;
-        setSpecialists(options.specialists);
-        setDrivers(options.drivers);
-        setPrices(options.settings);
-        setSpecialistId((previous) => previous || options.specialists[0]?.id || "");
-        setDriverId((previous) => previous || options.drivers[0]?.id || "");
-      })
-      .catch(() => {
-        if (!cancelled) setError("تعذّر تحميل القوائم");
-      })
-      .finally(() => {
-        if (!cancelled) setRostersLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
+  const usingShared =
+    Boolean(sharedLocation) && location.trim() === sharedLocation?.value.trim();
 
   const submit = useCallback(async () => {
     setError(null);
-    if (!specialistId) return setError("اختاري الأخصائية");
-    if (!driverId) return setError("اختاري السائق");
-    if (!arrival) return setError("حددي موعد الوصول");
-    if (!location.trim()) return setError("موقع الزبونة مطلوب");
+    if (!selectedDate) {
+      setError("اختاري تاريخ الحجز");
+      return;
+    }
+    if (!selectedTime) {
+      setError("اختاري وقت الحجز");
+      return;
+    }
+    if (!location.trim()) {
+      setError("موقع الزبونة مطلوب");
+      return;
+    }
+
+    const [hour, minute] = selectedTime.split(":").map(Number);
+    const arrival = new Date(selectedDate);
+    arrival.setHours(hour, minute, 0, 0);
 
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/conversations/${conversationId}/orders`, {
+      const response = await fetch(`/api/conversations/${conversationId}/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          specialistId,
-          driverId,
-          // Convert the local wall-clock to an absolute instant (ISO + offset).
-          arrivalAt: new Date(arrival).toISOString(),
+          arrivalAt: arrival.toISOString(),
           customerLocation: location.trim(),
-          durationMinutes: duration,
+          durationMinutes: Number(duration),
           tripType,
-          specialistNote: specialistNote.trim() || undefined,
         }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.error ?? "تعذّر إنشاء الطلب");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(data?.error ?? "تعذّر إنشاء الحجز");
         return;
       }
-      setDone(data?.sent ? "sent" : "failed");
-      setSpecialistSent(
-        typeof data?.specialistSent === "boolean" ? data.specialistSent : null
-      );
+      setDone(true);
       onOrderCreated?.();
     } catch {
-      setError("تعذّر إنشاء الطلب");
+      setError("تعذّر إنشاء الحجز");
     } finally {
       setSubmitting(false);
     }
-  }, [specialistId, driverId, arrival, location, duration, tripType, specialistNote, conversationId, onOrderCreated]);
-
-  const canSuggest = useMemo(
-    () => Boolean(suggestedLocation && suggestedLocation.trim()),
-    [suggestedLocation]
-  );
+  }, [
+    selectedDate,
+    selectedTime,
+    location,
+    conversationId,
+    duration,
+    tripType,
+    onOrderCreated,
+  ]);
 
   return (
-    <Modal open={open} onClose={closeSheet} title="إنشاء طلب للسائق">
-      {done ? (
-        <div className="space-y-4 py-4 text-center">
-          <div
-            className={cn(
-              "mx-auto flex size-12 items-center justify-center rounded-full",
-              done === "sent" ? "bg-emerald-100 text-emerald-600" : "bg-amber-100 text-amber-600"
-            )}
-          >
-            <Check size={24} />
-          </div>
-          <p className="font-semibold text-[var(--foreground)]">
-            {done === "sent" ? "تم إرسال الطلب للسائق ✅" : "تم حفظ الطلب"}
-          </p>
-          {done === "failed" ? (
-            <p className="text-sm text-[var(--muted)]">
-              تعذّر إرسال رسالة واتساب للسائق. الطلب محفوظ ويمكن إعادة إرساله لاحقًا.
-            </p>
-          ) : null}
-          {specialistSent === true ? (
-            <p className="text-sm text-emerald-700">
-              وصلت الأخصائية نسختها من الطلب بلغتها ✅
-            </p>
-          ) : specialistSent === false ? (
-            <p className="text-sm text-amber-700">
-              تعذّر إرسال نسخة الأخصائية — تأكدي من رقمها ومن ربط واتساب.
-            </p>
-          ) : null}
-          <button
-            type="button"
-            onClick={closeSheet}
-            className="min-h-11 w-full rounded-xl bg-[var(--brand)] px-4 font-medium text-white"
-          >
-            تم
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {booking ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              <p className="mb-1 font-semibold text-amber-800">
-                🤖 ما جمعه البوت من الزبونة
-              </p>
-              {booking.service ? <p>الخدمة: {booking.service}</p> : null}
-              {booking.time ? <p>الموعد: {booking.time}</p> : null}
-              {booking.location ? (
-                <p className="break-words">الموقع: {booking.location}</p>
-              ) : null}
-              {!booking.service && !booking.time && !booking.location && booking.summary ? (
-                <p className="break-words">{booking.summary}</p>
-              ) : null}
-            </div>
-          ) : null}
-
-          {rostersLoading ? (
-            <div className="flex items-center justify-center gap-2 py-6 text-sm text-[var(--muted)]">
-              <Loader2 size={14} className="animate-spin" /> جارٍ التحميل…
-            </div>
-          ) : (
-            <>
-              <RosterField
-                label="الأخصائية"
-                items={specialists}
-                value={specialistId}
-                onChange={setSpecialistId}
-                emptyHint="لا توجد أخصائيات."
-                isAdmin={isAdmin}
-                kind="specialist"
-                onAdded={(s) => {
-                  setSpecialists((p) => [...p, s as Specialist]);
-                  setSpecialistId((s as Specialist).id);
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) closeDialog();
+      }}
+    >
+      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-2xl">
+        {done ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>تم إنشاء الحجز</DialogTitle>
+              <DialogDescription>
+                أضيف الموعد إلى صفحة الطلبات، ويمكن اختيار الأخصائية والسائق من
+                هناك عند طلب السائق.
+              </DialogDescription>
+            </DialogHeader>
+            <Alert>
+              <CheckCircle2 />
+              <AlertTitle>الحجز جاهز</AlertTitle>
+              <AlertDescription>
+                بقيت خطوة إرسال تفاصيل الموعد للأخصائية والسائق.
+              </AlertDescription>
+            </Alert>
+            <DialogFooter>
+              <Button variant="outline" onClick={closeDialog}>
+                إغلاق
+              </Button>
+              <Button
+                onClick={() => {
+                  closeDialog();
+                  router.push("/orders");
                 }}
-              />
-
-              <RosterField
-                label="السائق"
-                items={drivers}
-                value={driverId}
-                onChange={setDriverId}
-                emptyHint="لا يوجد سائقون."
-                isAdmin={isAdmin}
-                kind="driver"
-                onAdded={(d) => {
-                  setDrivers((p) => [...p, d as Driver]);
-                  setDriverId((d as Driver).id);
-                }}
-              />
-
-              <label className="block space-y-1">
-                <span className="text-sm font-medium text-[var(--foreground)]">موعد الوصول</span>
-                <input
-                  type="datetime-local"
-                  value={arrival}
-                  onChange={(e) => setArrival(e.target.value)}
-                  className="min-h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-[var(--brand)]"
-                />
-              </label>
-
-              <div className="space-y-1">
-                <span className="text-sm font-medium text-[var(--foreground)]">مدة الجلسة</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {DURATION_PRESETS.map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => {
-                        setCustomDuration(false);
-                        setDuration(m);
-                      }}
-                      aria-pressed={!customDuration && duration === m}
-                      className={cn(
-                        "min-h-9 rounded-full border px-3 text-xs transition-colors",
-                        !customDuration && duration === m
-                          ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                          : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
-                      )}
-                    >
-                      {m} د
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setCustomDuration(true)}
-                    aria-pressed={customDuration}
-                    className={cn(
-                      "min-h-9 rounded-full border px-3 text-xs transition-colors",
-                      customDuration
-                        ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                        : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
-                    )}
-                  >
-                    أخرى
-                  </button>
-                </div>
-                {customDuration ? (
-                  <input
-                    type="number"
-                    min={5}
-                    step={5}
-                    value={duration}
-                    onChange={(e) => setDuration(Math.max(5, Number(e.target.value) || 0))}
-                    aria-label="مدة مخصصة بالدقائق"
-                    className="mt-1 min-h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-[var(--brand)]"
-                    placeholder="عدد الدقائق"
-                  />
-                ) : null}
-              </div>
-
-              <div className="space-y-1">
-                <span className="text-sm font-medium text-[var(--foreground)]">نوع الرحلة</span>
-                <div className="flex gap-1.5">
-                  {TRIP_TYPES.map(([val, lbl]) => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setTripType(val)}
-                      aria-pressed={tripType === val}
-                      className={cn(
-                        "min-h-9 flex-1 rounded-full border px-3 text-xs transition-colors",
-                        tripType === val
-                          ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                          : "text-[var(--muted)] hover:bg-[var(--brand-soft)]"
-                      )}
-                    >
-                      {lbl}
-                    </button>
-                  ))}
-                </div>
-                {/* Price is owner/manager-only — never shown to agents or the driver. */}
-                {isAdmin && prices ? (
-                  (() => {
-                    const p =
-                      tripType === "round_trip"
-                        ? prices.fullTripPrice
-                        : prices.halfTripPrice;
-                    return p > 0 ? (
-                      <p className="text-xs text-[var(--muted)]">
-                        السعر:{" "}
-                        <span className="font-medium text-[var(--foreground)] tabular-nums">
-                          {p.toLocaleString("ar-SA")} ر.س
-                        </span>
-                      </p>
-                    ) : (
-                      <p className="text-xs text-[var(--subtle)]">
-                        لم يُحدد سعر هذا النوع بعد — من صفحة الإعدادات.
-                      </p>
-                    );
-                  })()
-                ) : null}
-              </div>
-
-              <label className="block space-y-1">
-                <span className="text-sm font-medium text-[var(--foreground)]">موقع الزبونة</span>
-                <textarea
-                  value={location}
-                  onChange={(e) => setLocation(e.target.value)}
-                  rows={2}
-                  placeholder="رابط الموقع من الخرائط أو العنوان"
-                  className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
-                />
-                {canSuggest ? (
-                  <button
-                    type="button"
-                    onClick={() => setLocation(suggestedLocation!.trim())}
-                    className="inline-flex items-center gap-1 rounded-lg bg-[var(--brand-soft)] px-2 py-1 text-xs text-[var(--brand)]"
-                  >
-                    <MapPin size={12} /> من المحادثة
-                    <span className="max-w-[12rem] truncate opacity-70">
-                      {suggestedLocation}
-                    </span>
-                  </button>
-                ) : null}
-              </label>
-
-              {(() => {
-                const chosen = specialists.find((s) => s.id === specialistId);
-                const nat = nationalityOf(chosen?.nationality);
-                const hasPhone = Boolean(chosen?.phone?.trim());
-                return (
-                  <label className="block space-y-1">
-                    <span className="text-sm font-medium text-[var(--foreground)]">
-                      رسالة للأخصائية <span className="font-normal text-[var(--subtle)]">(اختياري)</span>
-                    </span>
-                    <textarea
-                      value={specialistNote}
-                      onChange={(e) => setSpecialistNote(e.target.value)}
-                      rows={2}
-                      maxLength={500}
-                      placeholder="تعليمات خاصة بهذا الموعد…"
-                      className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
-                    />
-                    <span className="block text-xs text-[var(--subtle)]">
-                      {!hasPhone
-                        ? "لا يوجد رقم واتساب لهذه الأخصائية — لن تصلها نسخة من الطلب."
-                        : nat?.targetLanguage
-                          ? `تصل الأخصائية نسختها من الطلب مترجمة إلى ${nat.languageLabel}.`
-                          : "تصل الأخصائية نسختها من الطلب بالعربية."}
-                    </span>
-                  </label>
-                );
-              })()}
-
-              <div className="rounded-xl bg-black/[0.03] px-3 py-2 text-sm">
-                <span className="text-[var(--muted)]">رقم الزبونة: </span>
-                <span dir="ltr" className="font-medium text-[var(--foreground)]">
-                  {customerPhone}
-                </span>
-                {customerName ? (
-                  <span className="text-[var(--muted)]"> · {customerName}</span>
-                ) : null}
-              </div>
-
-              {error ? (
-                <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
-              ) : null}
-
-              <button
-                type="button"
-                onClick={submit}
-                disabled={submitting}
-                className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[var(--brand)] px-4 font-medium text-white disabled:opacity-60"
               >
-                {submitting ? <Loader2 size={16} className="animate-spin" /> : null}
-                إرسال الطلب للسائق
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </Modal>
-  );
-}
+                <CalendarCheck2 data-icon="inline-start" />
+                عرض الطلبات
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle>حجز موعد</DialogTitle>
+              <DialogDescription>
+                اختاري اليوم والوقت أولًا. سيُحفظ الموعد الآن، ويمكن طلب السائق
+                لاحقًا من صفحة الطلبات.
+              </DialogDescription>
+            </DialogHeader>
 
-/** A picker with an admin-only inline "add new" form. */
-function RosterField<T extends Specialist | Driver>({
-  label,
-  items,
-  value,
-  onChange,
-  emptyHint,
-  isAdmin,
-  kind,
-  onAdded,
-}: {
-  label: string;
-  items: T[];
-  value: string;
-  onChange: (id: string) => void;
-  emptyHint: string;
-  isAdmin: boolean;
-  kind: "specialist" | "driver";
-  onAdded: (item: Specialist | Driver) => void;
-}) {
-  const [adding, setAdding] = useState(false);
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [nat, setNat] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+            {booking ? (
+              <Alert>
+                <CalendarCheck2 />
+                <AlertTitle>تفاصيل جمعها المساعد</AlertTitle>
+                <AlertDescription>
+                  {[booking.service, booking.time, booking.location]
+                    .filter(Boolean)
+                    .join(" · ") || booking.summary}
+                </AlertDescription>
+              </Alert>
+            ) : null}
 
-  const add = useCallback(async () => {
-    setErr(null);
-    if (!name.trim()) return setErr("الاسم مطلوب");
-    if (kind === "driver" && !phone.trim()) return setErr("رقم السائق مطلوب");
-    setBusy(true);
-    try {
-      const res = await fetch(kind === "driver" ? "/api/drivers" : "/api/specialists", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fullName: name.trim(),
-          phone: phone.trim() || undefined,
-          nationality: (kind === "specialist" && nat) || undefined,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setErr(data?.error ?? "تعذّرت الإضافة");
-        return;
-      }
-      onAdded(kind === "driver" ? data.driver : data.specialist);
-      setName("");
-      setPhone("");
-      setNat("");
-      setAdding(false);
-    } catch {
-      setErr("تعذّرت الإضافة");
-    } finally {
-      setBusy(false);
-    }
-  }, [name, phone, nat, kind, onAdded]);
+            <div className="grid gap-5 md:grid-cols-[minmax(0,1.15fr)_minmax(260px,0.85fr)]">
+              <div className="rounded-xl border bg-card p-2">
+                <Calendar
+                  mode="single"
+                  selected={selectedDate}
+                  onSelect={setSelectedDate}
+                  disabled={{ before: startOfToday() }}
+                  locale={arSA}
+                  className="mx-auto w-full [--cell-size:2.65rem]"
+                  captionLayout="dropdown"
+                />
+              </div>
 
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-[var(--foreground)]">{label}</span>
-        {isAdmin ? (
-          <button
-            type="button"
-            onClick={() => setAdding((v) => !v)}
-            className="inline-flex items-center gap-1 text-xs text-[var(--brand)]"
-          >
-            <Plus size={12} /> إضافة
-          </button>
-        ) : null}
-      </div>
+              <FieldGroup>
+                <Field data-invalid={!selectedTime && Boolean(error)}>
+                  <FieldLabel htmlFor="booking-time">وقت الموعد</FieldLabel>
+                  <Select value={selectedTime} onValueChange={setSelectedTime}>
+                    <SelectTrigger
+                      id="booking-time"
+                      className="min-h-11 w-full"
+                      aria-invalid={!selectedTime && Boolean(error)}
+                    >
+                      <Clock3 data-icon="inline-start" />
+                      <SelectValue placeholder="اختاري الوقت" />
+                    </SelectTrigger>
+                    <SelectContent position="popper">
+                      <SelectGroup>
+                        {TIME_OPTIONS.map((time) => (
+                          <SelectItem key={time} value={time}>
+                            {time}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
 
-      {items.length ? (
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="min-h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-[var(--brand)]"
-        >
-          {items.map((it) => (
-            <option key={it.id} value={it.id}>
-              {it.full_name}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <p className="text-xs text-[var(--muted)]">{emptyHint}</p>
-      )}
+                <Field data-invalid={!location.trim() && Boolean(error)}>
+                  <FieldLabel htmlFor="booking-location">موقع الزبونة</FieldLabel>
+                  <Input
+                    id="booking-location"
+                    value={location}
+                    onChange={(event) => setLocation(event.target.value)}
+                    aria-invalid={!location.trim() && Boolean(error)}
+                    className="min-h-11"
+                    placeholder="الرابط أو العنوان"
+                  />
+                  {sharedLocation ? (
+                    usingShared ? (
+                      <FieldDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="inline-flex items-center gap-1 text-[var(--brand)]">
+                          <MapPin size={13} aria-hidden="true" />
+                          {SHARED_LABEL[sharedLocation.source]}
+                          {" · "}
+                          {formatRelativeTime(sharedLocation.at)}
+                        </span>
+                        {sharedLocation.url ? (
+                          <a
+                            href={sharedLocation.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline underline-offset-2"
+                          >
+                            فتح على الخريطة
+                          </a>
+                        ) : null}
+                      </FieldDescription>
+                    ) : (
+                      <div className="rounded-lg border border-dashed bg-muted/40 p-2.5">
+                        <div className="flex items-start gap-2">
+                          <MapPin
+                            size={14}
+                            className="mt-0.5 shrink-0 text-[var(--brand)]"
+                            aria-hidden="true"
+                          />
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <p className="text-xs font-medium">
+                              {SHARED_LABEL[sharedLocation.source]}
+                              <span className="whitespace-nowrap font-normal text-muted-foreground">
+                                {" · "}
+                                {formatRelativeTime(sharedLocation.at)}
+                              </span>
+                            </p>
+                            <p className="line-clamp-2 break-all text-xs text-muted-foreground">
+                              {sharedLocation.label || sharedLocation.url}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="shrink-0"
+                            onClick={() => setLocation(sharedLocation.value)}
+                          >
+                            استخدام
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  ) : null}
+                </Field>
 
-      {adding ? (
-        <div className="space-y-1.5 rounded-xl border border-dashed p-2">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="الاسم"
-            className="min-h-10 w-full rounded-lg border px-2 text-sm outline-none focus:border-[var(--brand)]"
-          />
-          <input
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            dir="ltr"
-            placeholder={kind === "driver" ? "رقم واتساب (‎+9665…)" : "رقم (اختياري)"}
-            className="min-h-10 w-full rounded-lg border px-2 text-sm outline-none focus:border-[var(--brand)]"
-          />
-          {kind === "specialist" ? (
-            <select
-              value={nat}
-              onChange={(e) => setNat(e.target.value)}
-              aria-label="جنسية الأخصائية"
-              className="min-h-10 w-full rounded-lg border bg-[var(--surface)] px-2 text-sm outline-none focus:border-[var(--brand)]"
-            >
-              <option value="">الجنسية…</option>
-              {NATIONALITIES.map((n) => (
-                <option key={n.code} value={n.code}>
-                  {n.label} — {n.languageLabel}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          {err ? <p className="text-xs text-rose-600">{err}</p> : null}
-          <button
-            type="button"
-            onClick={add}
-            disabled={busy}
-            className="flex min-h-9 w-full items-center justify-center gap-1 rounded-lg bg-[var(--brand)] text-sm text-white disabled:opacity-60"
-          >
-            {busy ? <Loader2 size={14} className="animate-spin" /> : null} حفظ
-          </button>
-        </div>
-      ) : null}
-    </div>
+                <Field>
+                  <FieldLabel>مدة الجلسة</FieldLabel>
+                  <ToggleGroup
+                    type="single"
+                    value={duration}
+                    onValueChange={(value) => value && setDuration(value)}
+                    variant="outline"
+                    spacing={1}
+                    className="flex-wrap"
+                    aria-label="مدة الجلسة"
+                  >
+                    {DURATION_PRESETS.map((minutes) => (
+                      <ToggleGroupItem
+                        key={minutes}
+                        value={String(minutes)}
+                        className="min-h-10"
+                      >
+                        {minutes} د
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                </Field>
+
+                <Field>
+                  <FieldLabel>نوع الرحلة</FieldLabel>
+                  <ToggleGroup
+                    type="single"
+                    value={tripType}
+                    onValueChange={(value) =>
+                      value && setTripType(value as TripType)
+                    }
+                    variant="outline"
+                    spacing={1}
+                    className="w-full"
+                    aria-label="نوع الرحلة"
+                  >
+                    <ToggleGroupItem
+                      value="one_way"
+                      className="min-h-10 flex-1"
+                    >
+                      ذهاب فقط
+                    </ToggleGroupItem>
+                    <ToggleGroupItem
+                      value="round_trip"
+                      className="min-h-10 flex-1"
+                    >
+                      ذهاب وعودة
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                  <FieldDescription>
+                    يمكن تغيير السائق قبل الإرسال من صفحة الطلبات.
+                  </FieldDescription>
+                </Field>
+
+                {error ? <FieldError>{error}</FieldError> : null}
+              </FieldGroup>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={closeDialog}>
+                إلغاء
+              </Button>
+              <Button onClick={submit} disabled={submitting}>
+                {submitting ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <CalendarCheck2 data-icon="inline-start" />
+                )}
+                {submitting ? "جارٍ إنشاء الحجز…" : "تأكيد الحجز"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

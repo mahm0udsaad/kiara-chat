@@ -51,6 +51,13 @@ export interface Label {
 
 export type CsStatus = "open" | "waiting" | "resolved";
 
+/**
+ * Which customer-service desk owns a chat. Set by the owner per conversation —
+ * employees are not tagged with a section anywhere, so this lives on the
+ * conversation alone (see lib/conversation-meta.ts).
+ */
+export type ConversationSection = "orders" | "replies";
+
 export interface AgentInfo {
   id: string; // team_members.id
   role: string;

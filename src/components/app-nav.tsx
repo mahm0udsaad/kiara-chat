@@ -37,7 +37,7 @@ export function AppNav({ isAdmin }: { isAdmin: boolean }) {
               "flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors",
               active
                 ? "bg-[var(--brand-soft)] text-[var(--brand)]"
-                : "text-[var(--muted)] hover:bg-[var(--brand-soft)]/60 hover:text-[var(--brand)]"
+                : "text-muted-foreground hover:bg-[var(--brand-soft)]/60 hover:text-[var(--brand)]"
             )}
           >
             <Icon size={16} aria-hidden="true" />

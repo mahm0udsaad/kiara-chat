@@ -40,7 +40,7 @@ function Stat({
 }) {
   return (
     <div className="rounded-xl border bg-[var(--surface)] p-3">
-      <div className="flex items-center gap-1.5 text-[var(--muted)]">
+      <div className="flex items-center gap-1.5 text-muted-foreground">
         {icon}
         <span className="text-xs">{label}</span>
       </div>
@@ -107,7 +107,7 @@ function AgentCard({ agent }: { agent: AgentReport }) {
               </span>
             ) : null}
           </p>
-          <p className="truncate text-xs text-[var(--muted)]">
+          <p className="truncate text-xs text-muted-foreground">
             {agent.totalHandled.toLocaleString("ar")} محادثة ·{" "}
             {agent.messagesSent.toLocaleString("ar")} رسالة
             {agent.lastReplyAt ? ` · آخر رد ${formatRelativeTime(agent.lastReplyAt)}` : ""}
@@ -116,7 +116,7 @@ function AgentCard({ agent }: { agent: AgentReport }) {
         <ChevronDown
           size={18}
           aria-hidden="true"
-          className={cn("shrink-0 text-[var(--muted)] transition-transform", open && "rotate-180")}
+          className={cn("shrink-0 text-muted-foreground transition-transform", open && "rotate-180")}
         />
       </button>
 
@@ -159,7 +159,7 @@ function AgentCard({ agent }: { agent: AgentReport }) {
             />
           </div>
           <div>
-            <p className="mb-1.5 text-xs font-medium text-[var(--muted)]">التصنيفات</p>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">التصنيفات</p>
             <LabelChips labels={agent.labels} />
           </div>
           {agent.email ? (
@@ -225,7 +225,7 @@ export function ReportsClient({ report }: { report: TeamReport }) {
 
       <div className="mb-6 grid gap-2 sm:grid-cols-2">
         <div className="rounded-xl border bg-[var(--surface)] p-3">
-          <div className="flex items-center gap-1.5 text-[var(--muted)]">
+          <div className="flex items-center gap-1.5 text-muted-foreground">
             <Send size={14} aria-hidden="true" />
             <span className="text-xs">رسائل أُرسلت من التطبيق</span>
           </div>
@@ -234,7 +234,7 @@ export function ReportsClient({ report }: { report: TeamReport }) {
           </p>
         </div>
         <div className="rounded-xl border bg-[var(--surface)] p-3">
-          <div className="flex items-center gap-1.5 text-[var(--muted)]">
+          <div className="flex items-center gap-1.5 text-muted-foreground">
             <WhatsAppIcon size={14} className="text-emerald-600" />
             <span className="text-xs">محادثات عولجت من تطبيق واتساب</span>
           </div>
@@ -254,11 +254,11 @@ export function ReportsClient({ report }: { report: TeamReport }) {
         </div>
       ) : null}
 
-      <h2 className="mb-2 text-sm font-medium text-[var(--muted)]">
+      <h2 className="mb-2 text-sm font-medium text-muted-foreground">
         الموظفون ({activeAgents.length.toLocaleString("ar")} نشط)
       </h2>
       {agents.length === 0 ? (
-        <p className="rounded-xl border bg-[var(--surface)] p-4 text-sm text-[var(--muted)]">
+        <p className="rounded-xl border bg-[var(--surface)] p-4 text-sm text-muted-foreground">
           لا يوجد موظفون بعد. أضيفيهم من صفحة «الموظفون».
         </p>
       ) : (

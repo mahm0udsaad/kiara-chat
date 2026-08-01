@@ -33,7 +33,18 @@ export interface OpenWaMessageEvent {
   type: "message";
   waMessageId: string;
   fromMe: boolean;
-  customerPhone: string; // E.164
+  /**
+   * E.164. Null when WhatsApp addressed the chat only by its anonymized `@lid`
+   * and the engine could not map it back — which happens on replies sent from
+   * the phone app. `chatLid` identifies the chat in that case.
+   */
+  customerPhone: string | null;
+  /**
+   * The chat's anonymized `@lid` id, whenever WhatsApp used one. Bound to the
+   * conversation the first time it arrives with a resolvable phone, so later
+   * lid-only messages still land in the right thread.
+   */
+  chatLid?: string | null;
   timestamp?: number; // unix seconds
   messageType: string; // text | image | audio | voice | video | document | file
   body: string;

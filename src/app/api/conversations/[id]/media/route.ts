@@ -5,6 +5,7 @@
  */
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
+import { denyIfRouted } from "@/lib/conversation-access";
 import { sendMediaReply } from "@/lib/interactions";
 import { MAX_MEDIA_BYTES } from "@/lib/storage-media";
 
@@ -18,6 +19,8 @@ export async function POST(
   const session = await getKiaraSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
+  const denied = await denyIfRouted(id, session);
+  if (denied) return denied;
 
   let form: FormData;
   try {

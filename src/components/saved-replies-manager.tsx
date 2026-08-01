@@ -20,7 +20,7 @@ export function SavedRepliesManager({ initial }: { initial: SavedReply[] }) {
         <MessageSquareText size={18} className="text-[var(--brand)]" aria-hidden="true" />
         <h2 className="font-semibold text-[var(--foreground)]">الرسائل الجاهزة</h2>
       </div>
-      <p className="text-sm text-[var(--muted)]">
+      <p className="text-sm text-muted-foreground">
         رسائل تُدرَج بضغطة من زر الرسائل في شاشة المحادثة — ترحيب، تعليمات الوصول،
         سياسة الإلغاء وغيرها.
       </p>
@@ -134,7 +134,7 @@ function RepliesSheet({
             ))}
           </ul>
         ) : (
-          <p className="py-4 text-center text-sm text-[var(--muted)]">
+          <p className="py-4 text-center text-sm text-muted-foreground">
             لا توجد رسائل محفوظة بعد.
           </p>
         )}
@@ -229,7 +229,7 @@ function ReplyRow({
               setBody(reply.body);
             }}
             aria-label="إلغاء"
-            className="flex size-9 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-black/5"
+            className="flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-black/5"
           >
             <X size={16} />
           </button>
@@ -243,7 +243,7 @@ function ReplyRow({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-[var(--foreground)]">{reply.title}</p>
-          <p className="mt-0.5 whitespace-pre-wrap text-xs text-[var(--muted)]">
+          <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted-foreground">
             {reply.body}
           </p>
         </div>
@@ -252,7 +252,7 @@ function ReplyRow({
             type="button"
             onClick={() => setEditing(true)}
             aria-label="تعديل"
-            className="flex size-9 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-black/5"
+            className="flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-black/5"
           >
             <Pencil size={15} />
           </button>
@@ -285,7 +285,7 @@ function ReplyRow({
             <button
               type="button"
               onClick={() => setConfirmDelete(false)}
-              className="min-h-8 rounded-lg px-2 text-xs text-[var(--muted)]"
+              className="min-h-8 rounded-lg px-2 text-xs text-muted-foreground"
             >
               إلغاء
             </button>
