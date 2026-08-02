@@ -82,6 +82,7 @@ import { catalogImageFile } from "./catalog-image";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 import { DaySeparator, MessageBubble } from "./message-bubble";
 import { useInboxRealtime } from "./use-inbox-realtime";
+import { TypingDots, useTyping } from "./use-typing";
 import {
   AttachmentPreview,
   type PendingAttachment,
@@ -560,6 +561,14 @@ export function InboxClient({
     onMessageUpdated: onRealtimeMessageUpdated,
     onConversationsChanged: scheduleListRefresh,
   });
+
+  const isTyping = useTyping();
+
+  // Presence subscriptions live on the engine's WhatsApp socket and die with
+  // it, so the inbox re-asks on mount instead of trusting they survived.
+  useEffect(() => {
+    void fetch("/api/whatsapp/presence", { method: "POST" }).catch(() => {});
+  }, []);
 
   // On phones the thread replaces the list, so the phone's back gesture should
   // return to the list rather than leave the app. Pushing a history entry when
@@ -1169,9 +1178,16 @@ export function InboxClient({
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <span dir="ltr" className="truncate text-xs text-muted-foreground">
-                      {c.customer_phone}
-                    </span>
+                    {isTyping(c.id) ? (
+                      <span className="flex items-center gap-1 truncate text-xs font-medium text-[var(--brand)]">
+                        يكتب الآن
+                        <TypingDots />
+                      </span>
+                    ) : (
+                      <span dir="ltr" className="truncate text-xs text-muted-foreground">
+                        {c.customer_phone}
+                      </span>
+                    )}
                     <div className="flex items-center gap-1">
                       {wa ? (
                         <span
@@ -1348,11 +1364,18 @@ export function InboxClient({
                       selected.customer_name && "text-right"
                     )}
                   >
-                    {selected.customer_name
-                      ? selected.customer_phone
-                      : `آخر رسالة ${formatRelativeTime(
-                          selected.last_message_at ?? selected.started_at
-                        )}`}
+                    {isTyping(selected.id) ? (
+                      <span className="flex items-center gap-1 font-medium text-[var(--brand)]">
+                        يكتب الآن
+                        <TypingDots />
+                      </span>
+                    ) : selected.customer_name ? (
+                      selected.customer_phone
+                    ) : (
+                      `آخر رسالة ${formatRelativeTime(
+                        selected.last_message_at ?? selected.started_at
+                      )}`
+                    )}
                   </p>
                   <div className="mt-0.5 flex flex-wrap items-center gap-1">
                     {selected.assigned_to ? (
@@ -1533,6 +1556,13 @@ export function InboxClient({
                       </Fragment>
                     );
                   })}
+                  {isTyping(selected.id) ? (
+                    <div className="flex justify-start">
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-500 shadow-sm">
+                        <TypingDots />
+                      </div>
+                    </div>
+                  ) : null}
                 </>
               )}
             </div>

@@ -108,3 +108,17 @@ export async function refreshEngineQr(): Promise<void> {
     throw new Error(`QR refresh failed (${res.status}): ${detail}`);
   }
 }
+
+/**
+ * Ask the engine to watch these chats for typing indicators. WhatsApp only
+ * pushes presence for subscribed chats, and the subscriptions die with the
+ * socket — so the inbox re-sends its list rather than assuming they stuck.
+ */
+export async function watchPresence(phones: string[]): Promise<void> {
+  if (!phones.length) return;
+  const res = await post("/presence/watch", { phones });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`presence watch failed (${res.status}): ${detail}`);
+  }
+}

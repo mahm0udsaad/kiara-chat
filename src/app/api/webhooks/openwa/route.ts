@@ -8,9 +8,11 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { runBotTurn } from "@/lib/bot/reply";
+import { broadcastTyping } from "@/lib/presence";
 import {
   findOrCreateConversation,
   findConversationByLid,
+  findConversationByPhone,
   rememberChatLid,
   hasMessageWithSid,
   saveMessage,
@@ -64,6 +66,21 @@ export async function POST(request: NextRequest) {
   // Delivery/read acks.
   if (event.type === "ack") {
     await updateDeliveryStatus(event.waMessageId, event.status);
+    return NextResponse.json({ ok: true });
+  }
+
+  // Typing indicators: resolved to a thread and fanned out, never stored.
+  if (event.type === "presence") {
+    const phone = normalizeE164(event.customerPhone ?? "");
+    const lid = event.chatLid?.trim() || null;
+    const conv = phone
+      ? await findConversationByPhone(phone)
+      : lid
+        ? await findConversationByLid(lid)
+        : null;
+    if (conv) {
+      await broadcastTyping({ conversationId: conv.id, state: event.state });
+    }
     return NextResponse.json({ ok: true });
   }
   if (event.type !== "message") {

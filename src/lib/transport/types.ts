@@ -66,4 +66,23 @@ export interface OpenWaAckEvent {
   status: "sent" | "delivered" | "read" | "failed";
 }
 
-export type OpenWaEvent = OpenWaMessageEvent | OpenWaAckEvent;
+/** WhatsApp's presence states, as Baileys reports them. */
+export type WaPresence =
+  | "unavailable"
+  | "available"
+  | "composing"
+  | "recording"
+  | "paused";
+
+/**
+ * The customer started (or stopped) typing. Never stored — it is true for a
+ * couple of seconds and would churn the conversations table for nothing.
+ */
+export interface OpenWaPresenceEvent {
+  type: "presence";
+  customerPhone: string | null;
+  chatLid?: string | null;
+  state: WaPresence;
+}
+
+export type OpenWaEvent = OpenWaMessageEvent | OpenWaAckEvent | OpenWaPresenceEvent;

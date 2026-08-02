@@ -97,6 +97,25 @@ export async function rememberChatLid(
     .eq("id", conversationId);
 }
 
+/**
+ * The conversation for a phone, without creating one. Presence arrives for
+ * chats that may never have written to us — a typing indicator is no reason to
+ * conjure an empty thread.
+ */
+export async function findConversationByPhone(
+  customerPhone: string
+): Promise<{ id: string } | null> {
+  const { data } = await getAdminSupabaseClient()
+    .from("conversations")
+    .select("id")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("customer_phone", customerPhone)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.id ? { id: data.id as string } : null;
+}
+
 /** The conversation a lid-only message belongs to, if we've seen the lid. */
 export async function findConversationByLid(
   chatLid: string
