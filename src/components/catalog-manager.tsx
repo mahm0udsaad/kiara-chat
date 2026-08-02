@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { BookOpen, Check, Eye, EyeOff, Loader2, Pencil, Plus, Search, X } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
+import { CatalogThumb } from "@/components/catalog-thumb";
 import { cn } from "@/lib/utils";
 import type { CatalogItem } from "@/lib/catalog";
 
@@ -352,7 +353,8 @@ function ItemRow({
 
   return (
     <li className={cn("rounded-xl border p-3", !item.isAvailable && "opacity-55")}>
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex items-start gap-3">
+        <CatalogThumb item={item} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-[var(--foreground)]">
             {item.name}

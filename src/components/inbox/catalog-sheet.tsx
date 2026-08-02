@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Search } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
+import { CatalogThumb } from "@/components/catalog-thumb";
 import { cn } from "@/lib/utils";
 import type { CatalogItem } from "@/lib/catalog";
 
@@ -10,7 +11,8 @@ import type { CatalogItem } from "@/lib/catalog";
  * The spa's services and packages, for dropping an explanation into a reply.
  * A popup like the saved-replies one doesn't scale to ~80 items, so this is a
  * searchable sheet grouped by section. Picking an item fills the composer
- * rather than sending — the reply is still the agent's to word.
+ * rather than sending — the reply is still the agent's to word — and its photo
+ * comes along as a staged attachment when the service has one.
  */
 export function CatalogSheet({
   open,
@@ -19,7 +21,7 @@ export function CatalogSheet({
 }: {
   open: boolean;
   onClose: () => void;
-  onPick: (text: string) => void;
+  onPick: (item: CatalogItem, text: string) => void;
 }) {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -122,26 +124,29 @@ export function CatalogSheet({
                       <button
                         type="button"
                         onClick={() => {
-                          onPick(formatItem(item));
+                          onPick(item, formatItem(item));
                           onClose();
                         }}
-                        className="w-full rounded-xl border p-3 text-right transition-colors hover:border-[var(--brand)] hover:bg-[var(--brand-soft)]"
+                        className="flex w-full items-start gap-3 rounded-xl border p-3 text-right transition-colors hover:border-[var(--brand)] hover:bg-[var(--brand-soft)]"
                       >
-                        <span className="flex items-start justify-between gap-2">
-                          <span className="min-w-0 flex-1 text-sm font-medium text-[var(--foreground)]">
-                            {item.name}
+                        <CatalogThumb item={item} />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-start justify-between gap-2">
+                            <span className="min-w-0 flex-1 text-sm font-medium text-[var(--foreground)]">
+                              {item.name}
+                            </span>
+                            {item.price != null ? (
+                              <span className="shrink-0 text-xs tabular-nums text-[var(--brand)]">
+                                {item.price.toLocaleString("ar-SA")} ر.س
+                              </span>
+                            ) : null}
                           </span>
-                          {item.price != null ? (
-                            <span className="shrink-0 text-xs tabular-nums text-[var(--brand)]">
-                              {item.price.toLocaleString("ar-SA")} ر.س
+                          {item.description ? (
+                            <span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">
+                              {item.description}
                             </span>
                           ) : null}
                         </span>
-                        {item.description ? (
-                          <span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">
-                            {item.description}
-                          </span>
-                        ) : null}
                       </button>
                     </li>
                   ))}

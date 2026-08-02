@@ -16,7 +16,7 @@ import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 
 const COLS =
-  "id, name_ar, name_en, description_ar, price, currency, category, is_available, sort_order";
+  "id, name_ar, name_en, description_ar, price, currency, category, image_url, is_available, sort_order";
 
 export interface CatalogItem {
   id: string;
@@ -25,6 +25,8 @@ export interface CatalogItem {
   price: number | null;
   currency: string;
   category: string;
+  /** The service photo from Rekaz's CDN, when the salon uploaded one. */
+  imageUrl: string | null;
   isAvailable: boolean;
 }
 
@@ -48,6 +50,7 @@ function toItem(row: Record<string, unknown>): CatalogItem {
     price: row.price == null ? null : Number(row.price),
     currency: (row.currency as string) || "SAR",
     category: clean(row.category as string) || "أخرى",
+    imageUrl: (row.image_url as string | null) || null,
     isAvailable: row.is_available !== false,
   };
 }
@@ -67,6 +70,18 @@ export async function listCatalog(
     .order("name_ar");
   if (error) throw new Error(error.message);
   return (data ?? []).map(toItem);
+}
+
+/** One service, for the routes that work on a single row (e.g. its photo). */
+export async function getCatalogItem(id: string): Promise<CatalogItem | null> {
+  const { data, error } = await getAdminSupabaseClient()
+    .from("menu_items")
+    .select(COLS)
+    .eq("id", id)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? toItem(data) : null;
 }
 
 export interface CatalogPatch {

@@ -6,6 +6,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -73,6 +74,8 @@ import type { InternalNote } from "@/lib/notes";
 import type { SavedReply } from "@/lib/saved-replies";
 import { formatRelativeTime, agentDisplayName, dayKey } from "@/lib/format";
 import { findSharedLocation } from "@/lib/location";
+import type { CatalogItem } from "@/lib/catalog";
+import { catalogImageFile } from "./catalog-image";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 import { DaySeparator, MessageBubble } from "./message-bubble";
 import { useInboxRealtime } from "./use-inbox-realtime";
@@ -110,6 +113,28 @@ const NEW_LABEL_COLORS: LabelColor[] = [
 ];
 
 type View = "all" | "mine" | "unassigned" | "unread";
+
+/** Messages an opened thread starts with — older ones page in on scroll up. */
+const MESSAGE_PAGE_SIZE = 8;
+/** One scroll-up pulls a bigger page: 8 at a time would be all round trips. */
+const OLDER_PAGE_SIZE = 25;
+/** How close to the top counts as "asking for older messages". */
+const LOAD_OLDER_THRESHOLD_PX = 120;
+
+/**
+ * Fold a page into the thread, keyed by id and ordered by time.
+ *
+ * Pages overlap by design (the cursor is inclusive so nothing can slip through
+ * a shared timestamp) and a realtime refetch re-sends messages already on
+ * screen, so both paths need the same dedupe rather than a plain concat.
+ */
+function mergeMessages(a: Message[], b: Message[]): Message[] {
+  const byId = new Map<string, Message>();
+  for (const m of [...a, ...b]) byId.set(m.id, m);
+  return [...byId.values()].sort(
+    (x, y) => new Date(x.created_at).getTime() - new Date(y.created_at).getTime()
+  );
+}
 
 /** One row of the composer's "+" menu. */
 function MenuItem({
@@ -174,6 +199,23 @@ export function InboxClient({
   const [selected, setSelected] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  // Older messages page in on scroll; the thread only holds what's been read.
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false);
+
+  // Refs so callbacks (realtime handlers, the scroll-up loader) always see the
+  // current thread without being rebuilt — and so realtime never resubscribes
+  // on selection. Kept next to the state they mirror, and updated before any
+  // hook closes over them.
+  const messagesRef = useRef<Message[]>([]);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+  const selectedRef = useRef<Conversation | null>(null);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState("");
   const [notes, setNotes] = useState<InternalNote[]>([]);
@@ -212,6 +254,8 @@ export function InboxClient({
   const chunksRef = useRef<BlobPart[]>([]);
   // Attachments staged for review before sending (WhatsApp-style).
   const [pending, setPending] = useState<PendingAttachment[]>([]);
+  // A picked service's photo is fetched and re-encoded before it can be staged.
+  const [catalogImageBusy, setCatalogImageBusy] = useState(false);
   const [activeAttachment, setActiveAttachment] = useState(0);
   const pendingRef = useRef<PendingAttachment[]>([]);
   useEffect(() => {
@@ -224,21 +268,76 @@ export function InboxClient({
   const listRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // Height of the list just before older messages are prepended, so the view
+  // can be pinned to the message the reader was looking at.
+  const anchorRef = useRef<number | null>(null);
 
   const scrollToBottom = useCallback(() => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
+  /**
+   * Pull the page above the oldest message on screen. The scroll position is
+   * restored from the height the list grew by — otherwise prepending yanks the
+   * reader upwards, away from what they were reading.
+   */
+  const loadOlderMessages = useCallback(async () => {
+    const conversation = selectedRef.current;
+    const oldest = messagesRef.current[0];
+    if (!conversation || !oldest || loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const res = await fetch(
+        `/api/conversations/${conversation.id}/messages?limit=${OLDER_PAGE_SIZE}` +
+          `&before=${encodeURIComponent(oldest.created_at)}`
+      );
+      const data = await res.json();
+      if (selectedRef.current?.id !== conversation.id) return; // thread switched
+      // Measured here, not before the request: a failed fetch would otherwise
+      // leave a stale anchor for the next render to misapply.
+      anchorRef.current = listRef.current?.scrollHeight ?? null;
+      setMessages((prev) => mergeMessages(data.messages ?? [], prev));
+      setHasMoreMessages(Boolean(data.hasMore));
+    } catch {
+      // Leave the thread as it is; the next scroll can retry.
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }, []);
+
   const onListScroll = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
     nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-  }, []);
+    if (el.scrollTop < LOAD_OLDER_THRESHOLD_PX && hasMoreMessages && !loadingOlderRef.current) {
+      void loadOlderMessages();
+    }
+  }, [hasMoreMessages, loadOlderMessages]);
 
-  useEffect(() => {
+  // Runs before paint so neither the jump to the newest message nor the
+  // restored scroll position is ever visible as a flicker.
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (anchorRef.current != null) {
+      if (el) el.scrollTop += el.scrollHeight - anchorRef.current;
+      anchorRef.current = null;
+      return;
+    }
     if (nearBottomRef.current) scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  // An opening page of 8 may not fill a tall screen, and a list that doesn't
+  // scroll can never ask for more. Top it up until it does.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || loading || loadingOlder || !hasMoreMessages) return;
+    if (el.scrollHeight <= el.clientHeight + LOAD_OLDER_THRESHOLD_PX) {
+      void loadOlderMessages();
+    }
+  }, [messages, loading, loadingOlder, hasMoreMessages, loadOlderMessages]);
 
   const [labels, setLabels] = useState<Label[]>(initialLabels);
   const [assignments, setAssignments] =
@@ -329,17 +428,21 @@ export function InboxClient({
       setMessages([]);
       setNotes([]);
       setDraft("");
+      setHasMoreMessages(false);
       // A freshly opened thread always starts pinned to the newest message.
       nearBottomRef.current = true;
+      anchorRef.current = null;
       markRead(c.id);
       try {
         const [mRes, nRes] = await Promise.all([
-          fetch(`/api/conversations/${c.id}/messages`),
+          // Only the tail of the thread: the rest arrives as the reader climbs.
+          fetch(`/api/conversations/${c.id}/messages?limit=${MESSAGE_PAGE_SIZE}`),
           fetch(`/api/conversations/${c.id}/notes`),
         ]);
         const mData = await mRes.json();
         const nData = await nRes.json();
         setMessages(mData.messages ?? []);
+        setHasMoreMessages(Boolean(mData.hasMore));
         setNotes(nData.notes ?? []);
       } catch {
         setMessages([]);
@@ -374,13 +477,6 @@ export function InboxClient({
   }
 
   // ---- live updates (Supabase Realtime) ----
-  // Refs so the realtime callbacks always see the current selection without
-  // resubscribing on every render.
-  const selectedRef = useRef<Conversation | null>(null);
-  useEffect(() => {
-    selectedRef.current = selected;
-  }, [selected]);
-
   // Conversation-list changes arrive in bursts (message insert + unread bump +
   // reorder) — coalesce them into one server refresh.
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -416,9 +512,13 @@ export function InboxClient({
       // new message in (the server bumps unread_count on every inbound).
       markRead(conversationId);
       try {
-        const res = await fetch(`/api/conversations/${conversationId}/messages`);
+        // Only the newest page — merged in, so pages already scrolled into
+        // view survive the refresh.
+        const res = await fetch(
+          `/api/conversations/${conversationId}/messages?limit=${MESSAGE_PAGE_SIZE}`
+        );
         const data = await res.json();
-        setMessages(data.messages ?? []);
+        setMessages((prev) => mergeMessages(prev, data.messages ?? []));
       } catch {
         // keep whatever is on screen; the next event or refresh will catch up
       }
@@ -635,8 +735,11 @@ export function InboxClient({
           setMediaError(data?.error ?? "تعذّر إرسال الملف");
           return false;
         }
-        const m = await fetch(`/api/conversations/${selected.id}/messages`);
-        setMessages((await m.json()).messages ?? []);
+        const m = await fetch(
+          `/api/conversations/${selected.id}/messages?limit=${MESSAGE_PAGE_SIZE}`
+        );
+        const sent = (await m.json()).messages ?? [];
+        setMessages((prev) => mergeMessages(prev, sent));
         router.refresh();
         return true;
       } catch {
@@ -669,6 +772,44 @@ export function InboxClient({
         }));
         if (prev.length === 0) setDraft("");
         return [...prev, ...next];
+      });
+    },
+    [draft]
+  );
+
+  /**
+   * A picked service goes into the composer as its photo plus the price text
+   * as the caption, so one send carries both. Services without a photo (or
+   * whose photo won't load) still fill the draft the way they always did.
+   */
+  const pickCatalogItem = useCallback(
+    async (item: CatalogItem, text: string) => {
+      if (!item.imageUrl) {
+        setDraft((d) => (d.trim() ? `${d.trim()}\n${text}` : text));
+        return;
+      }
+      setCatalogImageBusy(true);
+      const file = await catalogImageFile(item).catch(() => null);
+      setCatalogImageBusy(false);
+      if (!file) {
+        setDraft((d) => (d.trim() ? `${d.trim()}\n${text}` : text));
+        return;
+      }
+      setPending((prev) => {
+        // Same rule as picking a file: whatever was typed rides on the first
+        // attachment's caption rather than being left behind in the box.
+        const typed = prev.length === 0 ? draft.trim() : "";
+        if (prev.length === 0) setDraft("");
+        return [
+          ...prev,
+          {
+            id: `${item.id}-${prev.length}`,
+            file,
+            url: URL.createObjectURL(file),
+            isImage: true,
+            caption: typed ? `${typed}\n${text}` : text,
+          },
+        ];
       });
     },
     [draft]
@@ -1260,17 +1401,38 @@ export function InboxClient({
                   لا توجد رسائل.
                 </p>
               ) : (
-                messages.map((m, i) => {
-                  const prev = i > 0 ? messages[i - 1] : null;
-                  const newDay =
-                    !prev || dayKey(prev.created_at) !== dayKey(m.created_at);
-                  return (
-                    <Fragment key={m.id}>
-                      {newDay ? <DaySeparator iso={m.created_at} /> : null}
-                      <MessageBubble message={m} />
-                    </Fragment>
-                  );
-                })
+                <>
+                  {loadingOlder ? (
+                    <div
+                      aria-live="polite"
+                      className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground"
+                    >
+                      <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                      جارٍ تحميل الرسائل الأقدم…
+                    </div>
+                  ) : hasMoreMessages ? (
+                    <div className="flex justify-center py-1">
+                      <button
+                        type="button"
+                        onClick={() => void loadOlderMessages()}
+                        className="rounded-full border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-[var(--brand-soft)] hover:text-[var(--brand)]"
+                      >
+                        عرض الرسائل الأقدم
+                      </button>
+                    </div>
+                  ) : null}
+                  {messages.map((m, i) => {
+                    const prev = i > 0 ? messages[i - 1] : null;
+                    const newDay =
+                      !prev || dayKey(prev.created_at) !== dayKey(m.created_at);
+                    return (
+                      <Fragment key={m.id}>
+                        {newDay ? <DaySeparator iso={m.created_at} /> : null}
+                        <MessageBubble message={m} />
+                      </Fragment>
+                    );
+                  })}
+                </>
               )}
             </div>
 
@@ -1280,6 +1442,16 @@ export function InboxClient({
                 className="shrink-0 bg-red-50 px-4 py-1.5 text-xs text-red-700"
               >
                 {mediaError}
+              </p>
+            ) : null}
+
+            {catalogImageBusy ? (
+              <p
+                aria-live="polite"
+                className="flex shrink-0 items-center gap-1.5 bg-[var(--brand-soft)] px-4 py-1.5 text-xs text-[var(--brand)]"
+              >
+                <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                جارٍ تجهيز صورة الخدمة…
               </p>
             ) : null}
 
@@ -1718,9 +1890,7 @@ export function InboxClient({
                 <CatalogSheet
                   open={catalogOpen}
                   onClose={() => setCatalogOpen(false)}
-                  onPick={(text) =>
-                    setDraft((d) => (d.trim() ? `${d.trim()}\n${text}` : text))
-                  }
+                  onPick={pickCatalogItem}
                 />
               </Suspense>
             ) : null}

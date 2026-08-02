@@ -40,13 +40,35 @@ export async function listConversations(
   );
 }
 
+/** Messages a freshly opened thread starts with; older ones page in on scroll. */
+export const MESSAGE_PAGE_SIZE = 8;
+/** How many older messages one scroll-up pulls — fewer round trips than 8. */
+export const OLDER_PAGE_SIZE = 25;
+const MAX_PAGE_SIZE = 100;
+
+export interface MessagePage {
+  /** Oldest first, ready to render. */
+  messages: Message[];
+  /** Whether anything older than the first row is still unread from the DB. */
+  hasMore: boolean;
+}
+
 /**
- * Load a conversation's messages (oldest first). Confirms the conversation
- * belongs to Kiara before reading; RLS enforces this too.
+ * One page of a conversation's messages, newest page first.
+ *
+ * A year-old thread is thousands of rows and none of them matter on open, so
+ * the query walks backwards from the newest and the client asks for more as it
+ * scrolls up. `before` is the `created_at` of the oldest row already on screen;
+ * the bound is inclusive so a message sharing that exact timestamp can't fall
+ * through the gap — the client drops the duplicate by id.
+ *
+ * Confirms the conversation belongs to Kiara before reading; RLS enforces this
+ * too.
  */
 export async function getConversationMessages(
-  conversationId: string
-): Promise<Message[]> {
+  conversationId: string,
+  opts: { limit?: number; before?: string | null } = {}
+): Promise<MessagePage> {
   const supabase = await createServerSupabaseClient();
 
   const { data: conv } = await supabase
@@ -55,14 +77,23 @@ export async function getConversationMessages(
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
-  if (!conv) return [];
+  if (!conv) return { messages: [], hasMore: false };
 
-  const { data, error } = await supabase
+  const limit = Math.min(Math.max(opts.limit ?? MESSAGE_PAGE_SIZE, 1), MAX_PAGE_SIZE);
+
+  let query = supabase
     .from("messages")
     .select(MESSAGE_COLS)
     .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true })
-    .limit(500);
+    .order("created_at", { ascending: false })
+    // One extra row is the cheapest way to know whether a page follows.
+    .limit(limit + 1);
+  if (opts.before) query = query.lte("created_at", opts.before);
+
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
-  return (data ?? []) as Message[];
+
+  const rows = (data ?? []) as Message[];
+  const hasMore = rows.length > limit;
+  return { messages: rows.slice(0, limit).reverse(), hasMore };
 }
