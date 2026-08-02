@@ -17,6 +17,8 @@ export interface MessageTransport {
       contentType: string;
       filename?: string;
       caption?: string;
+      /** Send audio as a WhatsApp voice note rather than an audio file. */
+      ptt?: boolean;
     }
   ): Promise<SendResult>;
 }

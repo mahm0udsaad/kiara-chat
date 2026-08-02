@@ -30,7 +30,11 @@ const missingNationality = (err: { message: string } | null) =>
   Boolean(err?.message.includes("nationality"));
 const DRIVER_COLS = "id, full_name, phone, is_active";
 const ORDER_COLS =
-  "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type, price, status, sent_at, created_at";
+  "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type, price, status, sent_at, created_at, updated_at";
+/** Adds the editor. Falls back to ORDER_COLS until that migration runs. */
+const ORDER_COLS_WITH_EDITOR = `${ORDER_COLS}, updated_by`;
+const missingUpdatedBy = (err: { message: string } | null) =>
+  Boolean(err?.message.includes("updated_by"));
 
 // -------------------------------------------------------------- pricing
 
@@ -296,6 +300,16 @@ export interface DispatchBookingInput {
   driverId: string;
   /** Optional staff note included in the translated specialist message. */
   specialistNote?: string;
+  /**
+   * A recorded note for the specialist, sent as its own WhatsApp message right
+   * after the booking copy. Some things are faster said than typed — and a
+   * specialist who reads little Arabic follows a voice far better than text.
+   */
+  specialistVoice?: {
+    base64: string;
+    contentType: string;
+    filename?: string | null;
+  };
 }
 
 /** Resolve the conversation before an order mutation so the route can apply
@@ -433,10 +447,26 @@ export async function dispatchBooking(
           const translated = target
             ? await translateMessage(arabicSpecialistMessage, target)
             : null;
-          return openWaTransport
+          const sentText = await openWaTransport
             .sendText(specialistPhone, translated ?? arabicSpecialistMessage)
             .then(() => true)
             .catch(() => false);
+          // The recording follows the booking copy rather than replacing it —
+          // she still needs the address and time in writing.
+          if (input.specialistVoice) {
+            await openWaTransport
+              .sendMedia(specialistPhone, {
+                base64: input.specialistVoice.base64,
+                contentType: input.specialistVoice.contentType,
+                filename: input.specialistVoice.filename ?? undefined,
+                ptt: true,
+              })
+              .catch(() => {
+                // A failed recording must not fail the dispatch: the booking
+                // itself already reached her.
+              });
+          }
+          return sentText;
         })()
       : Promise.resolve(null);
 
@@ -499,14 +529,82 @@ export async function listOrdersForConversation(
 /** Newest-arrival-first orders for the /orders view, with names resolved. */
 export async function listDriverOrders(limit = 200): Promise<DriverOrderRow[]> {
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
-    .from("driver_orders")
-    .select(ORDER_COLS)
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .order("arrival_at", { ascending: false })
-    .limit(limit);
+  const query = (cols: string) =>
+    supabase
+      .from("driver_orders")
+      .select(cols)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .order("arrival_at", { ascending: false })
+      .limit(limit);
+
+  let { data, error } = await query(ORDER_COLS_WITH_EDITOR);
+  if (error && missingUpdatedBy(error)) ({ data, error } = await query(ORDER_COLS));
   if (error) throw new Error(error.message);
-  return withNames(supabase, (data ?? []) as DriverOrder[]);
+  return withNames(supabase, (data ?? []) as unknown as DriverOrder[]);
+}
+
+export interface OrderPatch {
+  arrivalAt?: string;
+  customerLocation?: string;
+  durationMinutes?: number;
+  tripType?: TripType;
+  specialistId?: string | null;
+  driverId?: string | null;
+  /** Owner/manager-only — the routes gate this before calling. */
+  price?: number | null;
+}
+
+/**
+ * Edit a saved order. Everything the booking sheet collects stays editable
+ * afterwards: plans move, a customer sends a better pin, a driver swaps out.
+ *
+ * Editing never re-sends — an order already on a driver's WhatsApp keeps its
+ * `sent` status and the page offers "إعادة الإرسال" so the change reaches them
+ * deliberately rather than as a side effect of typing.
+ */
+export async function updateDriverOrder(
+  id: string,
+  patch: OrderPatch,
+  editorTeamMemberId: string | null
+): Promise<DriverOrderRow> {
+  const supabase = await createServerSupabaseClient();
+
+  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.arrivalAt !== undefined) update.arrival_at = patch.arrivalAt;
+  if (patch.customerLocation !== undefined)
+    update.customer_location = patch.customerLocation.trim();
+  if (patch.durationMinutes !== undefined) update.duration_minutes = patch.durationMinutes;
+  if (patch.tripType !== undefined) update.trip_type = patch.tripType;
+  if (patch.specialistId !== undefined) update.specialist_id = patch.specialistId;
+  if (patch.driverId !== undefined) update.driver_id = patch.driverId;
+  if (patch.price !== undefined) update.price = patch.price;
+
+  const run = (withEditor: boolean) =>
+    supabase
+      .from("driver_orders")
+      .update(withEditor ? { ...update, updated_by: editorTeamMemberId } : update)
+      .eq("id", id)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .select(ORDER_COLS_WITH_EDITOR)
+      .single();
+
+  let { data, error } = await run(Boolean(editorTeamMemberId));
+  // Until the updated_by migration runs, save the edit without the author
+  // rather than failing it outright.
+  if (error && missingUpdatedBy(error)) {
+    ({ data, error } = await supabase
+      .from("driver_orders")
+      .update(update)
+      .eq("id", id)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .select(ORDER_COLS)
+      .single());
+  }
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("الطلب غير موجود");
+
+  const [row] = await withNames(supabase, [data as DriverOrder]);
+  return row;
 }
 
 /**
@@ -586,20 +684,21 @@ export async function resendDriverOrder(
   return { order: enriched, sent };
 }
 
-/** Batch-resolve specialist/driver/customer names for a page of orders. */
+/** Batch-resolve specialist/driver/customer/editor names for a page of orders. */
 async function withNames(
   supabase: AuthedClient,
   orders: DriverOrder[]
 ): Promise<DriverOrderRow[]> {
   if (!orders.length) return [];
-  const uniq = (values: (string | null)[]) => [
+  const uniq = (values: (string | null | undefined)[]) => [
     ...new Set(values.filter((v): v is string => Boolean(v))),
   ];
 
-  const [specialists, drivers, customers] = await Promise.all([
+  const [specialists, drivers, customers, editors] = await Promise.all([
     rosterNames(supabase, "specialists", uniq(orders.map((o) => o.specialist_id))),
     rosterNames(supabase, "drivers", uniq(orders.map((o) => o.driver_id))),
     customerNames(supabase, uniq(orders.map((o) => o.conversation_id))),
+    teamMemberNames(supabase, uniq(orders.map((o) => o.updated_by))),
   ]);
 
   return orders.map((o) => {
@@ -610,8 +709,26 @@ async function withNames(
       driver_name: driver?.fullName ?? null,
       driver_phone: driver?.phone ?? null,
       customer_name: customers.get(o.conversation_id) ?? null,
+      updated_by_name: (o.updated_by && editors.get(o.updated_by)) || null,
     };
   });
+}
+
+/** Team-member display names, for "عُدّل بواسطة …". */
+async function teamMemberNames(
+  supabase: AuthedClient,
+  ids: string[]
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!ids.length) return out;
+  const { data } = await supabase
+    .from("team_members")
+    .select("id, full_name")
+    .in("id", ids);
+  for (const row of data ?? []) {
+    if (row.full_name) out.set(row.id as string, row.full_name as string);
+  }
+  return out;
 }
 
 async function rosterNames(

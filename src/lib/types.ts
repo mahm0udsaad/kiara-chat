@@ -125,6 +125,10 @@ export interface DriverOrder {
   status: DriverOrderStatus;
   sent_at: string | null;
   created_at: string;
+  /** Set by the DB on every write; equals created_at until someone edits. */
+  updated_at?: string | null;
+  /** The team member who last edited the order — null for untouched rows. */
+  updated_by?: string | null;
 }
 
 /**
@@ -137,6 +141,8 @@ export interface DriverOrderRow extends DriverOrder {
   driver_name: string | null;
   driver_phone: string | null;
   customer_name: string | null;
+  /** Who last edited it, for the "عُدّل بواسطة …" line. */
+  updated_by_name: string | null;
 }
 
 /** Per-tenant dispatch pricing. Owner/manager-only (RLS blocks agents). */

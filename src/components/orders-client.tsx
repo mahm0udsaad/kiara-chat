@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { arSA } from "date-fns/locale";
 import {
   AlertTriangle,
@@ -11,6 +11,7 @@ import {
   ExternalLink,
   MapPin,
   MessageSquareText,
+  Mic,
   RefreshCw,
   Send,
   UserRound,
@@ -78,6 +79,10 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group";
+import {
+  VoiceNoteRecorder,
+  type VoiceNote,
+} from "@/components/voice-note-recorder";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 import { formatDuration, formatRelativeTime, TRIP_TYPE_LABEL } from "@/lib/format";
 import { nationalityOf } from "@/lib/nationalities";
@@ -86,6 +91,7 @@ import type {
   DriverOrderRow,
   DriverOrderStatus,
   Specialist,
+  TripType,
 } from "@/lib/types";
 
 const TZ = "Asia/Riyadh";
@@ -112,6 +118,8 @@ const isolateLtr = (value: string) => `\u2066${value}\u2069`;
 
 type StatusFilter = "all" | DriverOrderStatus;
 type OrdersView = "daily" | "calendar";
+/** How the staff note reaches the specialist: typed, or in their own voice. */
+type NoteMode = "text" | "voice";
 
 const STATUS_FILTERS: [StatusFilter, string][] = [
   ["all", "كل الحالات"],
@@ -638,6 +646,7 @@ function OrderCard({
         isAdmin={isAdmin}
         open={detailsOpen}
         onOpenChange={setDetailsOpen}
+        onUpdated={onUpdated}
       />
       <DispatchDialog
         order={order}
@@ -649,19 +658,164 @@ function OrderCard({
   );
 }
 
+const pad2 = (n: number) => String(n).padStart(2, "0");
+/** Native date/time inputs speak local wall-clock — the salon's own timezone. */
+const toDateInput = (d: Date) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const toTimeInput = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+const DURATION_PRESETS = [30, 45, 60, 90, 120] as const;
+
+/**
+ * Everything the booking sheet collected, editable afterwards: plans move, a
+ * customer sends a better pin, a driver swaps out. Saving never re-sends — an
+ * order already on a driver's WhatsApp says so, and the card's "إعادة الإرسال"
+ * stays the deliberate way to push the change to them.
+ */
 function OrderDetailsSheet({
   order,
   isAdmin,
   open,
   onOpenChange,
+  onUpdated,
 }: {
   order: DriverOrderRow;
   isAdmin: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onUpdated: (order: DriverOrderRow) => void;
 }) {
   const arrival = new Date(order.arrival_at);
   const status = statusMeta(order);
+
+  const [date, setDate] = useState(() => toDateInput(arrival));
+  const [time, setTime] = useState(() => toTimeInput(arrival));
+  const [location, setLocation] = useState(order.customer_location);
+  const [duration, setDuration] = useState(String(order.duration_minutes));
+  const [tripType, setTripType] = useState<TripType>(order.trip_type);
+  const [specialistId, setSpecialistId] = useState(order.specialist_id ?? "");
+  const [driverId, setDriverId] = useState(order.driver_id ?? "");
+  const [price, setPrice] = useState(order.price == null ? "" : String(order.price));
+  const [specialists, setSpecialists] = useState<Specialist[]>([]);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const seed = useCallback(() => {
+    const next = new Date(order.arrival_at);
+    setDate(toDateInput(next));
+    setTime(toTimeInput(next));
+    setLocation(order.customer_location);
+    setDuration(String(order.duration_minutes));
+    setTripType(order.trip_type);
+    setSpecialistId(order.specialist_id ?? "");
+    setDriverId(order.driver_id ?? "");
+    setPrice(order.price == null ? "" : String(order.price));
+    setError(null);
+    setSaved(false);
+  }, [order]);
+
+  // Re-seed once per opening, so the sheet never shows a stale edit from a
+  // previous visit (or values the dispatch dialog changed in the meantime) —
+  // and never overwrites what is being typed while it stays open.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      seededRef.current = false;
+      return;
+    }
+    if (seededRef.current) return;
+    seededRef.current = true;
+    seed();
+  }, [open, seed]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void loadDispatchOptions()
+      .then((options) => {
+        if (cancelled) return;
+        setSpecialists(options.specialists);
+        setDrivers(options.drivers);
+      })
+      .catch(() => {
+        if (!cancelled) setError("تعذّر تحميل الأخصائيات والسائقين");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const arrivalIso = useMemo(() => {
+    if (!date || !time) return null;
+    const [hour, minute] = time.split(":").map(Number);
+    const next = new Date(`${date}T00:00:00`);
+    if (Number.isNaN(next.getTime())) return null;
+    next.setHours(hour, minute, 0, 0);
+    return next.toISOString();
+  }, [date, time]);
+
+  const dirty =
+    (arrivalIso !== null && arrivalIso !== new Date(order.arrival_at).toISOString()) ||
+    location.trim() !== order.customer_location ||
+    Number(duration) !== order.duration_minutes ||
+    tripType !== order.trip_type ||
+    (specialistId || null) !== order.specialist_id ||
+    (driverId || null) !== order.driver_id ||
+    (isAdmin && (price === "" ? null : Number(price)) !== order.price);
+
+  const save = useCallback(async () => {
+    setError(null);
+    if (!arrivalIso) return setError("موعد الوصول غير صحيح");
+    if (!location.trim()) return setError("موقع الزبونة مطلوب");
+    const minutes = Number(duration);
+    if (!Number.isFinite(minutes) || minutes < 5) return setError("مدة الجلسة غير صحيحة");
+
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/orders/${order.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          arrivalAt: arrivalIso,
+          customerLocation: location.trim(),
+          durationMinutes: minutes,
+          tripType,
+          specialistId: specialistId || null,
+          driverId: driverId || null,
+          ...(isAdmin ? { price: price === "" ? null : Number(price) } : {}),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return setError(data?.error ?? "تعذّر حفظ التعديل");
+      onUpdated(data.order as DriverOrderRow);
+      setSaved(true);
+    } catch {
+      setError("تعذّر حفظ التعديل");
+    } finally {
+      setSaving(false);
+    }
+  }, [
+    arrivalIso,
+    location,
+    duration,
+    tripType,
+    specialistId,
+    driverId,
+    price,
+    isAdmin,
+    order.id,
+    onUpdated,
+  ]);
+
+  // Presets cover the usual sessions; an order booked at some other length
+  // keeps its own chip rather than being rounded into one of ours.
+  const durations = useMemo(() => {
+    const values = new Set<number>(DURATION_PRESETS);
+    values.add(order.duration_minutes);
+    return [...values].sort((a, b) => a - b);
+  }, [order.duration_minutes]);
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="left" className="w-full sm:max-w-md">
@@ -676,39 +830,209 @@ function OrderDetailsSheet({
             </span>
             <Badge variant={status.variant}>{status.label}</Badge>
           </div>
+
+          <DetailRow label="الزبونة">
+            {order.customer_name ?? "—"} · <span dir="ltr">{order.customer_phone}</span>
+          </DetailRow>
+
           <Separator />
-          <dl className="flex flex-col gap-4">
-            <DetailRow label="الزبونة">
-              {order.customer_name ?? "—"} · <span dir="ltr">{order.customer_phone}</span>
-            </DetailRow>
-            <DetailRow label="الموقع">{order.customer_location}</DetailRow>
-            <DetailRow label="الأخصائية">{order.specialist_name ?? "لم تُحدد"}</DetailRow>
-            <DetailRow label="السائق">
-              {order.driver_name ?? "لم يُحدد"}
+
+          <FieldGroup>
+            <div className="grid grid-cols-2 gap-3">
+              <Field>
+                <FieldLabel htmlFor={`date-${order.id}`}>يوم الموعد</FieldLabel>
+                <Input
+                  id={`date-${order.id}`}
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="min-h-11"
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`time-${order.id}`}>وقت الوصول</FieldLabel>
+                <Input
+                  id={`time-${order.id}`}
+                  type="time"
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
+                  className="min-h-11"
+                />
+              </Field>
+            </div>
+
+            <Field>
+              <FieldLabel htmlFor={`location-${order.id}`}>موقع الزبونة</FieldLabel>
+              <Input
+                id={`location-${order.id}`}
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="الرابط أو العنوان"
+                className="min-h-11"
+              />
+            </Field>
+
+            <Field>
+              <FieldLabel>مدة الجلسة</FieldLabel>
+              <ToggleGroup
+                type="single"
+                value={duration}
+                onValueChange={(value) => value && setDuration(value)}
+                variant="outline"
+                spacing={1}
+                className="flex-wrap"
+                aria-label="مدة الجلسة"
+              >
+                {durations.map((minutes) => (
+                  <ToggleGroupItem key={minutes} value={String(minutes)} className="min-h-10">
+                    {minutes} د
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            </Field>
+
+            <Field>
+              <FieldLabel>نوع الرحلة</FieldLabel>
+              <ToggleGroup
+                type="single"
+                value={tripType}
+                onValueChange={(value) => value && setTripType(value as TripType)}
+                variant="outline"
+                spacing={1}
+                className="w-full"
+                aria-label="نوع الرحلة"
+              >
+                <ToggleGroupItem value="one_way" className="min-h-10 flex-1">
+                  ذهاب فقط
+                </ToggleGroupItem>
+                <ToggleGroupItem value="round_trip" className="min-h-10 flex-1">
+                  ذهاب وعودة
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor={`specialist-${order.id}`}>الأخصائية</FieldLabel>
+              <Select
+                value={specialistId || "none"}
+                onValueChange={(value) => setSpecialistId(value === "none" ? "" : value)}
+              >
+                <SelectTrigger id={`specialist-${order.id}`} className="min-h-11 w-full">
+                  <SelectValue placeholder="لم تُحدد" />
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  <SelectGroup>
+                    <SelectItem value="none">لم تُحدد</SelectItem>
+                    {specialists.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor={`driver-${order.id}`}>السائق</FieldLabel>
+              <Select
+                value={driverId || "none"}
+                onValueChange={(value) => setDriverId(value === "none" ? "" : value)}
+              >
+                <SelectTrigger id={`driver-${order.id}`} className="min-h-11 w-full">
+                  <SelectValue placeholder="لم يُحدد" />
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  <SelectGroup>
+                    <SelectItem value="none">لم يُحدد</SelectItem>
+                    {drivers.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
               {order.driver_phone ? (
-                <> · <span dir="ltr">{order.driver_phone}</span></>
+                <FieldDescription dir="ltr" className="text-start">
+                  {order.driver_phone}
+                </FieldDescription>
               ) : null}
-            </DetailRow>
-            <DetailRow label="مدة الجلسة">
-              {formatDuration(order.duration_minutes)}
-            </DetailRow>
-            <DetailRow label="نوع الرحلة">
-              {TRIP_TYPE_LABEL[order.trip_type]}
-            </DetailRow>
-            {isAdmin && order.price != null ? (
-              <DetailRow label="أجرة السائق">
-                {order.price.toLocaleString("ar-SA")} ر.س
-              </DetailRow>
+            </Field>
+
+            {isAdmin ? (
+              <Field>
+                <FieldLabel htmlFor={`price-${order.id}`}>أجرة السائق</FieldLabel>
+                <Input
+                  id={`price-${order.id}`}
+                  type="number"
+                  min={0}
+                  inputMode="decimal"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  placeholder="بالريال"
+                  className="min-h-11"
+                />
+              </Field>
             ) : null}
-          </dl>
+
+            {error ? <FieldError>{error}</FieldError> : null}
+          </FieldGroup>
+
+          {order.status === "sent" && dirty ? (
+            <Alert>
+              <AlertTriangle />
+              <AlertDescription>
+                هذا الطلب وصل السائق بالفعل — بعد الحفظ أعيدي الإرسال ليصله التحديث.
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          {saved && !dirty ? (
+            <Alert>
+              <CheckCircle2 />
+              <AlertDescription>حُفظ التعديل.</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <Button onClick={save} disabled={saving || !dirty}>
+            {saving ? <Spinner data-icon="inline-start" /> : null}
+            {saving ? "جارٍ الحفظ…" : "حفظ التعديل"}
+          </Button>
+
           <Separator />
           <p className="text-xs text-muted-foreground">
             أُنشئ {formatRelativeTime(order.created_at)}
             {order.sent_at ? ` · أُرسل ${formatRelativeTime(order.sent_at)}` : ""}
           </p>
+          <EditedLine order={order} className="-mt-2 text-xs text-muted-foreground" />
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/**
+ * "عُدّل بواسطة سارة · قبل ساعة" — only once an edit has actually happened.
+ * `updated_at` starts life equal to `created_at`, and rows edited before the
+ * `updated_by` column existed have no author to name.
+ */
+function EditedLine({
+  order,
+  className,
+}: {
+  order: DriverOrderRow;
+  className?: string;
+}) {
+  const editedAt = order.updated_at;
+  if (!editedAt) return null;
+  const changed =
+    new Date(editedAt).getTime() - new Date(order.created_at).getTime() > 1000;
+  if (!changed) return null;
+  return (
+    <p className={className}>
+      عُدّل بواسطة {order.updated_by_name ?? "أحد الموظفين"} ·{" "}
+      {formatRelativeTime(editedAt)}
+    </p>
   );
 }
 
@@ -744,6 +1068,10 @@ function DispatchDialog({
   const [specialistId, setSpecialistId] = useState("");
   const [driverId, setDriverId] = useState("");
   const [specialistNote, setSpecialistNote] = useState("");
+  // Some instructions are faster said than typed, and a specialist who reads
+  // little Arabic follows a voice better than a translation.
+  const [noteMode, setNoteMode] = useState<NoteMode>("text");
+  const [voiceNote, setVoiceNote] = useState<VoiceNote | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -799,6 +1127,11 @@ function DispatchDialog({
     setSpecialistId("");
     setDriverId("");
     setSpecialistNote("");
+    setNoteMode("text");
+    setVoiceNote((current) => {
+      if (current) URL.revokeObjectURL(current.url);
+      return null;
+    });
     setConfirmed(false);
     setLoading(true);
     setSubmitting(false);
@@ -836,10 +1169,28 @@ function DispatchDialog({
 
     setSubmitting(true);
     try {
+      // A recording has to go up as multipart; a written note stays JSON.
+      const voiceFile = noteMode === "voice" ? voiceNote?.file : null;
+      let body: BodyInit;
+      let headers: HeadersInit | undefined;
+      if (voiceFile) {
+        const form = new FormData();
+        form.append("specialistId", specialistId);
+        form.append("driverId", driverId);
+        form.append("specialistVoice", voiceFile, voiceFile.name);
+        body = form;
+      } else {
+        headers = { "Content-Type": "application/json" };
+        body = JSON.stringify({
+          specialistId,
+          driverId,
+          specialistNote: noteMode === "text" ? specialistNote : "",
+        });
+      }
       const response = await fetch(`/api/orders/${order.id}/dispatch`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ specialistId, driverId, specialistNote }),
+        headers,
+        body,
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -857,7 +1208,16 @@ function DispatchDialog({
     } finally {
       setSubmitting(false);
     }
-  }, [confirmed, driverId, onUpdated, order.id, specialistId, specialistNote]);
+  }, [
+    confirmed,
+    driverId,
+    noteMode,
+    onUpdated,
+    order.id,
+    specialistId,
+    specialistNote,
+    voiceNote,
+  ]);
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
@@ -950,21 +1310,49 @@ function DispatchDialog({
                   </Select>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="specialist-message">
-                    رسالة للأخصائية
-                  </FieldLabel>
-                  <Textarea
-                    id="specialist-message"
-                    value={specialistNote}
-                    onChange={(event) => setSpecialistNote(event.target.value)}
-                    maxLength={500}
-                    placeholder="اكتبي ملاحظة الموعد أو تعليمات الوصول…"
-                    className="min-h-28"
-                  />
-                  <FieldDescription>
-                    ستُترجم تفاصيل الحجز وهذه الرسالة إلى {language} قبل إرسالها
-                    للأخصائية.
-                  </FieldDescription>
+                  <FieldLabel>رسالة للأخصائية</FieldLabel>
+                  <ToggleGroup
+                    type="single"
+                    value={noteMode}
+                    onValueChange={(value) => value && setNoteMode(value as NoteMode)}
+                    variant="outline"
+                    spacing={1}
+                    className="w-full"
+                    aria-label="نوع الرسالة"
+                  >
+                    <ToggleGroupItem value="text" className="min-h-10 flex-1">
+                      <MessageSquareText data-icon="inline-start" />
+                      مكتوبة
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="voice" className="min-h-10 flex-1">
+                      <Mic data-icon="inline-start" />
+                      صوتية
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+
+                  {noteMode === "text" ? (
+                    <>
+                      <Textarea
+                        id="specialist-message"
+                        value={specialistNote}
+                        onChange={(event) => setSpecialistNote(event.target.value)}
+                        maxLength={500}
+                        placeholder="اكتبي ملاحظة الموعد أو تعليمات الوصول…"
+                        className="min-h-28"
+                      />
+                      <FieldDescription>
+                        ستُترجم تفاصيل الحجز وهذه الرسالة إلى {language} قبل إرسالها
+                        للأخصائية.
+                      </FieldDescription>
+                    </>
+                  ) : (
+                    <VoiceNoteRecorder
+                      value={voiceNote}
+                      onChange={setVoiceNote}
+                      disabled={submitting}
+                      description={`تفاصيل الحجز تُرسل مكتوبة ومترجمة إلى ${language}، ويصلها تسجيلك بصوتك بعدها.`}
+                    />
+                  )}
                 </Field>
                 {error ? <FieldError>{error}</FieldError> : null}
               </FieldGroup>
