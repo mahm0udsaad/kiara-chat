@@ -86,6 +86,7 @@ import {
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 import { formatDuration, formatRelativeTime, TRIP_TYPE_LABEL } from "@/lib/format";
 import { nationalityOf } from "@/lib/nationalities";
+import { phoneMatches } from "@/lib/phone";
 import type {
   Driver,
   DriverOrderRow,
@@ -232,6 +233,14 @@ export function OrdersClient({
     if (!normalized) return [];
     return orders.filter((order) => {
       if (!matchesFilters(order)) return false;
+      // Phones are stored E.164 but get typed as "0502376231", so they match
+      // on the normalized national number rather than as plain text.
+      if (
+        phoneMatches(order.customer_phone, normalized) ||
+        phoneMatches(order.driver_phone, normalized)
+      ) {
+        return true;
+      }
       return [
         order.driver_name,
         order.specialist_name,

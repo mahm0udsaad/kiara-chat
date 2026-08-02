@@ -126,6 +126,21 @@ export async function releaseConversation(conversationId: string) {
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
 }
 
+/**
+ * Name the customer by hand. WhatsApp only ever gives us whatever display name
+ * the sender set — often nothing, sometimes "ا" — while staff know exactly who
+ * these people are. Null clears it, and the inbox falls back to the number.
+ *
+ * Unlike the ingest path, this overwrites: it's a deliberate correction.
+ */
+export async function setCustomerName(conversationId: string, name: string | null) {
+  await getAdminSupabaseClient()
+    .from("conversations")
+    .update({ customer_name: name })
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID);
+}
+
 /** Set Kiara CS status; mirrors the DB status column to satisfy its CHECK. */
 export async function setCsStatus(conversationId: string, csStatus: CsStatus) {
   const admin = getAdminSupabaseClient();

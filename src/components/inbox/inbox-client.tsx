@@ -32,6 +32,8 @@ import {
   BookOpen,
   Inbox,
   Lock,
+  Pencil,
+  Check,
   X,
 } from "lucide-react";
 
@@ -74,6 +76,7 @@ import type { InternalNote } from "@/lib/notes";
 import type { SavedReply } from "@/lib/saved-replies";
 import { formatRelativeTime, agentDisplayName, dayKey } from "@/lib/format";
 import { findSharedLocation } from "@/lib/location";
+import { phoneMatches } from "@/lib/phone";
 import type { CatalogItem } from "@/lib/catalog";
 import { catalogImageFile } from "./catalog-image";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
@@ -221,6 +224,10 @@ export function InboxClient({
   const [notes, setNotes] = useState<InternalNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
   const [catalogOpen, setCatalogOpen] = useState(false);
+  // Naming the customer from the thread header.
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
   // The composer's "+" menu, and which level of it is showing.
   const [plusOpen, setPlusOpen] = useState(false);
   const [plusView, setPlusView] = useState<"menu" | "replies">("menu");
@@ -375,7 +382,8 @@ export function InboxClient({
     return conversations.filter((c) => {
       if (q) {
         const hay = `${c.customer_name ?? ""} ${c.customer_phone}`.toLowerCase();
-        if (!hay.includes(q)) return false;
+        // Staff type "0502376231"; the row stores "+966502376231".
+        if (!hay.includes(q) && !phoneMatches(c.customer_phone, q)) return false;
       }
       if (view === "mine" && c.assigned_to !== myTeamMemberId) return false;
       if (view === "unassigned" && c.assigned_to) return false;
@@ -597,6 +605,36 @@ export function InboxClient({
     const data = await res.json();
     if (data?.note) setNotes((n) => [...n, data.note]);
   }, [selected, noteDraft]);
+
+  /**
+   * Name the customer from the thread header. Patched locally first — the row,
+   * the header and every order sheet read the name off `selected`, and waiting
+   * for the server round trip would make the rename feel broken.
+   */
+  const saveCustomerName = useCallback(async () => {
+    if (!selected) return;
+    const name = nameDraft.trim().slice(0, 80);
+    if (name === (selected.customer_name ?? "")) {
+      setEditingName(false);
+      return;
+    }
+    setSavingName(true);
+    try {
+      const res = await fetch(`/api/conversations/${selected.id}/name`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) return;
+      setSelected((p) => (p ? { ...p, customer_name: name || null } : p));
+      setEditingName(false);
+      router.refresh();
+    } catch {
+      // Leave the field open with what was typed so it can be retried.
+    } finally {
+      setSavingName(false);
+    }
+  }, [nameDraft, router, selected]);
 
   const act = useCallback(
     async (path: string, body?: unknown) => {
@@ -1228,15 +1266,78 @@ export function InboxClient({
                   <ChevronRight size={20} aria-hidden="true" />
                 </button>
                 <div className="min-w-0 flex-1">
-                  <p
-                    dir={selected.customer_name ? undefined : "ltr"}
-                    className={cn(
-                      "truncate font-semibold text-[var(--foreground)]",
-                      !selected.customer_name && "text-right"
-                    )}
-                  >
-                    {selected.customer_name || selected.customer_phone}
-                  </p>
+                  {editingName ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void saveCustomerName();
+                      }}
+                      className="flex items-center gap-1"
+                    >
+                      <input
+                        autoFocus
+                        value={nameDraft}
+                        onChange={(e) => setNameDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") setEditingName(false);
+                        }}
+                        maxLength={80}
+                        placeholder="اسم الزبونة"
+                        aria-label="اسم الزبونة"
+                        className="min-w-0 flex-1 rounded-lg border px-2 py-1 text-sm font-semibold outline-none focus:border-[var(--brand)]"
+                      />
+                      <button
+                        type="submit"
+                        disabled={savingName}
+                        aria-label="حفظ الاسم"
+                        className="flex size-8 shrink-0 items-center justify-center rounded-lg text-[var(--brand)] hover:bg-[var(--brand-soft)] disabled:opacity-50"
+                      >
+                        {savingName ? (
+                          <Loader2 size={15} className="animate-spin" />
+                        ) : (
+                          <Check size={16} />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingName(false)}
+                        aria-label="إلغاء"
+                        className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-black/5"
+                      >
+                        <X size={15} />
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <p
+                        dir={selected.customer_name ? undefined : "ltr"}
+                        className={cn(
+                          "min-w-0 truncate font-semibold text-[var(--foreground)]",
+                          !selected.customer_name && "text-right"
+                        )}
+                      >
+                        {selected.customer_name || selected.customer_phone}
+                      </p>
+                      {/* WhatsApp rarely gives a usable name; staff know who
+                          these customers actually are. */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNameDraft(selected.customer_name ?? "");
+                          setEditingName(true);
+                        }}
+                        aria-label={
+                          selected.customer_name ? "تعديل اسم الزبونة" : "إضافة اسم الزبونة"
+                        }
+                        title={
+                          selected.customer_name ? "تعديل اسم الزبونة" : "إضافة اسم الزبونة"
+                        }
+                        className="flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-[var(--brand-soft)] hover:text-[var(--brand)]"
+                      >
+                        <Pencil size={13} aria-hidden="true" />
+                      </button>
+                    </div>
+                  )}
                   {/* Second line: the number only when it isn't already the
                       title (most customers have no saved name), otherwise the
                       last activity — repeating the phone twice said nothing. */}
