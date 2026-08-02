@@ -15,7 +15,9 @@ standalone Next.js app that reuses the **shared whatsapp-cs Supabase project**
   / `is_restaurant_admin` helpers, keyed off `team_members`) plus a **pinned
   Kiara tenant id** (`src/lib/tenant.ts`). The client never supplies a tenant id.
 - **Transport:** WhatsApp via a **persistent OpenWA service** on the VPS (number
-  `+966594032490`), behind a transport-abstraction layer (Twilio adapter later).
+  `+966508421748`), behind a transport-abstraction layer (Twilio adapter later).
+  The linked account is whatever `WA_CLIENT_ID` points at on the engine — /connect
+  reports it live, so trust that over any number written down here.
   _Added in Phase 4._
 
 ## Roles

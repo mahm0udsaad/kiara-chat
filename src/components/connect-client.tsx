@@ -75,7 +75,10 @@ export function ConnectClient() {
       <div className="dashboard-page-header">
         <div>
           <h1>ربط واتساب</h1>
-          <p>اربط رقم واتساب الصالون (‎+966594032490) لبدء استقبال وإرسال الرسائل.</p>
+          {/* The number itself is never hardcoded here — the connected state
+              below reports whatever the engine is actually linked as, so this
+              line can't go stale the next time the salon changes numbers. */}
+          <p>اربط رقم واتساب الصالون لبدء استقبال وإرسال الرسائل.</p>
         </div>
       </div>
 
