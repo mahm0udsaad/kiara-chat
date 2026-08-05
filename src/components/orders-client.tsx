@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { arSA } from "date-fns/locale";
 import {
   AlertTriangle,
+  CalendarCheck2,
   CalendarDays,
   Car,
   CheckCircle2,
@@ -87,6 +88,8 @@ import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 import { formatDuration, formatRelativeTime, TRIP_TYPE_LABEL } from "@/lib/format";
 import { nationalityOf } from "@/lib/nationalities";
 import { phoneMatches } from "@/lib/phone";
+import { RekazReservations } from "@/components/rekaz-reservations";
+import type { ReservationsSnapshot } from "@/lib/reservations";
 import type {
   Driver,
   DriverOrderRow,
@@ -118,7 +121,7 @@ const dateOfKey = (key: string) => new Date(`${key}T12:00:00+03:00`);
 const isolateLtr = (value: string) => `\u2066${value}\u2069`;
 
 type StatusFilter = "all" | DriverOrderStatus;
-type OrdersView = "daily" | "calendar";
+type OrdersView = "daily" | "calendar" | "rekaz";
 /** How the staff note reaches the specialist: typed, or in their own voice. */
 type NoteMode = "text" | "voice";
 
@@ -145,13 +148,24 @@ export function OrdersClient({
   initialOrders,
   isAdmin,
   todayKey,
+  reservationsSnapshot = null,
 }: {
   initialOrders: DriverOrderRow[];
   isAdmin: boolean;
   todayKey: string;
+  reservationsSnapshot?: ReservationsSnapshot | null;
 }) {
   const [orders, setOrders] = useState(initialOrders);
-  const [view, setView] = useState<OrdersView>("daily");
+  // Reseed when the server sends a fresh list (router.refresh() after the
+  // Rekaz tab creates an order) — otherwise the new order never appears.
+  const [syncedOrders, setSyncedOrders] = useState(initialOrders);
+  if (syncedOrders !== initialOrders) {
+    setSyncedOrders(initialOrders);
+    setOrders(initialOrders);
+  }
+  // Rekaz is the source of truth for the schedule, so its table is what /orders
+  // opens on; the driver-order views sit behind it.
+  const [view, setView] = useState<OrdersView>("rekaz");
   const [selectedDay, setSelectedDay] = useState(todayKey);
   const [status, setStatus] = useState<StatusFilter>("all");
   const [driverId, setDriverId] = useState("all");
@@ -401,6 +415,10 @@ export function OrdersClient({
           className="gap-4"
         >
           <TabsList>
+            <TabsTrigger value="rekaz" onClick={() => setView("rekaz")}>
+              <CalendarCheck2 data-icon="inline-start" />
+              حجوزات ركاز
+            </TabsTrigger>
             <TabsTrigger value="daily" onClick={() => setView("daily")}>
               <Clock3 data-icon="inline-start" />
               العرض اليومي
@@ -485,6 +503,14 @@ export function OrdersClient({
                 />
               </div>
             </div>
+          </TabsContent>
+
+          <TabsContent value="rekaz">
+            <RekazReservations
+              snapshot={reservationsSnapshot}
+              orders={orders}
+              todayKey={todayKey}
+            />
           </TabsContent>
         </Tabs>
       )}

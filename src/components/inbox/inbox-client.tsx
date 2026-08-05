@@ -189,6 +189,7 @@ export function InboxClient({
   labels: initialLabels,
   labelAssignments: initialAssignments,
   savedReplies,
+  initialConversationId = null,
 }: {
   conversations: Conversation[];
   agents: AgentInfo[];
@@ -198,6 +199,8 @@ export function InboxClient({
   labels: Label[];
   labelAssignments: Record<string, string[]>;
   savedReplies: SavedReply[];
+  /** `?c=<id>` — the thread /orders sent the reader here to read. */
+  initialConversationId?: string | null;
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Conversation | null>(null);
@@ -461,6 +464,21 @@ export function InboxClient({
     },
     [markRead]
   );
+
+  // `?c=<id>` opens that thread on arrival — the المحادثة column on /orders
+  // links here. Once only: a ref, so closing the thread (or a list refresh)
+  // doesn't reopen it under the reader.
+  const deepLinkOpened = useRef(false);
+  useEffect(() => {
+    if (deepLinkOpened.current || !initialConversationId) return;
+    const target = conversations.find((c) => c.id === initialConversationId);
+    if (!target) return;
+    deepLinkOpened.current = true;
+    // Opening a thread sets half a dozen pieces of state; doing that in the
+    // effect body cascades a second render before the page has even painted.
+    const timer = window.setTimeout(() => void loadMessages(target), 0);
+    return () => window.clearTimeout(timer);
+  }, [initialConversationId, conversations, loadMessages]);
 
   // `selected` is a snapshot of a list row. When the list refreshes (someone
   // claimed, transferred, or resolved the chat — here or on another device),

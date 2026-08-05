@@ -40,6 +40,30 @@ export async function listConversations(
   );
 }
 
+/**
+ * One conversation by id, or null if it isn't there — or isn't ours to see.
+ *
+ * `listConversations` returns only the most recently active threads, so a
+ * deep link from /orders can point at a customer who booked months ago and has
+ * dropped off the end of that list. This fetches the one row it needs, with the
+ * same visibility rule applied.
+ */
+export async function getConversationById(
+  id: string,
+  viewer: ConversationViewer = { isAdmin: true, teamMemberId: null }
+): Promise<Conversation | null> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("conversations")
+    .select(CONVERSATION_COLS)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !data) return null;
+  const conversation = data as Conversation;
+  return canViewConversation(conversation, viewer) ? conversation : null;
+}
+
 /** Messages a freshly opened thread starts with; older ones page in on scroll. */
 export const MESSAGE_PAGE_SIZE = 8;
 /** How many older messages one scroll-up pulls — fewer round trips than 8. */

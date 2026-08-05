@@ -101,6 +101,19 @@ function initialLocation(
   );
 }
 
+/**
+ * The time <Select> only offers half-hour steps 08:00–22:00, so a prefilled
+ * arrival (a Rekaz booking at 22:15, say) snaps to the nearest offered slot.
+ * The booking alert shows the exact original time for the eye to check.
+ */
+function snapToTimeOptions(date: Date): string {
+  const minutes = date.getHours() * 60 + date.getMinutes();
+  const snapped = Math.min(22 * 60, Math.max(8 * 60, Math.round(minutes / 30) * 30));
+  return `${String(Math.floor(snapped / 60)).padStart(2, "0")}:${String(
+    snapped % 60
+  ).padStart(2, "0")}`;
+}
+
 export function CreateOrderSheet({
   open,
   onClose,
@@ -108,6 +121,8 @@ export function CreateOrderSheet({
   suggestedLocation = null,
   sharedLocation = null,
   booking = null,
+  initialArrival = null,
+  initialDurationMinutes = null,
   onOrderCreated,
 }: {
   open: boolean;
@@ -117,35 +132,56 @@ export function CreateOrderSheet({
   /** Whatever location the customer already shared in this thread. */
   sharedLocation?: SharedLocation | null;
   booking?: BookingRequest | null;
+  /** ISO — seeds the calendar/time instead of "an hour from now" (Rekaz flow). */
+  initialArrival?: string | null;
+  initialDurationMinutes?: number | null;
   onOrderCreated?: () => void;
 }) {
   const router = useRouter();
+  const initialDate = useCallback((): Date => {
+    if (initialArrival) {
+      const d = new Date(initialArrival);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+    return roundedDefault();
+  }, [initialArrival]);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(() =>
-    roundedDefault()
+    initialDate()
   );
   const [selectedTime, setSelectedTime] = useState(() =>
-    timeOf(roundedDefault())
+    initialArrival ? snapToTimeOptions(initialDate()) : timeOf(roundedDefault())
   );
   const [location, setLocation] = useState(() =>
     initialLocation(booking, sharedLocation, suggestedLocation)
   );
-  const [duration, setDuration] = useState("60");
+  // A prefilled session length snaps to the nearest preset chip — the chips
+  // are the only control, and 95 minutes would leave nothing selected.
+  const snapDuration = useCallback((): string => {
+    if (!initialDurationMinutes) return "60";
+    const nearest = [...DURATION_PRESETS].reduce((best, preset) =>
+      Math.abs(preset - initialDurationMinutes) < Math.abs(best - initialDurationMinutes)
+        ? preset
+        : best
+    );
+    return String(nearest);
+  }, [initialDurationMinutes]);
+  const [duration, setDuration] = useState(() => snapDuration());
   const [tripType, setTripType] = useState<TripType>("one_way");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
   const reset = useCallback(() => {
-    const next = roundedDefault();
+    const next = initialDate();
     setSelectedDate(next);
-    setSelectedTime(timeOf(next));
+    setSelectedTime(initialArrival ? snapToTimeOptions(next) : timeOf(next));
     setLocation(initialLocation(booking, sharedLocation, suggestedLocation));
-    setDuration("60");
+    setDuration(snapDuration());
     setTripType("one_way");
     setSubmitting(false);
     setError(null);
     setDone(false);
-  }, [booking, sharedLocation, suggestedLocation]);
+  }, [booking, sharedLocation, suggestedLocation, initialArrival, initialDate, snapDuration]);
 
   const closeDialog = useCallback(() => {
     reset();
