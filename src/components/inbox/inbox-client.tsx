@@ -30,6 +30,12 @@ import {
   Mic,
   Square,
   CalendarDays,
+  CalendarCheck2,
+  CalendarClock,
+  ClipboardList,
+  FileUp,
+  Activity,
+  BadgeCheck,
   BookOpen,
   Inbox,
   Lock,
@@ -54,6 +60,7 @@ const CatalogSheet = lazy(() =>
 );
 import { Modal } from "@/components/ui/modal";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
@@ -66,7 +73,13 @@ import type {
   CsStatus,
   Label,
   LabelColor,
+  BookingStage,
 } from "@/lib/types";
+import {
+  BOOKING_STAGE_LABEL,
+  BOOKING_STAGE_ORDER,
+  bookingStageOf,
+} from "@/lib/booking-stage";
 import {
   SECTION_LABEL,
   SECTION_ORDER,
@@ -88,6 +101,12 @@ import {
   AttachmentPreview,
   type PendingAttachment,
 } from "./attachment-preview";
+import {
+  FieldDescription,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 const CS_STATUS_LABEL: Record<CsStatus, string> = {
   open: "جاري المحادثة",
@@ -95,6 +114,15 @@ const CS_STATUS_LABEL: Record<CsStatus, string> = {
   resolved: "تم الطلب",
 };
 const CS_STATUS_ORDER: CsStatus[] = ["open", "waiting", "resolved"];
+
+const BOOKING_STAGE_ICON = {
+  collecting_details: ClipboardList,
+  awaiting_confirmation: CalendarClock,
+  booking_confirmed: CalendarCheck2,
+  invoice_required: FileUp,
+  in_progress: Activity,
+  completed: BadgeCheck,
+} satisfies Record<BookingStage, typeof ClipboardList>;
 
 const LABEL_CLASSES: Record<LabelColor, string> = {
   slate: "bg-slate-100 text-slate-700 border-slate-300",
@@ -721,13 +749,21 @@ export function InboxClient({
                 : null;
         if (ownerPatch) setSelected((p) => (p ? { ...p, ...ownerPatch } : p));
 
-        // Section/routing live in metadata — mirror them locally for the same
-        // reason: the modal reads them straight off `selected`.
-        if (path === "section" || path === "routing") {
+        // Section, routing, and booking stage live in metadata — mirror them
+        // locally so the modal and status chip update without a refresh delay.
+        if (
+          path === "section" ||
+          path === "routing" ||
+          path === "booking-stage"
+        ) {
           const routedTo =
             path === "routing"
               ? ((body as { targetTeamMemberId: string | null }).targetTeamMemberId ??
                 null)
+              : undefined;
+          const bookingStage =
+            path === "booking-stage"
+              ? (body as { stage: BookingStage }).stage
               : undefined;
           setSelected((p) =>
             p
@@ -737,10 +773,22 @@ export function InboxClient({
                     ...(p.metadata ?? {}),
                     ...(path === "section"
                       ? { section: (body as { section: string | null }).section }
-                      : { routed_to: routedTo }),
+                      : path === "routing"
+                        ? { routed_to: routedTo }
+                        : {
+                            booking_stage: bookingStage,
+                            cs_status:
+                              bookingStage === "completed" ? "resolved" : "open",
+                          }),
                   },
                   // Routing hands the chat to that employee as well.
                   ...(routedTo ? { assigned_to: routedTo } : {}),
+                  ...(bookingStage
+                    ? {
+                        status:
+                          bookingStage === "completed" ? "resolved" : "active",
+                      }
+                    : {}),
                 }
               : p
           );
@@ -1093,6 +1141,7 @@ export function InboxClient({
   };
 
   const selectedLabelIds = selected ? assignments[selected.id] ?? [] : [];
+  const selectedBookingStage = selected ? bookingStageOf(selected) : null;
   const canReply = Boolean(
     selected && (isAdmin || (myTeamMemberId && selected.assigned_to === myTeamMemberId))
   );
@@ -1209,6 +1258,7 @@ export function InboxClient({
               const owner = ownerLabel(c);
               const route = routeLabel(c);
               const section = sectionOf(c);
+              const bookingStage = bookingStageOf(c);
               const wa = isHandledOnWhatsApp(c);
               const delay = replyDelayMinutes(c, now);
               const cLabels = (assignments[c.id] ?? [])
@@ -1277,6 +1327,11 @@ export function InboxClient({
                       <span className="rounded-full bg-[var(--brand-soft)] px-2 py-0.5 text-[10px] text-[var(--brand)]">
                         {conversationStateLabel(c)}
                       </span>
+                      {bookingStage ? (
+                        <Badge variant="secondary">
+                          {BOOKING_STAGE_LABEL[bookingStage]}
+                        </Badge>
+                      ) : null}
                     </div>
                   </div>
                   {cLabels.length ? (
@@ -1455,6 +1510,11 @@ export function InboxClient({
                       <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-700">
                         {SECTION_LABEL[sectionOf(selected)!]}
                       </span>
+                    ) : null}
+                    {selectedBookingStage ? (
+                      <Badge variant="secondary">
+                        {BOOKING_STAGE_LABEL[selectedBookingStage]}
+                      </Badge>
                     ) : null}
                   </div>
                 </div>
@@ -1875,73 +1935,123 @@ export function InboxClient({
               open={optionsOpen}
               onClose={() => setOptionsOpen(false)}
               title="خيارات المحادثة"
+              description="حددي مرحلة الحجز، ثم أديري المسؤول والتوجيه والتصنيفات."
+              contentClassName="sm:max-w-2xl"
             >
-              <div className="space-y-5">
-                <section className="space-y-2">
-                  <h3 className="text-xs font-semibold text-[var(--subtle)]">الحالة</h3>
-                  <select
-                    value={csStatusOf(selected)}
+              <div className="flex flex-col gap-5">
+                <FieldSet className="rounded-xl border p-4">
+                  <FieldLegend variant="label">مرحلة متابعة الحجز</FieldLegend>
+                  <ToggleGroup
+                    type="single"
+                    value={selectedBookingStage ?? ""}
+                    onValueChange={(value) =>
+                      value &&
+                      act("booking-stage", { stage: value as BookingStage })
+                    }
                     disabled={busy}
-                    onChange={(e) => act("status", { status: e.target.value })}
-                    aria-label="حالة المحادثة"
-                    className="min-h-11 w-full rounded-lg border bg-white px-3 text-sm"
+                    variant="outline"
+                    spacing={1}
+                    className="grid w-full grid-cols-2 sm:grid-cols-3"
+                    aria-label="مرحلة متابعة الحجز"
                   >
-                    {CS_STATUS_ORDER.map((s) => (
-                      <option key={s} value={s}>
-                        {CS_STATUS_LABEL[s]}
-                      </option>
-                    ))}
-                  </select>
-                </section>
+                    {BOOKING_STAGE_ORDER.map((stage) => {
+                      const Icon = BOOKING_STAGE_ICON[stage];
+                      return (
+                        <ToggleGroupItem
+                          key={stage}
+                          value={stage}
+                          className="min-h-16 min-w-0 flex-col gap-1 whitespace-normal px-2 text-center leading-tight"
+                        >
+                          <Icon aria-hidden="true" />
+                          {BOOKING_STAGE_LABEL[stage]}
+                        </ToggleGroupItem>
+                      );
+                    })}
+                  </ToggleGroup>
+                  <FieldDescription>
+                    عند اختيار «إرفاق الفاتورة»، أرسلي الصورة أو ملف PDF من زر
+                    المرفقات أسفل المحادثة.
+                  </FieldDescription>
+                </FieldSet>
 
-                <section className="space-y-2">
-                  <h3 className="text-xs font-semibold text-[var(--subtle)]">المسؤول</h3>
-                  {selected.assigned_to === myTeamMemberId && myTeamMemberId ? (
-                    <button
-                      type="button"
-                      onClick={() => act("release")}
-                      disabled={busy}
-                      className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border text-sm text-muted-foreground hover:bg-[var(--brand-soft)] disabled:opacity-60"
-                    >
-                      <UserX size={16} aria-hidden="true" /> إطلاق المحادثة
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => act("take")}
-                      disabled={busy || !myTeamMemberId}
-                      className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--brand)] text-sm font-medium text-white disabled:opacity-60"
-                    >
-                      <UserCheck size={16} aria-hidden="true" /> استلام المحادثة
-                    </button>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <Repeat size={16} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+                <div className="grid gap-5 md:grid-cols-2">
+                  <section className="flex flex-col gap-2">
+                    <h3 className="text-xs font-semibold text-[var(--subtle)]">
+                      حالة التواصل
+                    </h3>
                     <select
-                      value=""
+                      value={csStatusOf(selected)}
                       disabled={busy}
-                      onChange={(e) =>
-                        e.target.value && act("transfer", { targetTeamMemberId: e.target.value })
-                      }
-                      aria-label="تحويل المحادثة إلى موظف"
-                      className="min-h-11 flex-1 rounded-lg border bg-white px-3 text-sm"
+                      onChange={(e) => act("status", { status: e.target.value })}
+                      aria-label="حالة المحادثة"
+                      className="min-h-11 w-full rounded-lg border bg-white px-3 text-sm"
                     >
-                      <option value="">تحويل إلى…</option>
-                      {agents
-                        .filter((a) => a.id !== selected.assigned_to)
-                        .map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {agentDisplayName(a)}
-                          </option>
-                        ))}
+                      {CS_STATUS_ORDER.map((s) => (
+                        <option key={s} value={s}>
+                          {CS_STATUS_LABEL[s]}
+                        </option>
+                      ))}
                     </select>
-                  </div>
-                </section>
+                  </section>
+
+                  <section className="flex flex-col gap-2">
+                    <h3 className="text-xs font-semibold text-[var(--subtle)]">
+                      المسؤول
+                    </h3>
+                    {selected.assigned_to === myTeamMemberId && myTeamMemberId ? (
+                      <button
+                        type="button"
+                        onClick={() => act("release")}
+                        disabled={busy}
+                        className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border text-sm text-muted-foreground hover:bg-[var(--brand-soft)] disabled:opacity-60"
+                      >
+                        <UserX size={16} aria-hidden="true" /> إطلاق المحادثة
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => act("take")}
+                        disabled={busy || !myTeamMemberId}
+                        className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--brand)] text-sm font-medium text-white disabled:opacity-60"
+                      >
+                        <UserCheck size={16} aria-hidden="true" /> استلام المحادثة
+                      </button>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <Repeat
+                        size={16}
+                        className="shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      <select
+                        value=""
+                        disabled={busy}
+                        onChange={(e) =>
+                          e.target.value &&
+                          act("transfer", {
+                            targetTeamMemberId: e.target.value,
+                          })
+                        }
+                        aria-label="تحويل المحادثة إلى موظف"
+                        className="min-h-11 flex-1 rounded-lg border bg-white px-3 text-sm"
+                      >
+                        <option value="">تحويل إلى…</option>
+                        {agents
+                          .filter((a) => a.id !== selected.assigned_to)
+                          .map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {agentDisplayName(a)}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </section>
+                </div>
 
                 {/* Owner-only desk routing. Employees never see this block —
                     and the API rejects them even if they find the endpoint. */}
                 {isAdmin ? (
-                  <section className="space-y-2">
+                  <section className="flex flex-col gap-2 rounded-xl border p-4">
                     <h3 className="flex items-center gap-1.5 text-xs font-semibold text-[var(--subtle)]">
                       <Inbox size={13} aria-hidden="true" /> القسم والتوجيه
                     </h3>
@@ -1994,7 +2104,7 @@ export function InboxClient({
                   </section>
                 ) : null}
 
-                <section className="space-y-2">
+                <section className="flex flex-col gap-2">
                   <h3 className="flex items-center gap-1.5 text-xs font-semibold text-[var(--subtle)]">
                     <Tag size={13} aria-hidden="true" /> التصنيفات
                   </h3>
@@ -2058,7 +2168,7 @@ export function InboxClient({
                   </div>
                 </section>
 
-                <section className="space-y-2">
+                <section className="flex flex-col gap-2">
                   <h3 className="flex items-center gap-1.5 text-xs font-semibold text-[var(--subtle)]">
                     <StickyNote size={13} aria-hidden="true" /> ملاحظات داخلية — لا تُرسل للعميل
                   </h3>

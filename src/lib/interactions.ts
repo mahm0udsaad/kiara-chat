@@ -15,6 +15,7 @@ import {
   MAX_MEDIA_BYTES,
 } from "@/lib/storage-media";
 import type {
+  BookingStage,
   CsStatus,
   AgentInfo,
   Conversation,
@@ -160,6 +161,35 @@ export async function setCsStatus(conversationId: string, csStatus: CsStatus) {
     .update({ metadata, status: dbStatus })
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
+}
+
+/**
+ * Set the operational booking stage without a schema migration. The final
+ * stage resolves the conversation; moving to any earlier stage reopens it.
+ */
+export async function setBookingStage(
+  conversationId: string,
+  bookingStage: BookingStage
+) {
+  const admin = getAdminSupabaseClient();
+  const { data } = await admin
+    .from("conversations")
+    .select("metadata")
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  const completed = bookingStage === "completed";
+  const metadata = {
+    ...((data?.metadata as Record<string, unknown>) ?? {}),
+    booking_stage: bookingStage,
+    cs_status: completed ? "resolved" : "open",
+  };
+  const { error } = await admin
+    .from("conversations")
+    .update({ metadata, status: completed ? "resolved" : "active" })
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID);
+  if (error) throw new Error(error.message);
 }
 
 /** Read-modify-write one key of a conversation's metadata. Owner-only callers. */
@@ -373,4 +403,3 @@ export async function listAgents(): Promise<AgentInfo[]> {
     })
   );
 }
-

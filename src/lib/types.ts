@@ -51,6 +51,15 @@ export interface Label {
 
 export type CsStatus = "open" | "waiting" | "resolved";
 
+/** The operational booking stage tracked on a customer conversation. */
+export type BookingStage =
+  | "collecting_details"
+  | "awaiting_confirmation"
+  | "booking_confirmed"
+  | "invoice_required"
+  | "in_progress"
+  | "completed";
+
 /**
  * Which customer-service desk owns a chat. Set by the owner per conversation —
  * employees are not tagged with a section anywhere, so this lives on the

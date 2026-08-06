@@ -3,9 +3,11 @@
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 /**
  * Compatibility wrapper for older feature panels. Keeping the small API lets
@@ -16,11 +18,15 @@ export function Modal({
   open,
   onClose,
   title,
+  description,
+  contentClassName,
   children,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
+  description?: string;
+  contentClassName?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -30,9 +36,17 @@ export function Modal({
         if (!nextOpen) onClose();
       }}
     >
-      <DialogContent className="safe-b max-h-[90dvh] overflow-y-auto sm:max-w-md">
+      <DialogContent
+        className={cn(
+          "safe-b max-h-[90dvh] overscroll-contain overflow-y-auto sm:max-w-md",
+          contentClassName
+        )}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          {description ? (
+            <DialogDescription>{description}</DialogDescription>
+          ) : null}
         </DialogHeader>
         <div>{children}</div>
       </DialogContent>
