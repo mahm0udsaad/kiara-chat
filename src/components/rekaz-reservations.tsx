@@ -8,6 +8,7 @@ import {
   Bell,
   CalendarDays,
   Car,
+  Check,
   CheckCircle2,
   ChevronDown,
   ExternalLink,
@@ -23,6 +24,17 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Calendar } from "@/components/ui/calendar";
 import {
   Card,
@@ -54,6 +66,13 @@ import { cn } from "@/lib/utils";
 import { normalizePhone, phoneMatches } from "@/lib/phone";
 import { formatRelativeTime } from "@/lib/format";
 import type { ReservationsSnapshot, RekazReservation } from "@/lib/reservations";
+import {
+  RESERVATION_FOLLOW_UP_LABEL,
+  reservationDayKey,
+  type ReservationFollowUp,
+  type ReservationFollowUpMap,
+  type ReservationFollowUpStatus,
+} from "@/lib/reservation-follow-up";
 import type { BookingRequest, DriverOrderRow } from "@/lib/types";
 
 const CreateOrderSheet = lazy(() =>
@@ -200,10 +219,12 @@ export function RekazReservations({
   snapshot,
   orders,
   todayKey,
+  initialFollowUps,
 }: {
   snapshot: ReservationsSnapshot | null;
   orders: DriverOrderRow[];
   todayKey: string;
+  initialFollowUps: ReservationFollowUpMap;
 }) {
   const router = useRouter();
   const [view, setView] = useState<"table" | "calendar">("table");
@@ -230,7 +251,8 @@ export function RekazReservations({
   const [preparing, setPreparing] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [reminding, setReminding] = useState<string | null>(null);
-  const [reminded, setReminded] = useState<Set<string>>(() => new Set());
+  const [followUpBusy, setFollowUpBusy] = useState<string | null>(null);
+  const [followUpOverrides, setFollowUpOverrides] = useState<ReservationFollowUpMap>({});
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncNote, setSyncNote] = useState<string | null>(null);
@@ -243,6 +265,10 @@ export function RekazReservations({
     [snapshot]
   );
   const visits = useMemo(() => groupVisits(reservations), [reservations]);
+  const followUps = useMemo(
+    () => ({ ...initialFollowUps, ...followUpOverrides }),
+    [followUpOverrides, initialFollowUps]
+  );
 
   // A visit whose customer already has an order that day shows its state
   // instead of a second button — one driver trip per visit.
@@ -364,6 +390,10 @@ export function RekazReservations({
   const requestDriver = useCallback(
     async (visit: Visit) => {
       setError(null);
+      if (followUps[visit.key]?.status === "cancelled") {
+        setError("لا يمكن طلب سائق لزيارة ألغتها العميلة");
+        return;
+      }
       setPreparing(visit.key);
       try {
         const conversationId = await resolveConversation(visit);
@@ -374,7 +404,7 @@ export function RekazReservations({
         setPreparing(null);
       }
     },
-    [resolveConversation]
+    [followUps, resolveConversation]
   );
 
   /** Jump to the inbox with this customer's thread open. */
@@ -401,24 +431,68 @@ export function RekazReservations({
       setReminding(visit.key);
       try {
         const conversationId = await resolveConversation(visit);
-        const services = visit.services.map((service) => service.service).join("، ");
-        const message = [
-          `مرحبًا ${visit.customerName || "عميلتنا"}،`,
-          `نذكّرك بموعدك ${DAY_FMT.format(new Date(visit.startAt))} الساعة ${TIME_FMT.format(new Date(visit.startAt))} لخدمة ${services}.`,
-          "فضلاً أكدي حضورك، أو أخبرينا الآن إذا رغبتِ بإلغاء الحجز قبل انطلاق السائق.",
-        ].join("\n");
-        const response = await fetch(`/api/conversations/${conversationId}/reply`, {
+        const response = await fetch(
+          `/api/conversations/${conversationId}/reservation-follow-up`,
+          {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ body: message }),
-        });
+            body: JSON.stringify({
+              action: "remind",
+              dayKey: reservationDayKey(visit.startAt),
+              customerName: visit.customerName,
+              arrivalAt: visit.startAt,
+              services: visit.services.map((service) => service.service),
+            }),
+          }
+        );
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data?.error ?? "تعذّر إرسال التذكير");
-        setReminded((current) => new Set(current).add(visit.key));
+        setFollowUpOverrides((current) => ({
+          ...current,
+          [visit.key]: data.followUp as ReservationFollowUp,
+        }));
       } catch (e) {
         setError(e instanceof Error ? e.message : "تعذّر إرسال التذكير");
       } finally {
         setReminding(null);
+      }
+    },
+    [resolveConversation]
+  );
+
+  /** Record the customer's answer so dispatch never relies on staff memory. */
+  const updateFollowUp = useCallback(
+    async (visit: Visit, status: ReservationFollowUpStatus) => {
+      setError(null);
+      setFollowUpBusy(`${visit.key}:${status}`);
+      try {
+        const conversationId = await resolveConversation(visit);
+        const response = await fetch(
+          `/api/conversations/${conversationId}/reservation-follow-up`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "set_status",
+              dayKey: reservationDayKey(visit.startAt),
+              status,
+            }),
+          }
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data?.error ?? "تعذّر تحديث متابعة العميلة");
+        }
+        setFollowUpOverrides((current) => ({
+          ...current,
+          [visit.key]: data.followUp as ReservationFollowUp,
+        }));
+      } catch (cause) {
+        setError(
+          cause instanceof Error ? cause.message : "تعذّر تحديث متابعة العميلة"
+        );
+      } finally {
+        setFollowUpBusy(null);
       }
     },
     [resolveConversation]
@@ -715,8 +789,11 @@ export function RekazReservations({
                       onOpenConversation={() => openConversation(visit.services[0])}
                       onOpenTimeline={() => openTimeline(visit)}
                       reminding={reminding === visit.key}
-                      reminded={reminded.has(visit.key)}
+                      followUp={followUps[visit.key]}
+                      followUpBusy={followUpBusy?.startsWith(`${visit.key}:`) ?? false}
                       onRemind={() => sendReminder(visit)}
+                      onConfirm={() => updateFollowUp(visit, "confirmed")}
+                      onCancel={() => updateFollowUp(visit, "cancelled")}
                       onReviewDispatch={() => {
                         const order = orderByVisit.get(visit.key);
                         if (order) {
@@ -743,6 +820,7 @@ export function RekazReservations({
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>إجراءات</TableHead>
+                <TableHead>متابعة العميلة</TableHead>
                 <TableHead>المحادثة</TableHead>
                 <TableHead>الخدمة</TableHead>
                 <TableHead>وقت الحجز</TableHead>
@@ -762,6 +840,8 @@ export function RekazReservations({
                 const key = visitKeyOf(r.customerPhone, r.arrivalAt);
                 const visit = visits.get(key);
                 const existing = orderByVisit.get(key);
+                const followUp = followUps[key];
+                const cancelled = followUp?.status === "cancelled";
                 const meta = STATUS_META[r.status] ?? {
                   label: r.status || "—",
                   variant: "outline" as const,
@@ -788,6 +868,7 @@ export function RekazReservations({
                                   specialistName: r.providers[0] ?? null,
                                 })
                               }
+                              disabled={cancelled}
                             >
                               <Car data-icon="inline-start" />
                               تأكيد الحجز
@@ -796,7 +877,7 @@ export function RekazReservations({
                             <Button
                               size="sm"
                               onClick={() => visit && requestDriver(visit)}
-                              disabled={!visit || preparing === key}
+                              disabled={!visit || preparing === key || cancelled}
                               className="whitespace-nowrap"
                             >
                               {preparing === key ? (
@@ -807,20 +888,6 @@ export function RekazReservations({
                               طلب سائق
                             </Button>
                           )}
-                          <Button
-                            size="icon-sm"
-                            variant="outline"
-                            onClick={() => visit && sendReminder(visit)}
-                            disabled={!visit || reminding === key || reminded.has(key)}
-                            aria-label={reminded.has(key) ? "تم إرسال التذكير" : "تذكير العميلة"}
-                            title={reminded.has(key) ? "تم إرسال التذكير" : "تذكير العميلة"}
-                          >
-                            {reminding === key ? (
-                              <Loader2 className="animate-spin" />
-                            ) : (
-                              <Bell />
-                            )}
-                          </Button>
                           <Button size="icon-sm" variant="ghost" asChild>
                             <a
                               href="https://platform.rekaz.io"
@@ -833,6 +900,22 @@ export function RekazReservations({
                             </a>
                           </Button>
                         </div>
+                      </TableCell>
+
+                      <TableCell>
+                        {visit ? (
+                          <CustomerFollowUpControls
+                            followUp={followUp}
+                            reminding={reminding === key}
+                            busy={followUpBusy?.startsWith(`${key}:`) ?? false}
+                            onRemind={() => sendReminder(visit)}
+                            onConfirm={() => updateFollowUp(visit, "confirmed")}
+                            onCancel={() => updateFollowUp(visit, "cancelled")}
+                            compact
+                          />
+                        ) : (
+                          "—"
+                        )}
                       </TableCell>
 
                       <TableCell>
@@ -955,7 +1038,7 @@ export function RekazReservations({
 
                     {isOpen ? (
                       <TableRow className="hover:bg-transparent">
-                        <TableCell colSpan={11} className="bg-muted/40">
+                        <TableCell colSpan={12} className="bg-muted/40">
                           <dl className="grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
                             <Detail label="قيمة الخدمة" value={riyal(r.amount)} />
                             <Detail
@@ -1109,8 +1192,11 @@ function VisitCard({
   onOpenConversation,
   onOpenTimeline,
   reminding,
-  reminded,
+  followUp,
+  followUpBusy,
   onRemind,
+  onConfirm,
+  onCancel,
   onReviewDispatch,
 }: {
   visit: Visit;
@@ -1121,8 +1207,11 @@ function VisitCard({
   onOpenConversation: () => void;
   onOpenTimeline: () => void;
   reminding: boolean;
-  reminded: boolean;
+  followUp: ReservationFollowUp | undefined;
+  followUpBusy: boolean;
   onRemind: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
   onReviewDispatch: () => void;
 }) {
   const total = visit.services.reduce((sum, s) => sum + s.amount, 0);
@@ -1169,6 +1258,14 @@ function VisitCard({
             {total.toLocaleString("ar-SA")} ر.س
           </span>
         </div>
+        <CustomerFollowUpControls
+          followUp={followUp}
+          reminding={reminding}
+          busy={followUpBusy}
+          onRemind={onRemind}
+          onConfirm={onConfirm}
+          onCancel={onCancel}
+        />
         <div className="flex flex-wrap gap-1.5">
           {order?.status === "sent" ? (
             <Badge variant="outline" className="gap-1">
@@ -1176,12 +1273,21 @@ function VisitCard({
               تم التأكيد
             </Badge>
           ) : order ? (
-            <Button size="sm" variant="outline" onClick={onReviewDispatch}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onReviewDispatch}
+              disabled={followUp?.status === "cancelled"}
+            >
               <Car data-icon="inline-start" />
               تأكيد الحجز
             </Button>
           ) : (
-            <Button size="sm" onClick={onRequestDriver} disabled={preparing}>
+            <Button
+              size="sm"
+              onClick={onRequestDriver}
+              disabled={preparing || followUp?.status === "cancelled"}
+            >
               {preparing ? (
                 <Loader2 data-icon="inline-start" className="animate-spin" />
               ) : (
@@ -1198,14 +1304,6 @@ function VisitCard({
             )}
             المحادثة
           </Button>
-          <Button size="sm" variant="outline" onClick={onRemind} disabled={reminding || reminded}>
-            {reminding ? (
-              <Loader2 data-icon="inline-start" className="animate-spin" />
-            ) : (
-              <Bell data-icon="inline-start" />
-            )}
-            {reminded ? "تم التذكير" : "تذكير العميلة"}
-          </Button>
           <Button size="sm" variant="ghost" asChild>
             <a href="https://platform.rekaz.io" target="_blank" rel="noopener noreferrer">
               <SquarePen data-icon="inline-start" />
@@ -1215,5 +1313,100 @@ function VisitCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function CustomerFollowUpControls({
+  followUp,
+  reminding,
+  busy,
+  onRemind,
+  onConfirm,
+  onCancel,
+  compact = false,
+}: {
+  followUp: ReservationFollowUp | undefined;
+  reminding: boolean;
+  busy: boolean;
+  onRemind: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+  compact?: boolean;
+}) {
+  const variant =
+    followUp?.status === "confirmed"
+      ? "default"
+      : followUp?.status === "cancelled"
+        ? "destructive"
+        : followUp?.status === "awaiting_reply"
+          ? "secondary"
+          : "outline";
+  const reminded = Boolean(followUp?.reminded_at);
+
+  return (
+    <div className="flex flex-col items-start gap-1.5">
+      <Badge variant={variant}>
+        {followUp
+          ? RESERVATION_FOLLOW_UP_LABEL[followUp.status]
+          : "لم تتم المتابعة"}
+      </Badge>
+      <div className="flex flex-wrap gap-1">
+        <Button
+          size={compact ? "icon-sm" : "sm"}
+          variant="outline"
+          onClick={onRemind}
+          disabled={reminding || busy || followUp?.status === "cancelled"}
+          aria-label={reminded ? "إعادة تذكير العميلة" : "تذكير العميلة"}
+          title={reminded ? "إعادة تذكير العميلة" : "تذكير العميلة"}
+        >
+          {reminding ? (
+            <Loader2 className="animate-spin" />
+          ) : (
+            <Bell data-icon={compact ? undefined : "inline-start"} />
+          )}
+          {compact ? null : reminded ? "إعادة تذكير" : "تذكير العميلة"}
+        </Button>
+        <Button
+          size={compact ? "icon-sm" : "sm"}
+          variant={followUp?.status === "confirmed" ? "default" : "outline"}
+          onClick={onConfirm}
+          disabled={busy || reminding || followUp?.status === "confirmed"}
+          aria-label="تسجيل تأكيد حضور العميلة"
+          title="أكدت العميلة الحضور"
+        >
+          <Check data-icon={compact ? undefined : "inline-start"} />
+          {compact ? null : "أكدت"}
+        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              size={compact ? "icon-sm" : "sm"}
+              variant={followUp?.status === "cancelled" ? "destructive" : "outline"}
+              disabled={busy || reminding || followUp?.status === "cancelled"}
+              aria-label="تسجيل إلغاء العميلة للحجز"
+              title="ألغت العميلة الحجز"
+            >
+              <X data-icon={compact ? undefined : "inline-start"} />
+              {compact ? null : "ألغت"}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>تسجيل إلغاء العميلة؟</AlertDialogTitle>
+              <AlertDialogDescription>
+                سيظهر الحجز كملغي من العميلة، وسيتوقف طلب سائق جديد لهذه الزيارة.
+                لا يغيّر هذا حالة الحجز داخل ركاز؛ افتحي ركاز لإلغائه هناك أيضاً.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>رجوع</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" onClick={onCancel}>
+                نعم، ألغت العميلة
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </div>
   );
 }

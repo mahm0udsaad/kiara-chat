@@ -5,6 +5,7 @@ import {
   withFixedTestReservation,
 } from "@/lib/reservations";
 import { stripPrices } from "@/lib/orders-visibility";
+import { listReservationFollowUps } from "@/lib/reservation-follow-up-server";
 import { OrdersClient } from "@/components/orders-client";
 
 export const dynamic = "force-dynamic";
@@ -21,18 +22,23 @@ export default async function OrdersPage() {
   const session = await requireKiaraSession();
   const isAdmin = session.role === "admin";
   const todayKey = TODAY_KEY_FMT.format(new Date());
-  const [orders, snapshot] = await Promise.all([
+  const [orders, rawSnapshot] = await Promise.all([
     listDriverOrders(),
     // Best-effort: a missing snapshot only hides the Rekaz tab's content.
     getReservationsSnapshot().catch(() => null),
   ]);
+  const snapshot = withFixedTestReservation(rawSnapshot, todayKey);
+  const reservationFollowUps = await listReservationFollowUps(
+    snapshot.reservations
+  ).catch(() => ({}));
 
   return (
     <OrdersClient
       initialOrders={isAdmin ? orders : stripPrices(orders)}
       isAdmin={isAdmin}
       todayKey={todayKey}
-      reservationsSnapshot={withFixedTestReservation(snapshot, todayKey)}
+      reservationsSnapshot={snapshot}
+      initialReservationFollowUps={reservationFollowUps}
     />
   );
 }

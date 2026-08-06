@@ -72,6 +72,7 @@ import { formatDuration, formatRelativeTime, TRIP_TYPE_LABEL } from "@/lib/forma
 import { phoneMatches } from "@/lib/phone";
 import { RekazReservations } from "@/components/rekaz-reservations";
 import type { ReservationsSnapshot } from "@/lib/reservations";
+import type { ReservationFollowUpMap } from "@/lib/reservation-follow-up";
 import type {
   Driver,
   DriverOrderRow,
@@ -132,11 +133,13 @@ export function OrdersClient({
   isAdmin,
   todayKey,
   reservationsSnapshot = null,
+  initialReservationFollowUps = {},
 }: {
   initialOrders: DriverOrderRow[];
   isAdmin: boolean;
   todayKey: string;
   reservationsSnapshot?: ReservationsSnapshot | null;
+  initialReservationFollowUps?: ReservationFollowUpMap;
 }) {
   const [orders, setOrders] = useState(initialOrders);
   // Reseed when the server sends a fresh list (router.refresh() after the
@@ -493,6 +496,7 @@ export function OrdersClient({
               snapshot={reservationsSnapshot}
               orders={orders}
               todayKey={todayKey}
+              initialFollowUps={initialReservationFollowUps}
             />
           </TabsContent>
         </Tabs>

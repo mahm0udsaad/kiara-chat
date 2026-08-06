@@ -34,7 +34,6 @@ export type { CsStatus, AgentInfo };
 function deliverInBackground(
   messageId: string,
   conversationId: string,
-  conversationMetadata: Record<string, unknown> | null,
   send: () => Promise<{ providerMessageId?: string | null }>
 ): void {
   after(async () => {
@@ -50,6 +49,17 @@ function deliverInBackground(
         sent = false;
       }
     }
+
+    // Read metadata after delivery. Other actions (for example recording that
+    // a reservation reminder was sent) may have updated it while the transport
+    // request was in flight; writing the stale pre-send object would erase them.
+    const { data: currentConversation } = await admin
+      .from("conversations")
+      .select("metadata")
+      .eq("id", conversationId)
+      .maybeSingle();
+    const currentMetadata =
+      (currentConversation?.metadata as Record<string, unknown> | null) ?? {};
 
     await Promise.all([
       admin
@@ -68,7 +78,7 @@ function deliverInBackground(
         .from("conversations")
         .update({
           last_message_at: new Date().toISOString(),
-          metadata: { ...(conversationMetadata ?? {}), handled_on_whatsapp: false },
+          metadata: { ...currentMetadata, handled_on_whatsapp: false },
         })
         .eq("id", conversationId),
     ]);
@@ -271,7 +281,7 @@ export async function sendReply(
   const admin = getAdminSupabaseClient();
   const { data: conv } = await admin
     .from("conversations")
-    .select("id, customer_phone, metadata")
+    .select("id, customer_phone")
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
@@ -299,7 +309,6 @@ export async function sendReply(
   deliverInBackground(
     messageId,
     conversationId,
-    conv.metadata as Record<string, unknown> | null,
     () => openWaTransport.sendText(conv.customer_phone as string, body)
   );
 
@@ -320,7 +329,7 @@ export async function sendMediaReply(
   const admin = getAdminSupabaseClient();
   const { data: conv } = await admin
     .from("conversations")
-    .select("id, customer_phone, metadata")
+    .select("id, customer_phone")
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
@@ -360,7 +369,6 @@ export async function sendMediaReply(
   deliverInBackground(
     messageId,
     conversationId,
-    conv.metadata as Record<string, unknown> | null,
     () =>
       openWaTransport.sendMedia(conv.customer_phone as string, {
         base64,
