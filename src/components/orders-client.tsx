@@ -102,7 +102,7 @@ const DAY_KEY_FMT = new Intl.DateTimeFormat("en-CA", {
 
 const dateOfKey = (key: string) => new Date(`${key}T12:00:00+03:00`);
 
-type StatusFilter = "all" | DriverOrderStatus;
+type StatusFilter = "all" | DriverOrderStatus | "late";
 type OrdersView = "daily" | "calendar" | "rekaz";
 
 const STATUS_FILTERS: [StatusFilter, string][] = [
@@ -110,7 +110,15 @@ const STATUS_FILTERS: [StatusFilter, string][] = [
   ["pending", "بانتظار التأكيد"],
   ["sent", "تم التأكيد"],
   ["failed", "تحتاج مراجعة"],
+  ["late", "السائق متأخر"],
 ];
+
+function isDriverLate(order: DriverOrderRow, now = Date.now()): boolean {
+  if (!order.driver_id || order.driver_session?.started_at) return false;
+  const arrival = new Date(order.arrival_at).getTime();
+  // A short operational window avoids labeling old pre-feature history late.
+  return now > arrival + 15 * 60_000 && now < arrival + 6 * 60 * 60_000;
+}
 
 function statusMeta(order: DriverOrderRow): {
   label: string;
@@ -195,7 +203,10 @@ export function OrdersClient({
 
   const matchesFilters = useCallback(
     (order: DriverOrderRow) => {
-      if (status !== "all" && order.status !== status) return false;
+      if (status === "late" && !isDriverLate(order)) return false;
+      if (status !== "all" && status !== "late" && order.status !== status) {
+        return false;
+      }
       if (driverId === "unassigned" && order.driver_id) return false;
       if (
         driverId !== "all" &&
@@ -259,14 +270,16 @@ export function OrdersClient({
     let sent = 0;
     let pending = 0;
     let failed = 0;
+    let late = 0;
     let revenue = 0;
     for (const order of shown) {
       if (!order.driver_id || order.status === "pending") pending += 1;
       else if (order.status === "sent") sent += 1;
       else failed += 1;
+      if (isDriverLate(order)) late += 1;
       revenue += order.price ?? 0;
     }
-    return { total: shown.length, sent, pending, failed, revenue };
+    return { total: shown.length, sent, pending, failed, late, revenue };
   }, [shown]);
 
   const bookedDates = useMemo(
@@ -310,11 +323,12 @@ export function OrdersClient({
         </Button>
       </div>
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <StatCard icon={CalendarDays} label="كل الطلبات" value={stats.total} />
         <StatCard icon={Clock3} label="بانتظار التأكيد" value={stats.pending} />
         <StatCard icon={Send} label="تم تأكيدها" value={stats.sent} />
         <StatCard icon={AlertTriangle} label="تحتاج مراجعة" value={stats.failed} />
+        <StatCard icon={Clock3} label="السائق متأخر" value={stats.late} />
         {isAdmin ? (
           <StatCard
             icon={Wallet}
@@ -565,6 +579,7 @@ function OrderCard({
   const arrival = new Date(order.arrival_at);
   const status = statusMeta(order);
   const isLocationLink = /^https?:\/\//i.test(order.customer_location.trim());
+  const driverLate = isDriverLate(order);
 
   const resend = useCallback(async () => {
     setResending(true);
@@ -625,6 +640,19 @@ function OrderCard({
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <UserRound className="size-4" aria-hidden="true" />
             {order.specialist_name ?? "لم تُحدد الأخصائية بعد"}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {driverLate ? <Badge variant="destructive">السائق متأخر</Badge> : null}
+            {order.driver_session?.completed_at ? (
+              <Badge variant="outline">انتهت رحلة السائق</Badge>
+            ) : order.driver_session?.started_at ? (
+              <Badge variant="secondary">السائق في الطريق</Badge>
+            ) : null}
+            {order.specialist_session?.completed_at ? (
+              <Badge variant="default">انتهت الجلسة</Badge>
+            ) : order.specialist_session?.started_at ? (
+              <Badge variant="secondary">الجلسة جارية</Badge>
+            ) : null}
           </div>
           {note ? (
             <Alert variant={note.ok ? "default" : "destructive"}>

@@ -6,6 +6,7 @@
  */
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { formatDuration, TRIP_TYPE_LABEL } from "@/lib/format";
+import { fieldSessionLink, fieldSessionStateOf } from "@/lib/field-session";
 import { nationalityOf } from "@/lib/nationalities";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
@@ -422,12 +423,16 @@ export async function dispatchBooking(
     customerPhone: order.customer_phone,
     tripType: order.trip_type,
   };
-  const driverMessage = formatDriverOrderMessage(orderDetails);
+  const driverMessage = formatDriverOrderMessage({
+    ...orderDetails,
+    sessionLink: fieldSessionLink("driver", input.driverId),
+  });
   const specialistPhone = (specialist.phone as string | null)?.trim();
   const arabicSpecialistMessage = formatSpecialistOrderMessage({
     ...orderDetails,
     driverName: driver.full_name as string,
     note: input.specialistNote?.trim() || null,
+    sessionLink: fieldSessionLink("specialist", input.specialistId),
   });
 
   const configured = isOpenWaConfigured();
@@ -630,11 +635,13 @@ export async function resendDriverOrder(
   if (!isOpenWaConfigured()) throw new Error("واتساب غير مربوط");
 
   const row = order as DriverOrder;
+  const driverId = row.driver_id;
+  if (!driverId) throw new Error("لا يوجد سائق مرتبط بهذا الطلب");
   const [{ data: driver }, specialists, { data: conv }] = await Promise.all([
     supabase
       .from("drivers")
       .select("id, full_name, phone")
-      .eq("id", row.driver_id)
+      .eq("id", driverId)
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .maybeSingle(),
     rosterNames(supabase, "specialists", row.specialist_id ? [row.specialist_id] : []),
@@ -656,6 +663,7 @@ export async function resendDriverOrder(
     customerName: (conv?.customer_name as string | null) ?? null,
     customerPhone: row.customer_phone,
     tripType: row.trip_type,
+    sessionLink: fieldSessionLink("driver", driverId),
   });
 
   let sent = false;
@@ -697,19 +705,30 @@ async function withNames(
   const [specialists, drivers, customers, editors] = await Promise.all([
     rosterNames(supabase, "specialists", uniq(orders.map((o) => o.specialist_id))),
     rosterNames(supabase, "drivers", uniq(orders.map((o) => o.driver_id))),
-    customerNames(supabase, uniq(orders.map((o) => o.conversation_id))),
+    customerDetails(supabase, uniq(orders.map((o) => o.conversation_id))),
     teamMemberNames(supabase, uniq(orders.map((o) => o.updated_by))),
   ]);
 
   return orders.map((o) => {
     const driver = o.driver_id ? drivers.get(o.driver_id) : undefined;
+    const customer = customers.get(o.conversation_id);
     return {
       ...o,
       specialist_name: (o.specialist_id && specialists.get(o.specialist_id)?.fullName) || null,
       driver_name: driver?.fullName ?? null,
       driver_phone: driver?.phone ?? null,
-      customer_name: customers.get(o.conversation_id) ?? null,
+      customer_name: customer?.name ?? null,
       updated_by_name: (o.updated_by && editors.get(o.updated_by)) || null,
+      specialist_session: fieldSessionStateOf(
+        customer?.metadata ?? null,
+        o.id,
+        "specialist"
+      ),
+      driver_session: fieldSessionStateOf(
+        customer?.metadata ?? null,
+        o.id,
+        "driver"
+      ),
     };
   });
 }
@@ -750,18 +769,26 @@ async function rosterNames(
   );
 }
 
-async function customerNames(
+async function customerDetails(
   supabase: AuthedClient,
   ids: string[]
-): Promise<Map<string, string | null>> {
+): Promise<
+  Map<string, { name: string | null; metadata: Record<string, unknown> | null }>
+> {
   if (!ids.length) return new Map();
   const { data } = await supabase
     .from("conversations")
-    .select("id, customer_name")
+    .select("id, customer_name, metadata")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .in("id", ids);
   return new Map(
-    (data ?? []).map((r) => [r.id as string, (r.customer_name as string | null) ?? null])
+    (data ?? []).map((r) => [
+      r.id as string,
+      {
+        name: (r.customer_name as string | null) ?? null,
+        metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+      },
+    ])
   );
 }
 
@@ -786,10 +813,11 @@ export function formatDriverOrderMessage(o: {
   customerName: string | null;
   customerPhone: string;
   tripType: TripType;
+  sessionLink?: string | null;
 }): string {
   const arrival = ARRIVAL_FMT.format(new Date(o.arrivalAt));
   const who = o.customerName ? `${o.customerName} (${o.customerPhone})` : o.customerPhone;
-  return [
+  const lines = [
     "🚗 *طلب جديد*",
     "",
     `👩 الأخصائية: ${o.specialistName}`,
@@ -798,7 +826,11 @@ export function formatDriverOrderMessage(o: {
     `🚕 نوع الرحلة: ${TRIP_TYPE_LABEL[o.tripType]}`,
     `📍 موقع الزبونة: ${o.customerLocation}`,
     `📞 رقم الزبونة: ${who}`,
-  ].join("\n");
+  ];
+  if (o.sessionLink) {
+    lines.push("", "📲 جلساتك وتأكيد البداية والنهاية:", o.sessionLink);
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -816,6 +848,7 @@ export function formatSpecialistOrderMessage(o: {
   customerPhone: string;
   tripType: TripType;
   note: string | null;
+  sessionLink?: string | null;
 }): string {
   const arrival = ARRIVAL_FMT.format(new Date(o.arrivalAt));
   const who = o.customerName ? `${o.customerName} (${o.customerPhone})` : o.customerPhone;
@@ -830,5 +863,8 @@ export function formatSpecialistOrderMessage(o: {
     `📞 الزبونة: ${who}`,
   ];
   if (o.note) lines.push("", `📝 ملاحظة من الفريق: ${o.note}`);
+  if (o.sessionLink) {
+    lines.push("", "📲 جلساتك وتأكيد البداية والنهاية:", o.sessionLink);
+  }
   return lines.join("\n");
 }

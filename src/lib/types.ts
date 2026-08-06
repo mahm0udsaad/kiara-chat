@@ -111,6 +111,11 @@ export interface BookingRequest {
 
 export type DriverOrderStatus = "pending" | "sent" | "failed";
 
+export interface FieldSessionState {
+  started_at: string | null;
+  completed_at: string | null;
+}
+
 /**
  * A visit is one leg: the driver drops the specialist off ("one_way" — half a
  * trip) and often doesn't bring her back on the same order. "round_trip" is the
@@ -152,6 +157,8 @@ export interface DriverOrderRow extends DriverOrder {
   customer_name: string | null;
   /** Who last edited it, for the "عُدّل بواسطة …" line. */
   updated_by_name: string | null;
+  specialist_session?: FieldSessionState;
+  driver_session?: FieldSessionState;
 }
 
 /** Per-tenant dispatch pricing. Owner/manager-only (RLS blocks agents). */

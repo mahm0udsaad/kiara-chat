@@ -12,7 +12,13 @@ const publicRoutes = [...authEntryRoutes, ...publicMarketingRoutes];
 // Bypass the cookie-auth redirect: webhooks (OpenWA ingest) and mobile API
 // authenticate themselves (signature / Bearer), and the middleware's
 // cookie-only client can't validate those.
-const publicPrefixes = ["/api/webhooks/", "/api/internal/", "/api/mobile/"];
+const publicPrefixes = [
+  "/api/webhooks/",
+  "/api/internal/",
+  "/api/mobile/",
+  "/api/session/",
+  "/session/",
+];
 
 /**
  * Refreshes the Supabase session cookie and does coarse authenticated-or-not
