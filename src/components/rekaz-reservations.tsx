@@ -111,6 +111,7 @@ const ORDER_STATUS_LABEL: Record<string, string> = {
 const SOURCE_LABEL: Record<string, string> = {
   Internal: "الصالون",
   Website: "الموقع",
+  Test: "تجريبي",
 };
 
 const PAGE_SIZE = 25;

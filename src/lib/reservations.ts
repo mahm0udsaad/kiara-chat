@@ -47,6 +47,48 @@ export interface ReservationsSnapshot {
 }
 
 /**
+ * Fixed production smoke-test booking requested by the owner. It is composed
+ * into the read model only, so syncing Rekaz cannot remove it and the source
+ * platform is never polluted with test data.
+ */
+export function withFixedTestReservation(
+  snapshot: ReservationsSnapshot | null,
+  dayKey: string
+): ReservationsSnapshot {
+  const testReservation: RekazReservation = {
+    id: "TEST-201279119364",
+    arrivalAt: `${dayKey}T20:00:00+03:00`,
+    durationMinutes: 60,
+    service: "حجز تجريبي — اختبار التذكير وطلب السائق",
+    quantity: 1,
+    customerName: "Mahmoud Saad — اختبار",
+    customerPhone: "+201279119364",
+    providers: ["ميرا"],
+    status: "Confirmed",
+    payment: "Paid",
+    amount: 0,
+    location: {
+      lat: 24.7136,
+      lng: 46.6753,
+      label: "موقع تجريبي — الرياض",
+    },
+    source: "Test",
+    createdBy: "بيانات تجريبية ثابتة",
+    bookedAt: `${dayKey}T09:00:00+03:00`,
+    order: null,
+    notes: "للاختبار فقط — لا يُنفذ كحجز عميلة حقيقي",
+  };
+  const current = snapshot?.reservations ?? [];
+  return {
+    syncedAt: snapshot?.syncedAt ?? new Date().toISOString(),
+    reservations: [
+      testReservation,
+      ...current.filter((reservation) => reservation.id !== testReservation.id),
+    ],
+  };
+}
+
+/**
  * A stored row, filled out to the current shape.
  *
  * The snapshot is a JSON blob rather than a table, so a deploy that adds a

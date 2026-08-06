@@ -1,6 +1,9 @@
 import { requireKiaraSession } from "@/lib/tenant";
 import { listDriverOrders } from "@/lib/dispatch";
-import { getReservationsSnapshot } from "@/lib/reservations";
+import {
+  getReservationsSnapshot,
+  withFixedTestReservation,
+} from "@/lib/reservations";
 import { stripPrices } from "@/lib/orders-visibility";
 import { OrdersClient } from "@/components/orders-client";
 
@@ -17,6 +20,7 @@ const TODAY_KEY_FMT = new Intl.DateTimeFormat("en-CA", {
 export default async function OrdersPage() {
   const session = await requireKiaraSession();
   const isAdmin = session.role === "admin";
+  const todayKey = TODAY_KEY_FMT.format(new Date());
   const [orders, snapshot] = await Promise.all([
     listDriverOrders(),
     // Best-effort: a missing snapshot only hides the Rekaz tab's content.
@@ -27,8 +31,8 @@ export default async function OrdersPage() {
     <OrdersClient
       initialOrders={isAdmin ? orders : stripPrices(orders)}
       isAdmin={isAdmin}
-      todayKey={TODAY_KEY_FMT.format(new Date())}
-      reservationsSnapshot={snapshot}
+      todayKey={todayKey}
+      reservationsSnapshot={withFixedTestReservation(snapshot, todayKey)}
     />
   );
 }
