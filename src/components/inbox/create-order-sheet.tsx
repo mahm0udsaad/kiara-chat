@@ -43,7 +43,7 @@ import {
 } from "@/components/ui/toggle-group";
 import { formatRelativeTime } from "@/lib/format";
 import type { SharedLocation, SharedLocationSource } from "@/lib/location";
-import type { BookingRequest, TripType } from "@/lib/types";
+import type { BookingRequest, DriverOrderRow, TripType } from "@/lib/types";
 
 const SHARED_LABEL: Record<SharedLocationSource, string> = {
   pin: "موقع أرسلته الزبونة",
@@ -124,6 +124,7 @@ export function CreateOrderSheet({
   initialArrival = null,
   initialDurationMinutes = null,
   onOrderCreated,
+  continueToDispatch = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -135,7 +136,9 @@ export function CreateOrderSheet({
   /** ISO — seeds the calendar/time instead of "an hour from now" (Rekaz flow). */
   initialArrival?: string | null;
   initialDurationMinutes?: number | null;
-  onOrderCreated?: () => void;
+  onOrderCreated?: (order: DriverOrderRow) => void;
+  /** Close immediately after saving so the caller can open dispatch in-place. */
+  continueToDispatch?: boolean;
 }) {
   const router = useRouter();
   const initialDate = useCallback((): Date => {
@@ -241,8 +244,20 @@ export function CreateOrderSheet({
         setError(data?.error ?? "تعذّر إنشاء الحجز");
         return;
       }
-      setDone(true);
-      onOrderCreated?.();
+      const created = {
+        ...(data.order as DriverOrderRow),
+        specialist_name: null,
+        driver_name: null,
+        driver_phone: null,
+        customer_name: null,
+        updated_by_name: null,
+      } satisfies DriverOrderRow;
+      onOrderCreated?.(created);
+      if (continueToDispatch) {
+        closeDialog();
+      } else {
+        setDone(true);
+      }
     } catch {
       setError("تعذّر إنشاء الحجز");
     } finally {
@@ -256,6 +271,8 @@ export function CreateOrderSheet({
     duration,
     tripType,
     onOrderCreated,
+    continueToDispatch,
+    closeDialog,
   ]);
 
   return (

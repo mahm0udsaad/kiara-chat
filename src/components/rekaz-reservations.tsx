@@ -4,6 +4,8 @@ import { Fragment, lazy, Suspense, useCallback, useMemo, useState } from "react"
 import { useRouter } from "next/navigation";
 import { arSA } from "date-fns/locale";
 import {
+  AlertTriangle,
+  Bell,
   CalendarDays,
   Car,
   CheckCircle2,
@@ -15,6 +17,7 @@ import {
   MessageCircle,
   RefreshCw,
   Search,
+  SquarePen,
   UserRound,
   X,
 } from "lucide-react";
@@ -46,6 +49,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CustomerTimelineSheet } from "@/components/customer-timeline-sheet";
+import { DispatchDialog } from "@/components/dispatch-dialog";
 import { cn } from "@/lib/utils";
 import { normalizePhone, phoneMatches } from "@/lib/phone";
 import { formatRelativeTime } from "@/lib/format";
@@ -131,6 +135,17 @@ const visitKeyOf = (phone: string, isoAt: string) =>
 /** `YYYY-MM-DD` (Riyadh) → a Date at midday, so the calendar can't drift a day. */
 const dateOfKey = (key: string) => new Date(`${key}T12:00:00+03:00`);
 
+function reservationIssues(reservation: RekazReservation): string[] {
+  const issues: string[] = [];
+  if (reservation.status === "Pending") issues.push("الحجز غير مؤكد");
+  if (reservation.customerPhone.replace(/\D/g, "").length < 10) {
+    issues.push("رقم العميلة ناقص");
+  }
+  if (!reservation.location) issues.push("الموقع غير مسجل");
+  if (!reservation.providers.length) issues.push("الأخصائية غير محددة");
+  return issues;
+}
+
 /**
  * The visit each row belongs to.
  *
@@ -193,8 +208,9 @@ export function RekazReservations({
   const [view, setView] = useState<"table" | "calendar">("table");
   const [statusFilter, setStatusFilter] = useState<StatusKey>("all");
   const [query, setQuery] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [dateFrom, setDateFrom] = useState(todayKey);
+  const [dateTo, setDateTo] = useState(todayKey);
+  const [attentionOnly, setAttentionOnly] = useState(false);
   const [selectedDay, setSelectedDay] = useState(todayKey);
   const [page, setPage] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -206,8 +222,14 @@ export function RekazReservations({
     visit: Visit;
     conversationId: string;
   } | null>(null);
+  const [dispatchOrder, setDispatchOrder] = useState<{
+    order: DriverOrderRow;
+    specialistName: string | null;
+  } | null>(null);
   const [preparing, setPreparing] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+  const [reminding, setReminding] = useState<string | null>(null);
+  const [reminded, setReminded] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncNote, setSyncNote] = useState<string | null>(null);
@@ -252,6 +274,7 @@ export function RekazReservations({
     const digits = needle.replace(/\D/g, "");
     return reservations.filter((r) => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      if (attentionOnly && reservationIssues(r).length === 0) return false;
       if (!needle) return true;
       // `phoneMatches` normalizes both sides, so a full +966… number, a local
       // 05… one and the last four digits all find the same customer.
@@ -263,7 +286,12 @@ export function RekazReservations({
         r.providers.some((p) => p.toLowerCase().includes(needle))
       );
     });
-  }, [reservations, statusFilter, query]);
+  }, [attentionOnly, reservations, statusFilter, query]);
+
+  const attentionCount = useMemo(
+    () => reservations.filter((reservation) => reservationIssues(reservation).length > 0).length,
+    [reservations]
+  );
 
   const filtered = useMemo(() => {
     if (!dateFrom && !dateTo) return matched;
@@ -363,6 +391,36 @@ export function RekazReservations({
       }
     },
     [resolveConversation, router]
+  );
+
+  /** Ask for attendance/cancellation before the driver leaves. */
+  const sendReminder = useCallback(
+    async (visit: Visit) => {
+      setError(null);
+      setReminding(visit.key);
+      try {
+        const conversationId = await resolveConversation(visit);
+        const services = visit.services.map((service) => service.service).join("، ");
+        const message = [
+          `مرحبًا ${visit.customerName || "عميلتنا"}،`,
+          `نذكّرك بموعدك ${DAY_FMT.format(new Date(visit.startAt))} الساعة ${TIME_FMT.format(new Date(visit.startAt))} لخدمة ${services}.`,
+          "فضلاً أكدي حضورك، أو أخبرينا الآن إذا رغبتِ بإلغاء الحجز قبل انطلاق السائق.",
+        ].join("\n");
+        const response = await fetch(`/api/conversations/${conversationId}/reply`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: message }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error ?? "تعذّر إرسال التذكير");
+        setReminded((current) => new Set(current).add(visit.key));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "تعذّر إرسال التذكير");
+      } finally {
+        setReminding(null);
+      }
+    },
+    [resolveConversation]
   );
 
   /** Re-pull the schedule from Rekaz, then re-render from the fresh snapshot. */
@@ -469,6 +527,14 @@ export function RekazReservations({
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant={attentionOnly ? "destructive" : "outline"}
+            onClick={() => resetTo(() => setAttentionOnly((current) => !current))}
+          >
+            <AlertTriangle data-icon="inline-start" />
+            تحتاج مراجعة {attentionCount.toLocaleString("ar-SA")}
+          </Button>
           <div className="relative">
             <Search
               size={14}
@@ -538,13 +604,19 @@ export function RekazReservations({
             aria-label="إلى تاريخ"
             className="h-9 w-40"
           />
-          <button
+          <Button
             type="button"
-            onClick={() => resetTo(() => setDateFrom(todayKey))}
-            className="min-h-8 rounded-full border px-3 text-muted-foreground transition-colors hover:bg-[var(--brand-soft)]"
+            size="sm"
+            variant={dateFrom === todayKey && dateTo === todayKey ? "default" : "outline"}
+            onClick={() =>
+              resetTo(() => {
+                setDateFrom(todayKey);
+                setDateTo(todayKey);
+              })
+            }
           >
-            من اليوم
-          </button>
+            حجوزات اليوم مرتبة
+          </Button>
           {dateFrom || dateTo ? (
             <button
               type="button"
@@ -641,6 +713,18 @@ export function RekazReservations({
                       onRequestDriver={() => requestDriver(visits.get(visit.key) ?? visit)}
                       onOpenConversation={() => openConversation(visit.services[0])}
                       onOpenTimeline={() => openTimeline(visit)}
+                      reminding={reminding === visit.key}
+                      reminded={reminded.has(visit.key)}
+                      onRemind={() => sendReminder(visit)}
+                      onReviewDispatch={() => {
+                        const order = orderByVisit.get(visit.key);
+                        if (order) {
+                          setDispatchOrder({
+                            order,
+                            specialistName: visit.services[0]?.providers[0] ?? null,
+                          });
+                        }
+                      }}
                     />
                   </li>
                 ))}
@@ -681,31 +765,73 @@ export function RekazReservations({
                   label: r.status || "—",
                   variant: "outline" as const,
                 };
+                const issues = reservationIssues(r);
                 const isOpen = expanded === r.id;
                 return (
                   <Fragment key={r.id}>
                     <TableRow className={cn(isOpen && "border-b-0 bg-muted/40")}>
                       <TableCell>
-                        {existing ? (
-                          <Badge variant="outline" className="gap-1 whitespace-nowrap">
-                            <CheckCircle2 size={13} aria-hidden="true" />
-                            {existing.status === "sent" ? "سائق مُرسل" : "طلب سائق"}
-                          </Badge>
-                        ) : (
-                          <Button
-                            size="sm"
-                            onClick={() => visit && requestDriver(visit)}
-                            disabled={!visit || preparing === key}
-                            className="whitespace-nowrap"
-                          >
-                            {preparing === key ? (
-                              <Loader2 data-icon="inline-start" className="animate-spin" />
-                            ) : (
+                        <div className="flex items-center gap-1">
+                          {existing?.status === "sent" ? (
+                            <Badge variant="outline" className="gap-1 whitespace-nowrap">
+                              <CheckCircle2 aria-hidden="true" />
+                              تم التأكيد
+                            </Badge>
+                          ) : existing ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                setDispatchOrder({
+                                  order: existing,
+                                  specialistName: r.providers[0] ?? null,
+                                })
+                              }
+                            >
                               <Car data-icon="inline-start" />
+                              تأكيد الحجز
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              onClick={() => visit && requestDriver(visit)}
+                              disabled={!visit || preparing === key}
+                              className="whitespace-nowrap"
+                            >
+                              {preparing === key ? (
+                                <Loader2 data-icon="inline-start" className="animate-spin" />
+                              ) : (
+                                <Car data-icon="inline-start" />
+                              )}
+                              طلب سائق
+                            </Button>
+                          )}
+                          <Button
+                            size="icon-sm"
+                            variant="outline"
+                            onClick={() => visit && sendReminder(visit)}
+                            disabled={!visit || reminding === key || reminded.has(key)}
+                            aria-label={reminded.has(key) ? "تم إرسال التذكير" : "تذكير العميلة"}
+                            title={reminded.has(key) ? "تم إرسال التذكير" : "تذكير العميلة"}
+                          >
+                            {reminding === key ? (
+                              <Loader2 className="animate-spin" />
+                            ) : (
+                              <Bell />
                             )}
-                            طلب سائق
                           </Button>
-                        )}
+                          <Button size="icon-sm" variant="ghost" asChild>
+                            <a
+                              href="https://platform.rekaz.io"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label="تعديل أو إلغاء الحجز في ركاز"
+                              title="تعديل أو إلغاء الحجز في ركاز"
+                            >
+                              <SquarePen />
+                            </a>
+                          </Button>
+                        </div>
                       </TableCell>
 
                       <TableCell>
@@ -779,6 +905,11 @@ export function RekazReservations({
 
                       <TableCell>
                         <Badge variant={meta.variant}>{meta.label}</Badge>
+                        {issues.length ? (
+                          <p className="mt-1 max-w-40 text-xs text-destructive" title={issues.join("، ")}>
+                            {issues.join(" · ")}
+                          </p>
+                        ) : null}
                       </TableCell>
 
                       <TableCell className="max-w-[140px]">
@@ -919,9 +1050,33 @@ export function RekazReservations({
                 new Date(dispatchFor.visit.startAt).getTime()) /
                 60_000
             )}
-            onOrderCreated={() => router.refresh()}
+            continueToDispatch
+            onOrderCreated={(order) => {
+              setDispatchOrder({
+                order: { ...order, customer_name: dispatchFor.visit.customerName },
+                specialistName: dispatchFor.visit.services[0]?.providers[0] ?? null,
+              });
+              router.refresh();
+            }}
           />
         </Suspense>
+      ) : null}
+
+      {dispatchOrder ? (
+        <DispatchDialog
+          order={dispatchOrder.order}
+          open
+          preferredSpecialistName={dispatchOrder.specialistName}
+          onOpenChange={(open) => {
+            if (!open) setDispatchOrder(null);
+          }}
+          onUpdated={(order) => {
+            setDispatchOrder((current) =>
+              current ? { ...current, order } : current
+            );
+            router.refresh();
+          }}
+        />
       ) : null}
 
       <CustomerTimelineSheet
@@ -952,6 +1107,10 @@ function VisitCard({
   onRequestDriver,
   onOpenConversation,
   onOpenTimeline,
+  reminding,
+  reminded,
+  onRemind,
+  onReviewDispatch,
 }: {
   visit: Visit;
   order: DriverOrderRow | undefined;
@@ -960,6 +1119,10 @@ function VisitCard({
   onRequestDriver: () => void;
   onOpenConversation: () => void;
   onOpenTimeline: () => void;
+  reminding: boolean;
+  reminded: boolean;
+  onRemind: () => void;
+  onReviewDispatch: () => void;
 }) {
   const total = visit.services.reduce((sum, s) => sum + s.amount, 0);
   const status = visit.services.some((s) => s.status === "Pending")
@@ -1006,11 +1169,16 @@ function VisitCard({
           </span>
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {order ? (
+          {order?.status === "sent" ? (
             <Badge variant="outline" className="gap-1">
-              <CheckCircle2 size={13} aria-hidden="true" />
-              {order.status === "sent" ? "سائق مُرسل" : "طلب سائق"}
+              <CheckCircle2 aria-hidden="true" />
+              تم التأكيد
             </Badge>
+          ) : order ? (
+            <Button size="sm" variant="outline" onClick={onReviewDispatch}>
+              <Car data-icon="inline-start" />
+              تأكيد الحجز
+            </Button>
           ) : (
             <Button size="sm" onClick={onRequestDriver} disabled={preparing}>
               {preparing ? (
@@ -1028,6 +1196,20 @@ function VisitCard({
               <MessageCircle data-icon="inline-start" />
             )}
             المحادثة
+          </Button>
+          <Button size="sm" variant="outline" onClick={onRemind} disabled={reminding || reminded}>
+            {reminding ? (
+              <Loader2 data-icon="inline-start" className="animate-spin" />
+            ) : (
+              <Bell data-icon="inline-start" />
+            )}
+            {reminded ? "تم التذكير" : "تذكير العميلة"}
+          </Button>
+          <Button size="sm" variant="ghost" asChild>
+            <a href="https://platform.rekaz.io" target="_blank" rel="noopener noreferrer">
+              <SquarePen data-icon="inline-start" />
+              تعديل أو إلغاء
+            </a>
           </Button>
         </div>
       </CardContent>

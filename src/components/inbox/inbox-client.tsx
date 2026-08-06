@@ -13,6 +13,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   Loader2,
   Send,
   UserCheck,
@@ -89,9 +90,9 @@ import {
 } from "./attachment-preview";
 
 const CS_STATUS_LABEL: Record<CsStatus, string> = {
-  open: "مفتوحة",
-  waiting: "بانتظار العميل",
-  resolved: "منتهية",
+  open: "جاري المحادثة",
+  waiting: "استفسار",
+  resolved: "تم الطلب",
 };
 const CS_STATUS_ORDER: CsStatus[] = ["open", "waiting", "resolved"];
 
@@ -124,6 +125,7 @@ const MESSAGE_PAGE_SIZE = 8;
 const OLDER_PAGE_SIZE = 25;
 /** How close to the top counts as "asking for older messages". */
 const LOAD_OLDER_THRESHOLD_PX = 120;
+const REPLY_ALERT_MS = 6 * 60 * 1000;
 
 /**
  * Fold a page into the thread, keyed by id and ordered by time.
@@ -175,6 +177,25 @@ function csStatusOf(c: Conversation): CsStatus {
   if (meta.cs_status) return meta.cs_status;
   return c.status === "resolved" ? "resolved" : "open";
 }
+
+/** Last inbound is still the newest activity: nobody has answered it yet. */
+function unansweredSince(c: Conversation): number | null {
+  if (!c.last_inbound_at || csStatusOf(c) === "resolved") return null;
+  const inbound = Date.parse(c.last_inbound_at);
+  const activity = Date.parse(c.last_message_at);
+  if (!Number.isFinite(inbound) || !Number.isFinite(activity)) return null;
+  return activity <= inbound + 2_000 ? inbound : null;
+}
+
+function replyDelayMinutes(c: Conversation, now: number): number | null {
+  const since = unansweredSince(c);
+  if (since === null || now - since < REPLY_ALERT_MS) return null;
+  return Math.max(6, Math.floor((now - since) / 60_000));
+}
+
+function conversationStateLabel(c: Conversation): string {
+  return c.assigned_to ? CS_STATUS_LABEL[csStatusOf(c)] : "غير مستلمة";
+}
 function isHandledOnWhatsApp(c: Conversation): boolean {
   return Boolean(
     (c.metadata as { handled_on_whatsapp?: boolean } | null)?.handled_on_whatsapp
@@ -224,6 +245,7 @@ export function InboxClient({
     selectedRef.current = selected;
   }, [selected]);
   const [busy, setBusy] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const [draft, setDraft] = useState("");
   const [notes, setNotes] = useState<InternalNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
@@ -241,6 +263,11 @@ export function InboxClient({
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
   const [orderSheetMounted, setOrderSheetMounted] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const preloadOrderSheet = useCallback(() => {
     void loadCreateOrderSheet();
@@ -668,11 +695,16 @@ export function InboxClient({
       if (!selected) return;
       setBusy(true);
       try {
-        await fetch(`/api/conversations/${selected.id}/${path}`, {
+        const response = await fetch(`/api/conversations/${selected.id}/${path}`, {
           method: "POST",
           headers: body ? { "Content-Type": "application/json" } : undefined,
           body: body ? JSON.stringify(body) : undefined,
         });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          setMediaError(data?.error ?? "تعذّر تنفيذ الإجراء");
+          return;
+        }
         // Ownership changes must show without waiting for the server refresh —
         // the row chip, the header chip, and the options modal all read
         // selected.assigned_to.
@@ -1061,6 +1093,11 @@ export function InboxClient({
   };
 
   const selectedLabelIds = selected ? assignments[selected.id] ?? [] : [];
+  const canReply = Boolean(
+    selected && (isAdmin || (myTeamMemberId && selected.assigned_to === myTeamMemberId))
+  );
+  const canTake = Boolean(selected && !selected.assigned_to && myTeamMemberId);
+  const selectedReplyDelay = selected ? replyDelayMinutes(selected, now) : null;
 
   // Feeds the order's location field: a pin or a maps link she shared fills it
   // outright, a typed line is only offered as a suggestion.
@@ -1169,11 +1206,11 @@ export function InboxClient({
             <p className="p-4 text-sm text-muted-foreground">لا توجد نتائج.</p>
           ) : (
             filtered.map((c) => {
-              const cs = csStatusOf(c);
               const owner = ownerLabel(c);
               const route = routeLabel(c);
               const section = sectionOf(c);
               const wa = isHandledOnWhatsApp(c);
+              const delay = replyDelayMinutes(c, now);
               const cLabels = (assignments[c.id] ?? [])
                 .map((id) => labelMap[id])
                 .filter(Boolean) as Label[];
@@ -1231,8 +1268,14 @@ export function InboxClient({
                           {SECTION_LABEL[section]}
                         </span>
                       ) : null}
+                      {delay !== null ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
+                          <AlertTriangle aria-hidden="true" />
+                          تأخر الرد {delay} د
+                        </span>
+                      ) : null}
                       <span className="rounded-full bg-[var(--brand-soft)] px-2 py-0.5 text-[10px] text-[var(--brand)]">
-                        {CS_STATUS_LABEL[cs]}
+                        {conversationStateLabel(c)}
                       </span>
                     </div>
                   </div>
@@ -1448,6 +1491,16 @@ export function InboxClient({
               </div>
             </header>
 
+            {selectedReplyDelay !== null ? (
+              <Alert variant="destructive" className="rounded-none border-x-0 border-t-0">
+                <AlertTriangle />
+                <AlertTitle>تأخر الرد على العميلة</AlertTitle>
+                <AlertDescription>
+                  آخر رسالة من العميلة تنتظر ردًا منذ {selectedReplyDelay.toLocaleString("ar")} دقيقة.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
             {/* Status strip only — anything actionable lives in the modal. */}
             {selectedLabelIds.length ? (
               <div className="flex flex-wrap items-center gap-1.5 border-b bg-[var(--surface)] px-4 py-1.5">
@@ -1604,7 +1657,40 @@ export function InboxClient({
               </p>
             ) : null}
 
-            <div className="safe-b flex shrink-0 items-end gap-2 border-t bg-[var(--surface)] px-3 pt-3 sm:px-4">
+            {!canReply ? (
+              <div className="safe-b shrink-0 border-t bg-[var(--surface)] px-3 pt-3 sm:px-4">
+                {canTake ? (
+                  <Button
+                    type="button"
+                    size="lg"
+                    className="min-h-11 w-full"
+                    onClick={() => act("take")}
+                    disabled={busy}
+                  >
+                    {busy ? (
+                      <Loader2 data-icon="inline-start" className="animate-spin" />
+                    ) : (
+                      <UserCheck data-icon="inline-start" />
+                    )}
+                    استلام المحادثة والبدء بالرد
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    size="lg"
+                    variant="outline"
+                    className="min-h-11 w-full"
+                    onClick={() => setOptionsOpen(true)}
+                  >
+                    <Lock data-icon="inline-start" />
+                    {selected.assigned_to
+                      ? `المحادثة مستلمة من ${ownerLabel(selected)}`
+                      : "عيّني موظفة للمحادثة قبل الرد"}
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="safe-b flex shrink-0 items-end gap-2 border-t bg-[var(--surface)] px-3 pt-3 sm:px-4">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1781,7 +1867,8 @@ export function InboxClient({
                 )}
                 <span className="sr-only sm:not-sr-only sm:text-sm sm:font-medium">إرسال</span>
               </button>
-            </div>
+              </div>
+            )}
 
             {/* Everything that isn't the conversation itself. */}
             <Modal

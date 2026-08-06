@@ -66,6 +66,12 @@ export async function POST(
   if (!specialistId) {
     return NextResponse.json({ error: "اختاري الأخصائية" }, { status: 400 });
   }
+  if (!specialistNote && !specialistVoice) {
+    return NextResponse.json(
+      { error: "أضيفي رسالة مكتوبة أو صوتية للأخصائية" },
+      { status: 400 }
+    );
+  }
   if (!driverId) {
     return NextResponse.json({ error: "اختاري السائق" }, { status: 400 });
   }
