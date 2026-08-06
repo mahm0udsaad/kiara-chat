@@ -145,7 +145,7 @@ const NEW_LABEL_COLORS: LabelColor[] = [
   "rose",
 ];
 
-type View = "all" | "mine" | "unassigned" | "unread";
+type View = "new" | "unassigned" | "danger";
 
 /** Messages an opened thread starts with — older ones page in on scroll up. */
 const MESSAGE_PAGE_SIZE = 8;
@@ -413,7 +413,7 @@ export function InboxClient({
 
   // Filters
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<View>("all");
+  const [view, setView] = useState<View>("new");
   const [statusFilter, setStatusFilter] = useState<CsStatus | "all">("all");
   const [labelFilter, setLabelFilter] = useState<string>("all");
   const [sectionFilter, setSectionFilter] = useState<ConversationSection | "all">(
@@ -444,9 +444,9 @@ export function InboxClient({
         // Staff type "0502376231"; the row stores "+966502376231".
         if (!hay.includes(q) && !phoneMatches(c.customer_phone, q)) return false;
       }
-      if (view === "mine" && c.assigned_to !== myTeamMemberId) return false;
+      if (view === "new" && !unreadOf(c)) return false;
       if (view === "unassigned" && c.assigned_to) return false;
-      if (view === "unread" && !unreadOf(c)) return false;
+      if (view === "danger" && replyDelayMinutes(c, now) === null) return false;
       if (statusFilter !== "all" && csStatusOf(c) !== statusFilter) return false;
       if (sectionFilter !== "all" && sectionOf(c) !== sectionFilter) return false;
       if (labelFilter !== "all" && !(assignments[c.id] ?? []).includes(labelFilter))
@@ -461,7 +461,7 @@ export function InboxClient({
     sectionFilter,
     labelFilter,
     assignments,
-    myTeamMemberId,
+    now,
     unreadOf,
   ]);
 
@@ -1188,22 +1188,36 @@ export function InboxClient({
               used to stack into three lines and push the list down. Touch-sized
               (≥36px) rather than 11px pills. */}
           <div className="scroll-pane flex items-center gap-1.5 overflow-x-auto pb-0.5 [&::-webkit-scrollbar]:hidden">
-            {(["all", "mine", "unassigned", "unread"] as View[]).map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => setView(v)}
-                aria-pressed={view === v}
-                className={cn(
-                  "min-h-9 shrink-0 rounded-full border px-3 text-xs transition-colors",
-                  view === v
-                    ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                    : "text-muted-foreground hover:bg-[var(--brand-soft)]"
-                )}
-              >
-                {v === "all" ? "الكل" : v === "mine" ? "لي" : v === "unassigned" ? "غير مسندة" : "غير مقروءة"}
-              </button>
-            ))}
+            <ToggleGroup
+              type="single"
+              value={view}
+              onValueChange={(value) => value && setView(value as View)}
+              variant="outline"
+              spacing={1}
+              aria-label="تصفية المحادثات"
+              className="w-auto"
+            >
+              {(["new", "unassigned", "danger"] as View[]).map((v) => (
+                <ToggleGroupItem
+                  key={v}
+                  value={v}
+                  aria-label={
+                    v === "new"
+                      ? "المحادثات الجديدة"
+                      : v === "unassigned"
+                        ? "المحادثات غير المستلمة"
+                        : "المحادثات التي تأخر الرد عليها"
+                  }
+                  className={cn(
+                    "min-h-9 rounded-full px-3 text-xs",
+                    v === "danger" &&
+                      "text-destructive data-[state=on]:border-destructive data-[state=on]:bg-destructive data-[state=on]:text-white"
+                  )}
+                >
+                  {v === "new" ? "جديد" : v === "unassigned" ? "غير مستلمة" : "خطر"}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as CsStatus | "all")}
