@@ -16,7 +16,7 @@ export default function OrdersLayout() {
         contentStyle: { backgroundColor: colors.background },
       }}
     >
-      <Stack.Screen name="index" options={{ title: "الطلبات", headerLargeTitle: true }} />
+      <Stack.Screen name="index" options={{ title: "الطلبات" }} />
       <Stack.Screen name="[id]/index" options={{ title: "تفاصيل الطلب" }} />
       <Stack.Screen
         name="[id]/edit"

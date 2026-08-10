@@ -146,11 +146,6 @@ const PAYMENT_LABEL: Record<string, string> = {
   PartiallyPaid: "مدفوع جزئيًا",
   Pending: "بانتظار الدفع",
 };
-const ORDER_STATUS_LABEL: Record<string, string> = {
-  Confirmed: "مؤكد",
-  Pending: "معلّق",
-  Cancelled: "ملغي",
-};
 /** Rekaz's `source`: who put the booking in. */
 const SOURCE_LABEL: Record<string, string> = {
   Internal: "الصالون",
@@ -191,12 +186,35 @@ function reservationIssues(reservation: RekazReservation): string[] {
   return issues;
 }
 
+function visitStatus(visit: Visit): string {
+  if (visit.services.some((service) => service.status === "Pending")) {
+    return "Pending";
+  }
+  if (visit.services.every((service) => service.status === "Done")) {
+    return "Done";
+  }
+  if (visit.services.every((service) => service.status === "Cancelled")) {
+    return "Cancelled";
+  }
+  return "Confirmed";
+}
+
+function visitIssues(visit: Visit): string[] {
+  return [
+    ...new Set(visit.services.flatMap((service) => reservationIssues(service))),
+  ];
+}
+
+function visitProviders(visit: Visit): string[] {
+  return [...new Set(visit.services.flatMap((service) => service.providers))];
+}
+
 /**
  * The visit each row belongs to.
  *
- * The table is one row per reservation, the way Rekaz lists them, but a driver
- * is booked per visit: three services in an afternoon are one trip, and the
- * booking sheet has to be prefilled with the whole span, not one row of it.
+ * Rekaz lists one row per service, but Kiara operates on the whole visit: three
+ * services in an afternoon are one customer arrival, one follow-up, and one
+ * driver trip. The table and calendar therefore share this grouped read model.
  */
 function groupVisits(reservations: RekazReservation[]): Map<string, Visit> {
   const byKey = new Map<string, RekazReservation[]>();
@@ -289,6 +307,7 @@ export function RekazReservations({
     [snapshot]
   );
   const visits = useMemo(() => groupVisits(reservations), [reservations]);
+  const allVisits = useMemo(() => [...visits.values()], [visits]);
   const followUps = useMemo(
     () => ({ ...initialFollowUps, ...followUpOverrides }),
     [followUpOverrides, initialFollowUps]
@@ -307,47 +326,56 @@ export function RekazReservations({
 
   const counts = useMemo(() => {
     const c: Record<StatusKey, number> = {
-      all: reservations.length,
+      all: allVisits.length,
       Confirmed: 0,
       Pending: 0,
       Done: 0,
     };
-    for (const r of reservations) {
-      if (r.status in c) c[r.status as StatusKey] += 1;
+    for (const visit of allVisits) {
+      const status = visitStatus(visit);
+      if (status in c) c[status as StatusKey] += 1;
     }
     return c;
-  }, [reservations]);
+  }, [allVisits]);
 
   // Status + text search — shared by both the table and the calendar. The date
   // range is applied on top for the table only; the calendar IS a date picker.
   const matched = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const digits = needle.replace(/\D/g, "");
-    return reservations.filter((r) => {
-      if (statusFilter !== "all" && r.status !== statusFilter) return false;
-      if (attentionOnly && reservationIssues(r).length === 0) return false;
+    return allVisits.filter((visit) => {
+      if (statusFilter !== "all" && visitStatus(visit) !== statusFilter) {
+        return false;
+      }
+      if (attentionOnly && visitIssues(visit).length === 0) return false;
       if (!needle) return true;
       // `phoneMatches` normalizes both sides, so a full +966… number, a local
       // 05… one and the last four digits all find the same customer.
-      if (digits && phoneMatches(r.customerPhone, needle)) return true;
-      if (digits && r.id.includes(digits)) return true;
+      if (digits && phoneMatches(visit.customerPhone, needle)) return true;
+      if (digits && visit.services.some((service) => service.id.includes(digits))) {
+        return true;
+      }
       return (
-        r.customerName.toLowerCase().includes(needle) ||
-        r.service.toLowerCase().includes(needle) ||
-        r.providers.some((p) => p.toLowerCase().includes(needle))
+        visit.customerName.toLowerCase().includes(needle) ||
+        visit.services.some((service) =>
+          service.service.toLowerCase().includes(needle)
+        ) ||
+        visitProviders(visit).some((provider) =>
+          provider.toLowerCase().includes(needle)
+        )
       );
     });
-  }, [attentionOnly, reservations, statusFilter, query]);
+  }, [allVisits, attentionOnly, statusFilter, query]);
 
   const attentionCount = useMemo(
-    () => reservations.filter((reservation) => reservationIssues(reservation).length > 0).length,
-    [reservations]
+    () => allVisits.filter((visit) => visitIssues(visit).length > 0).length,
+    [allVisits]
   );
 
   const filtered = useMemo(() => {
     if (!dateFrom && !dateTo) return matched;
-    return matched.filter((r) => {
-      const day = DAY_KEY_FMT.format(new Date(r.arrivalAt));
+    return matched.filter((visit) => {
+      const day = DAY_KEY_FMT.format(new Date(visit.startAt));
       if (dateFrom && day < dateFrom) return false;
       if (dateTo && day > dateTo) return false;
       return true;
@@ -363,18 +391,23 @@ export function RekazReservations({
   // Calendar: which days carry reservations (status/search-filtered), and the
   // visits on the day the user picked.
   const bookedDates = useMemo(() => {
-    const keys = new Set(matched.map((r) => DAY_KEY_FMT.format(new Date(r.arrivalAt))));
+    const keys = new Set(
+      matched.map((visit) => DAY_KEY_FMT.format(new Date(visit.startAt)))
+    );
     return [...keys].map(dateOfKey);
   }, [matched]);
 
   const dayVisits = useMemo(() => {
-    const onDay = matched.filter(
-      (r) => DAY_KEY_FMT.format(new Date(r.arrivalAt)) === selectedDay
-    );
-    return [...groupVisits(onDay).values()].sort((a, b) =>
-      a.startAt.localeCompare(b.startAt)
+    return matched.filter(
+      (visit) => DAY_KEY_FMT.format(new Date(visit.startAt)) === selectedDay
     );
   }, [matched, selectedDay]);
+
+  const visibleVisits = view === "table" ? filtered : matched;
+  const visibleServiceCount = visibleVisits.reduce(
+    (total, visit) => total + visit.services.length,
+    0
+  );
 
   const resetTo = useCallback((change: () => void) => {
     change();
@@ -779,9 +812,10 @@ export function RekazReservations({
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>
-          {(view === "table" ? filtered : matched).length.toLocaleString("ar-SA")} حجز
-          {(view === "table" ? filtered : matched).length !== counts.all
-            ? ` من ${counts.all.toLocaleString("ar-SA")}`
+          {visibleVisits.length.toLocaleString("ar-SA")} زيارة ·{" "}
+          {visibleServiceCount.toLocaleString("ar-SA")} خدمة
+          {visibleVisits.length !== counts.all
+            ? ` من ${counts.all.toLocaleString("ar-SA")} زيارة`
             : ""}
         </span>
         <span>آخر تحديث من ركاز {formatRelativeTime(snapshot.syncedAt)}</span>
@@ -880,7 +914,7 @@ export function RekazReservations({
         </div>
       ) : filtered.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
-          لا توجد حجوزات مطابقة.
+          لا توجد زيارات مطابقة.
         </p>
       ) : (
         <div className="rounded-xl border">
@@ -889,35 +923,75 @@ export function RekazReservations({
               <TableRow className="hover:bg-transparent">
                 <TableHead>إجراءات</TableHead>
                 <TableHead>متابعة العميلة</TableHead>
-                <TableHead>المحادثة</TableHead>
-                <TableHead>الخدمة</TableHead>
-                <TableHead>وقت الحجز</TableHead>
-                <TableHead>رقم الحجز</TableHead>
-                <TableHead>المصدر</TableHead>
-                <TableHead>العميل</TableHead>
+                <TableHead>العميلة</TableHead>
+                <TableHead>الموعد</TableHead>
+                <TableHead>الخدمات</TableHead>
+                <TableHead>الأخصائية</TableHead>
                 <TableHead>الحالة</TableHead>
-                <TableHead>مقدم الخدمة</TableHead>
-                <TableHead>الطلب</TableHead>
+                <TableHead>الإجمالي</TableHead>
+                <TableHead>المحادثة</TableHead>
                 <TableHead>تفاصيل</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((r) => {
-                const arrival = new Date(r.arrivalAt);
+              {rows.map((visit) => {
+                const firstService = visit.services[0];
+                const arrival = new Date(visit.startAt);
                 const dayKey = DAY_KEY_FMT.format(arrival);
-                const key = visitKeyOf(r.customerPhone, r.arrivalAt);
-                const visit = visits.get(key);
-                const existing = orderByVisit.get(key);
-                const followUp = followUps[key];
+                const existing = orderByVisit.get(visit.key);
+                const followUp = followUps[visit.key];
                 const cancelled = followUp?.status === "cancelled";
-                const meta = STATUS_META[r.status] ?? {
-                  label: r.status || "—",
+                const status = visitStatus(visit);
+                const meta = STATUS_META[status] ?? {
+                  label: status || "—",
                   variant: "outline" as const,
                 };
-                const issues = reservationIssues(r);
-                const isOpen = expanded === r.id;
+                const issues = visitIssues(visit);
+                const providers = visitProviders(visit);
+                const total = visit.services.reduce(
+                  (sum, service) => sum + service.amount,
+                  0
+                );
+                const paymentLabels = [
+                  ...new Set(
+                    visit.services.map(
+                      (service) => PAYMENT_LABEL[service.payment] ?? service.payment ?? "—"
+                    )
+                  ),
+                ];
+                const sources = [
+                  ...new Set(
+                    visit.services.map(
+                      (service) => SOURCE_LABEL[service.source] ?? service.source ?? "—"
+                    )
+                  ),
+                ];
+                const creators = [
+                  ...new Set(
+                    visit.services.map(
+                      (service) =>
+                        service.createdBy ||
+                        (service.source === "Website" ? "الزبونة" : "—")
+                    )
+                  ),
+                ];
+                const orderIds = [
+                  ...new Set(
+                    visit.services
+                      .map((service) => service.order?.id)
+                      .filter((id): id is string => Boolean(id))
+                  ),
+                ];
+                const notes = [
+                  ...new Set(
+                    visit.services
+                      .map((service) => service.notes.trim())
+                      .filter(Boolean)
+                  ),
+                ];
+                const isOpen = expanded === visit.key;
                 return (
-                  <Fragment key={r.id}>
+                  <Fragment key={visit.key}>
                     <TableRow className={cn(isOpen && "border-b-0 bg-muted/40")}>
                       <TableCell>
                         <div className="flex items-center gap-1">
@@ -933,7 +1007,7 @@ export function RekazReservations({
                               onClick={() =>
                                 setDispatchOrder({
                                   order: existing,
-                                  specialistName: r.providers[0] ?? null,
+                                  specialistName: providers[0] ?? null,
                                 })
                               }
                               disabled={cancelled}
@@ -944,11 +1018,11 @@ export function RekazReservations({
                           ) : (
                             <Button
                               size="sm"
-                              onClick={() => visit && requestDriver(visit)}
-                              disabled={!visit || preparing === key || cancelled}
+                              onClick={() => requestDriver(visit)}
+                              disabled={preparing === visit.key || cancelled}
                               className="whitespace-nowrap"
                             >
-                              {preparing === key ? (
+                              {preparing === visit.key ? (
                                 <Loader2 data-icon="inline-start" className="animate-spin" />
                               ) : (
                                 <Car data-icon="inline-start" />
@@ -971,47 +1045,33 @@ export function RekazReservations({
                       </TableCell>
 
                       <TableCell>
-                        {visit ? (
-                          <CustomerFollowUpControls
-                            followUp={followUp}
-                            reminding={reminding === key}
-                            busy={followUpBusy?.startsWith(`${key}:`) ?? false}
-                            onRemind={() => openReminder(visit)}
-                            onConfirm={() => updateFollowUp(visit, "confirmed")}
-                            onCancel={() => updateFollowUp(visit, "cancelled")}
-                            compact
-                          />
-                        ) : (
-                          "—"
-                        )}
+                        <CustomerFollowUpControls
+                          followUp={followUp}
+                          reminding={reminding === visit.key}
+                          busy={
+                            followUpBusy?.startsWith(`${visit.key}:`) ?? false
+                          }
+                          onRemind={() => openReminder(visit)}
+                          onConfirm={() => updateFollowUp(visit, "confirmed")}
+                          onCancel={() => updateFollowUp(visit, "cancelled")}
+                          compact
+                        />
                       </TableCell>
 
-                      <TableCell>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openConversation(r)}
-                          disabled={opening === r.id}
-                          className="whitespace-nowrap"
+                      <TableCell className="max-w-[180px]">
+                        <button
+                          type="button"
+                          onClick={() => openTimeline(visit)}
+                          className="block max-w-full text-start"
+                          title="عرض سجل العميلة الكامل"
                         >
-                          {opening === r.id ? (
-                            <Loader2 data-icon="inline-start" className="animate-spin" />
-                          ) : (
-                            <MessageCircle data-icon="inline-start" />
-                          )}
-                          المحادثة
-                        </Button>
-                      </TableCell>
-
-                      <TableCell className="max-w-[220px]">
-                        <span className="block truncate" title={r.service}>
-                          {r.service || "—"}
-                        </span>
-                        {r.quantity > 1 ? (
-                          <span className="text-xs text-muted-foreground">
-                            ×{r.quantity.toLocaleString("ar-SA")}
+                          <span className="block truncate font-medium text-[var(--brand)] underline-offset-2 hover:underline">
+                            {visit.customerName || "بدون اسم"}
                           </span>
-                        ) : null}
+                          <span dir="ltr" className="block text-xs text-muted-foreground">
+                            {visit.customerPhone}
+                          </span>
+                        </button>
                       </TableCell>
 
                       <TableCell className="whitespace-nowrap">
@@ -1022,37 +1082,38 @@ export function RekazReservations({
                           ) : null}
                         </span>
                         <span className="text-xs tabular-nums text-muted-foreground">
-                          {TIME_FMT.format(arrival)} ←{" "}
-                          {TIME_FMT.format(
-                            new Date(arrival.getTime() + r.durationMinutes * 60_000)
-                          )}
+                          {TIME_FMT.format(arrival)} ← {TIME_FMT.format(visit.endAt)}
                         </span>
                       </TableCell>
 
-                      <TableCell className="tabular-nums" dir="ltr">
-                        {r.id}
-                      </TableCell>
-
-                      <TableCell className="whitespace-nowrap">
-                        <Badge variant={r.source === "Website" ? "secondary" : "ghost"}>
-                          {SOURCE_LABEL[r.source] ?? r.source ?? "—"}
-                        </Badge>
-                      </TableCell>
-
-                      <TableCell className="max-w-[170px]">
-                        <button
-                          type="button"
-                          onClick={() => openTimeline(r)}
-                          className="block max-w-full text-start"
-                          title="عرض سجل العميلة الكامل"
+                      <TableCell className="max-w-[230px]">
+                        <div
+                          className="flex items-center gap-2"
+                          title={visit.services
+                            .map((service) => service.service)
+                            .join("، ")}
                         >
-                          <span className="block truncate font-medium text-[var(--brand)] underline-offset-2 hover:underline">
-                            {r.customerName || "بدون اسم"}
+                          <span className="block truncate">
+                            {firstService.service || "—"}
+                            {firstService.quantity > 1
+                              ? ` ×${firstService.quantity.toLocaleString("ar-SA")}`
+                              : ""}
                           </span>
-                          <span dir="ltr" className="block text-xs text-muted-foreground">
-                            {r.customerPhone}
-                          </span>
-                        </button>
+                          {visit.services.length > 1 ? (
+                            <Badge variant="secondary" className="shrink-0">
+                              +{(visit.services.length - 1).toLocaleString("ar-SA")} أخرى
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </TableCell>
+
+                      <TableCell className="max-w-[160px]">
+                        <span
+                          className="block truncate text-xs"
+                          title={providers.join("، ")}
+                        >
+                          {providers.length ? providers.join("، ") : "—"}
+                        </span>
                       </TableCell>
 
                       <TableCell>
@@ -1064,27 +1125,30 @@ export function RekazReservations({
                         ) : null}
                       </TableCell>
 
-                      <TableCell className="max-w-[140px]">
-                        <span
-                          className="block truncate text-xs"
-                          title={r.providers.join("، ")}
-                        >
-                          {r.providers.length ? r.providers.join("، ") : "—"}
+                      <TableCell className="whitespace-nowrap">
+                        <span className="block font-medium tabular-nums">
+                          {riyal(total)}
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          {paymentLabels.join(" · ")}
                         </span>
                       </TableCell>
 
-                      <TableCell className="whitespace-nowrap">
-                        <span className="block text-xs">
-                          {PAYMENT_LABEL[r.payment] ?? r.payment ?? "—"}
-                        </span>
-                        {r.order ? (
-                          <span className="block text-xs tabular-nums text-muted-foreground">
-                            {riyal(r.order.total)}
-                            {r.order.status && r.order.status !== "Confirmed"
-                              ? ` · ${ORDER_STATUS_LABEL[r.order.status] ?? r.order.status}`
-                              : ""}
-                          </span>
-                        ) : null}
+                      <TableCell>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openConversation(firstService)}
+                          disabled={opening === firstService.id}
+                          className="whitespace-nowrap"
+                        >
+                          {opening === firstService.id ? (
+                            <Loader2 data-icon="inline-start" className="animate-spin" />
+                          ) : (
+                            <MessageCircle data-icon="inline-start" />
+                          )}
+                          المحادثة
+                        </Button>
                       </TableCell>
 
                       <TableCell>
@@ -1092,7 +1156,8 @@ export function RekazReservations({
                           size="sm"
                           variant="ghost"
                           aria-expanded={isOpen}
-                          onClick={() => setExpanded(isOpen ? null : r.id)}
+                          aria-label={`تفاصيل زيارة ${visit.customerName || visit.customerPhone}`}
+                          onClick={() => setExpanded(isOpen ? null : visit.key)}
                           className="whitespace-nowrap"
                         >
                           <ChevronDown
@@ -1106,48 +1171,101 @@ export function RekazReservations({
 
                     {isOpen ? (
                       <TableRow className="hover:bg-transparent">
-                        <TableCell colSpan={12} className="bg-muted/40">
-                          <dl className="grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
-                            <Detail label="قيمة الخدمة" value={riyal(r.amount)} />
-                            <Detail
-                              label="المدة"
-                              value={`${r.durationMinutes.toLocaleString("ar-SA")} دقيقة`}
-                            />
-                            <Detail
-                              label="أُنشئ بواسطة"
-                              value={r.createdBy || (r.source === "Website" ? "الزبونة" : "—")}
-                            />
-                            <Detail
-                              label="تاريخ الإنشاء"
-                              value={r.bookedAt ? STAMP_FMT.format(new Date(r.bookedAt)) : "—"}
-                            />
-                            {visit && visit.services.length > 1 ? (
-                              <Detail
-                                label="ضمن زيارة"
-                                value={`${visit.services.length.toLocaleString("ar-SA")} خدمات · ${TIME_FMT.format(
-                                  new Date(visit.startAt)
-                                )} ← ${TIME_FMT.format(visit.endAt)}`}
-                              />
-                            ) : null}
-                            {r.notes ? <Detail label="ملاحظات" value={r.notes} /> : null}
-                            {r.location ? (
-                              <div className="sm:col-span-2">
-                                <dt className="text-muted-foreground">الموقع</dt>
-                                <dd>
-                                  <a
-                                    href={`https://maps.google.com/?q=${r.location.lat},${r.location.lng}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1.5 text-[var(--brand)] underline underline-offset-2"
+                        <TableCell colSpan={10} className="bg-muted/40 p-4">
+                          <div className="flex flex-col gap-4">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium">الخدمات في هذه الزيارة</p>
+                              <Badge variant="secondary">
+                                {visit.services.length.toLocaleString("ar-SA")} خدمة
+                              </Badge>
+                            </div>
+
+                            <ul className="overflow-hidden rounded-[var(--radius-md)] border bg-background [&>li:not(:last-child)]:border-b">
+                              {visit.services.map((service) => {
+                                const serviceArrival = new Date(service.arrivalAt);
+                                return (
+                                  <li
+                                    key={service.id}
+                                    className="grid gap-3 px-3 py-3 text-xs md:grid-cols-[minmax(180px,1.5fr)_minmax(120px,1fr)_minmax(120px,1fr)_auto] md:items-center"
                                   >
-                                    <MapPin size={13} aria-hidden="true" />
-                                    {r.location.label || "موقع الزبونة"}
-                                    <ExternalLink size={11} aria-hidden="true" />
-                                  </a>
-                                </dd>
-                              </div>
-                            ) : null}
-                          </dl>
+                                    <div className="min-w-0">
+                                      <p className="truncate font-medium" title={service.service}>
+                                        {service.service || "—"}
+                                        {service.quantity > 1
+                                          ? ` ×${service.quantity.toLocaleString("ar-SA")}`
+                                          : ""}
+                                      </p>
+                                      <p dir="ltr" className="tabular-nums text-muted-foreground">
+                                        {service.id}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted-foreground">الوقت والمدة</p>
+                                      <p className="tabular-nums">
+                                        {TIME_FMT.format(serviceArrival)} ←{" "}
+                                        {TIME_FMT.format(
+                                          new Date(
+                                            serviceArrival.getTime() +
+                                              service.durationMinutes * 60_000
+                                          )
+                                        )}
+                                        {" · "}
+                                        {service.durationMinutes.toLocaleString("ar-SA")} د
+                                      </p>
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-muted-foreground">الأخصائية</p>
+                                      <p className="truncate" title={service.providers.join("، ")}>
+                                        {service.providers.length
+                                          ? service.providers.join("، ")
+                                          : "—"}
+                                      </p>
+                                    </div>
+                                    <p className="whitespace-nowrap font-medium tabular-nums">
+                                      {riyal(service.amount)}
+                                    </p>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+
+                            <dl className="grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                              <Detail label="المصدر" value={sources.join(" · ")} />
+                              <Detail label="أُنشئ بواسطة" value={creators.join(" · ")} />
+                              <Detail
+                                label="تاريخ الإنشاء"
+                                value={
+                                  firstService.bookedAt
+                                    ? STAMP_FMT.format(new Date(firstService.bookedAt))
+                                    : "—"
+                                }
+                              />
+                              <Detail
+                                label="رقم الطلب"
+                                value={orderIds.length ? orderIds.join("، ") : "—"}
+                              />
+                              {notes.length ? (
+                                <Detail label="ملاحظات" value={notes.join(" · ")} />
+                              ) : null}
+                              {visit.location ? (
+                                <div className="sm:col-span-2">
+                                  <dt className="text-muted-foreground">الموقع</dt>
+                                  <dd>
+                                    <a
+                                      href={`https://maps.google.com/?q=${visit.location.lat},${visit.location.lng}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1.5 text-[var(--brand)] underline underline-offset-2"
+                                    >
+                                      <MapPin size={13} aria-hidden="true" />
+                                      {visit.location.label || "موقع الزبونة"}
+                                      <ExternalLink size={11} aria-hidden="true" />
+                                    </a>
+                                  </dd>
+                                </div>
+                              ) : null}
+                            </dl>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ) : null}

@@ -92,7 +92,7 @@ import type { InternalNote } from "@/lib/notes";
 import type { SavedReply } from "@/lib/saved-replies";
 import { formatRelativeTime, agentDisplayName, dayKey } from "@/lib/format";
 import { findSharedLocation } from "@/lib/location";
-import { phoneMatches } from "@/lib/phone";
+import { normalizePhone, phoneMatches } from "@/lib/phone";
 import type { CatalogItem } from "@/lib/catalog";
 import { catalogImageFile } from "./catalog-image";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
@@ -220,7 +220,12 @@ function unansweredSince(c: Conversation): number | null {
   return activity <= inbound + 2_000 ? inbound : null;
 }
 
-function replyDelayMinutes(c: Conversation, now: number): number | null {
+function replyDelayMinutes(
+  c: Conversation,
+  now: number,
+  dangerExcludedPhoneSet: ReadonlySet<string>
+): number | null {
+  if (dangerExcludedPhoneSet.has(normalizePhone(c.customer_phone))) return null;
   const since = unansweredSince(c);
   if (since === null || now - since < REPLY_ALERT_MS) return null;
   return Math.max(6, Math.floor((now - since) / 60_000));
@@ -248,6 +253,7 @@ const ConversationListRow = memo(function ConversationListRow({
   owner,
   route,
   now,
+  dangerExcludedPhoneSet,
   onSelect,
 }: {
   conversation: Conversation;
@@ -260,12 +266,14 @@ const ConversationListRow = memo(function ConversationListRow({
   owner: string | null;
   route: string | null;
   now: number;
+  dangerExcludedPhoneSet: ReadonlySet<string>;
   onSelect: (conversation: Conversation) => void;
 }) {
   const section = sectionOf(conversation);
   const bookingStage = bookingStageOf(conversation);
   const handledOnWhatsApp = isHandledOnWhatsApp(conversation);
-  const replyOverdue = replyDelayMinutes(conversation, now) !== null;
+  const replyOverdue =
+    replyDelayMinutes(conversation, now, dangerExcludedPhoneSet) !== null;
   const conversationLabels = labelIds
     .map((id) => labelMap[id])
     .filter((label): label is Label => Boolean(label));
@@ -380,6 +388,7 @@ export function InboxClient({
   labels: initialLabels,
   labelAssignments: initialAssignments,
   savedReplies,
+  dangerExcludedPhones,
   initialNow,
   initialConversationId = null,
 }: {
@@ -390,6 +399,8 @@ export function InboxClient({
   labels: Label[];
   labelAssignments: Record<string, string[]>;
   savedReplies: SavedReply[];
+  /** Normalized specialist/driver phones excluded from customer response SLAs. */
+  dangerExcludedPhones: string[];
   /** Server snapshot shared by SSR and hydration; the live timer takes over after mount. */
   initialNow: number;
   /** `?c=<id>` — the thread /orders sent the reader here to read. */
@@ -579,6 +590,10 @@ export function InboxClient({
     () => Object.fromEntries(agents.map((a) => [a.id, a])),
     [agents]
   );
+  const dangerExcludedPhoneSet = useMemo(
+    () => new Set(dangerExcludedPhones),
+    [dangerExcludedPhones]
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -590,7 +605,12 @@ export function InboxClient({
       }
       if (view === "new" && !unreadOf(c)) return false;
       if (view === "unassigned" && c.assigned_to) return false;
-      if (view === "danger" && replyDelayMinutes(c, now) === null) return false;
+      if (
+        view === "danger" &&
+        replyDelayMinutes(c, now, dangerExcludedPhoneSet) === null
+      ) {
+        return false;
+      }
       if (statusFilter !== "all" && csStatusOf(c) !== statusFilter) return false;
       if (sectionFilter !== "all" && sectionOf(c) !== sectionFilter) return false;
       if (labelFilter !== "all" && !(assignments[c.id] ?? []).includes(labelFilter))
@@ -607,6 +627,7 @@ export function InboxClient({
     assignments,
     now,
     unreadOf,
+    dangerExcludedPhoneSet,
   ]);
 
   /**
@@ -1035,13 +1056,20 @@ export function InboxClient({
 
   /** Upload + send one file. Returns false so callers can stop a batch. */
   const sendFile = useCallback(
-    async (file: File, caption = ""): Promise<boolean> => {
+    async (
+      file: File,
+      caption = "",
+      options: { voiceNote?: boolean } = {}
+    ): Promise<boolean> => {
       if (!selected) return false;
       setMediaError(null);
       try {
         const form = new FormData();
         form.append("file", file);
         if (caption) form.append("caption", caption);
+        // Keep uploaded songs/audio files as regular attachments. Only audio
+        // captured with the microphone should become a WhatsApp voice note.
+        if (options.voiceNote) form.append("voiceNote", "true");
         const res = await fetch(`/api/conversations/${selected.id}/media`, {
           method: "POST",
           body: form,
@@ -1204,7 +1232,15 @@ export function InboxClient({
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 48_000,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       // Prefer ogg/opus — that's what WhatsApp uses for voice notes; Safari
       // only offers mp4, which still sends fine as audio.
       const mime = MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")
@@ -1212,7 +1248,13 @@ export function InboxClient({
         : MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
           ? "audio/webm;codecs=opus"
           : "";
-      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      // Do not leave quality to browser defaults: some devices choose a very
+      // low audio bitrate for MediaRecorder, which becomes worse after
+      // WhatsApp's own voice-note processing.
+      const rec = new MediaRecorder(stream, {
+        ...(mime ? { mimeType: mime } : {}),
+        audioBitsPerSecond: 128_000,
+      });
       chunksRef.current = [];
       rec.ondataavailable = (ev) => {
         if (ev.data.size) chunksRef.current.push(ev.data);
@@ -1227,7 +1269,11 @@ export function InboxClient({
           // Voice notes send straight away — there's nothing to preview.
           setUploading(true);
           try {
-            await sendFile(new File([blob], `voice-${Date.now()}.${ext}`, { type }));
+            await sendFile(
+              new File([blob], `voice-${Date.now()}.${ext}`, { type }),
+              "",
+              { voiceNote: true }
+            );
           } finally {
             setUploading(false);
           }
@@ -1318,7 +1364,7 @@ export function InboxClient({
   );
   const canTake = Boolean(selected && !selected.assigned_to && myTeamMemberId);
   const selectedReplyOverdue = selected
-    ? replyDelayMinutes(selected, now) !== null
+    ? replyDelayMinutes(selected, now, dangerExcludedPhoneSet) !== null
     : false;
 
   // Feeds the order's location field: a pin or a maps link she shared fills it
@@ -1454,6 +1500,7 @@ export function InboxClient({
                 owner={ownerLabel(conversation)}
                 route={routeLabel(conversation)}
                 now={now}
+                dangerExcludedPhoneSet={dangerExcludedPhoneSet}
                 onSelect={loadMessages}
               />
             ))

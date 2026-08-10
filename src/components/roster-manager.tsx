@@ -1,10 +1,20 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Loader2, UserPlus, Check, Pencil, Ban, RotateCcw, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Loader2,
+  UserPlus,
+  Check,
+  Pencil,
+  Ban,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NATIONALITIES, nationalityOf } from "@/lib/nationalities";
 import type { Specialist, Driver } from "@/lib/types";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 type Row = Specialist | Driver;
 type Kind = "specialist" | "driver";
@@ -147,6 +157,7 @@ function RosterSection<T extends Row>({
 
   const patch = useCallback(
     async (id: string, body: Record<string, unknown>) => {
+      setError(null);
       setBusyId(id);
       try {
         const res = await fetch(`${ENDPOINT[kind]}/${id}`, {
@@ -206,7 +217,10 @@ function RosterSection<T extends Row>({
       </div>
 
       {error ? (
-        <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
+        <Alert variant="destructive" className="mb-3">
+          <AlertTriangle />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
 
       {items.length ? (

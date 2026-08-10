@@ -29,6 +29,8 @@ const SPECIALIST_COLS = "id, full_name, phone, is_active, nationality";
 const LEGACY_SPECIALIST_COLS = "id, full_name, phone, is_active";
 const missingNationality = (err: { message: string } | null) =>
   Boolean(err?.message.includes("nationality"));
+const NATIONALITY_SCHEMA_ERROR =
+  "تحديث الجنسيات غير مطبّق على قاعدة البيانات. تواصلي مع مسؤول النظام ثم أعيدي المحاولة.";
 const DRIVER_COLS = "id, full_name, phone, is_active";
 const ORDER_COLS =
   "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type, price, status, sent_at, created_at, updated_at";
@@ -142,7 +144,13 @@ export async function createSpecialist(
       .select(withNationality ? SPECIALIST_COLS : LEGACY_SPECIALIST_COLS)
       .single();
   let { data, error } = await insert(true);
-  if (missingNationality(error)) ({ data, error } = await insert(false));
+  if (missingNationality(error)) {
+    // Creating without a nationality can remain compatible with an older
+    // schema. If one was chosen, retrying without it would discard the value
+    // while falsely reporting a successful save.
+    if (nationality) throw new Error(NATIONALITY_SCHEMA_ERROR);
+    ({ data, error } = await insert(false));
+  }
   if (error) throw new Error(error.message);
   return data as unknown as Specialist;
 }
@@ -180,6 +188,11 @@ export async function updateSpecialist(
       .single();
   let { data, error } = await run(SPECIALIST_COLS, buildRosterPatch(patch));
   if (missingNationality(error)) {
+    // Never report success after removing a field the employee explicitly
+    // changed. This was why nationality disappeared when the row re-rendered.
+    if (patch.nationality !== undefined) {
+      throw new Error(NATIONALITY_SCHEMA_ERROR);
+    }
     const legacy = { ...patch };
     delete legacy.nationality;
     ({ data, error } = await run(LEGACY_SPECIALIST_COLS, buildRosterPatch(legacy)));
@@ -202,6 +215,21 @@ export async function listDrivers(
   const { data, error } = await q.order("full_name");
   if (error) throw new Error(error.message);
   return (data ?? []) as Driver[];
+}
+
+/** All staff WhatsApp numbers that must never be treated as customer chats. */
+export async function listRosterContactPhones(): Promise<string[]> {
+  const [specialists, drivers] = await Promise.all([
+    listSpecialists(),
+    listDrivers(),
+  ]);
+  return [
+    ...new Set(
+      [...specialists.map((item) => item.phone), ...drivers.map((item) => item.phone)]
+        .map((phone) => phone?.trim() ?? "")
+        .filter(Boolean)
+    ),
+  ];
 }
 
 export async function createDriver(

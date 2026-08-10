@@ -1,4 +1,5 @@
 import { bookingStageOf } from "@/lib/booking-stage";
+import { listRosterContactPhones } from "@/lib/dispatch";
 import { listConversations } from "@/lib/inbox";
 import {
   MOBILE_DANGER_AFTER_SECONDS,
@@ -6,10 +7,11 @@ import {
   type MobileConversationView,
   type MobilePage,
 } from "@/lib/mobile/contracts";
-import { phoneMatches } from "@/lib/phone";
+import { normalizePhone, phoneMatches } from "@/lib/phone";
 import type { Conversation, CsStatus } from "@/lib/types";
 
 const MAX_MOBILE_CONVERSATION_SCAN = 500;
+const EMPTY_PHONE_SET: ReadonlySet<string> = new Set();
 
 export function conversationCsStatus(
   conversation: Pick<Conversation, "metadata" | "status">
@@ -34,10 +36,18 @@ export function conversationCsStatus(
 export function conversationDangerMinutes(
   conversation: Pick<
     Conversation,
-    "last_inbound_at" | "last_message_at" | "metadata" | "status"
+    | "customer_phone"
+    | "last_inbound_at"
+    | "last_message_at"
+    | "metadata"
+    | "status"
   >,
-  now = Date.now()
+  now = Date.now(),
+  dangerExcludedPhoneSet: ReadonlySet<string> = EMPTY_PHONE_SET
 ): number | null {
+  if (dangerExcludedPhoneSet.has(normalizePhone(conversation.customer_phone))) {
+    return null;
+  }
   if (
     !conversation.last_inbound_at ||
     conversationCsStatus(conversation) === "resolved"
@@ -62,7 +72,8 @@ export function conversationDangerMinutes(
 
 export function toMobileConversation(
   conversation: Conversation,
-  now = Date.now()
+  now = Date.now(),
+  dangerExcludedPhoneSet: ReadonlySet<string> = EMPTY_PHONE_SET
 ): MobileConversation {
   return {
     id: conversation.id,
@@ -78,7 +89,11 @@ export function toMobileConversation(
     metadata: conversation.metadata ?? null,
     csStatus: conversationCsStatus(conversation),
     bookingStage: bookingStageOf(conversation),
-    dangerMinutes: conversationDangerMinutes(conversation, now),
+    dangerMinutes: conversationDangerMinutes(
+      conversation,
+      now,
+      dangerExcludedPhoneSet
+    ),
   };
 }
 
@@ -95,11 +110,14 @@ function matchesSearch(conversation: Conversation, rawQuery: string): boolean {
 function matchesView(
   conversation: Conversation,
   view: MobileConversationView,
-  now: number
+  now: number,
+  dangerExcludedPhoneSet: ReadonlySet<string>
 ): boolean {
   if (view === "new") return (conversation.unread_count ?? 0) > 0;
   if (view === "unassigned") return !conversation.assigned_to;
-  return conversationDangerMinutes(conversation, now) !== null;
+  return (
+    conversationDangerMinutes(conversation, now, dangerExcludedPhoneSet) !== null
+  );
 }
 
 export async function listMobileConversations(options: {
@@ -114,33 +132,38 @@ export async function listMobileConversations(options: {
   counts: Record<MobileConversationView, number>;
 }> {
   const now = Date.now();
-  const conversations = await listConversations(
-    MAX_MOBILE_CONVERSATION_SCAN,
-    {
+  const [conversations, rosterPhones] = await Promise.all([
+    listConversations(MAX_MOBILE_CONVERSATION_SCAN, {
       isAdmin: options.isAdmin,
       teamMemberId: options.teamMemberId,
-    }
+    }),
+    listRosterContactPhones(),
+  ]);
+  const dangerExcludedPhoneSet = new Set(
+    rosterPhones.map(normalizePhone).filter(Boolean)
   );
   const searched = conversations.filter((conversation) =>
     matchesSearch(conversation, options.search)
   );
   const counts = {
     new: searched.filter((conversation) =>
-      matchesView(conversation, "new", now)
+      matchesView(conversation, "new", now, dangerExcludedPhoneSet)
     ).length,
     unassigned: searched.filter((conversation) =>
-      matchesView(conversation, "unassigned", now)
+      matchesView(conversation, "unassigned", now, dangerExcludedPhoneSet)
     ).length,
     danger: searched.filter((conversation) =>
-      matchesView(conversation, "danger", now)
+      matchesView(conversation, "danger", now, dangerExcludedPhoneSet)
     ).length,
   };
   const matching = searched.filter((conversation) =>
-    matchesView(conversation, options.view, now)
+    matchesView(conversation, options.view, now, dangerExcludedPhoneSet)
   );
   const items = matching
     .slice(options.offset, options.offset + options.limit)
-    .map((conversation) => toMobileConversation(conversation, now));
+    .map((conversation) =>
+      toMobileConversation(conversation, now, dangerExcludedPhoneSet)
+    );
   const nextOffset = options.offset + items.length;
 
   return {

@@ -16,7 +16,7 @@ export default function InboxLayout() {
         contentStyle: { backgroundColor: colors.background },
       }}
     >
-      <Stack.Screen name="index" options={{ title: "المحادثات", headerLargeTitle: true }} />
+      <Stack.Screen name="index" options={{ title: "المحادثات" }} />
       <Stack.Screen name="[id]" options={{ title: "المحادثة" }} />
     </Stack>
   );

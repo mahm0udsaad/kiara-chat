@@ -15,7 +15,7 @@ export default function AccountLayout() {
         contentStyle: { backgroundColor: colors.background },
       }}
     >
-      <Stack.Screen name="index" options={{ title: "الحساب", headerLargeTitle: true }} />
+      <Stack.Screen name="index" options={{ title: "الحساب" }} />
     </Stack>
   );
 }

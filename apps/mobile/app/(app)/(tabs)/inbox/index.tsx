@@ -11,8 +11,7 @@ import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { radius, rtlText, spacing, type } from "@/constants/theme";
 import { bookingStageLabel, relativeTimeLabel } from "@/lib/format";
-import { commitFeedback } from "@/lib/haptics";
-import { useConversations, useTakeConversation } from "@/lib/queries";
+import { useConversations } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { ConversationSummary, InboxView } from "@/types/api";
 
@@ -24,118 +23,100 @@ const filters: SegmentOption<InboxView>[] = [
 
 function ConversationRow({ conversation }: { conversation: ConversationSummary }) {
   const { colors } = useTheme();
-  const take = useTakeConversation(conversation.id);
 
   const overdue = conversation.dangerMinutes !== null && conversation.dangerMinutes >= 6;
   const unread = conversation.unread_count ?? 0;
   const displayName = conversation.customer_name || conversation.customer_phone;
 
   return (
-    <Link href={{ pathname: "/inbox/[id]", params: { id: conversation.id } }}>
-      <Link.Trigger>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`محادثة ${displayName}${unread ? `، ${unread} رسائل غير مقروءة` : ""}${
-            overdue ? "، تنتظر ردًا" : ""
-          }`}
-          style={({ pressed }) => ({
-            flexDirection: "row-reverse",
-            gap: spacing.md,
-            padding: spacing.lg,
-            borderRadius: radius.xl,
-            borderCurve: "continuous",
-            borderWidth: 1,
-            borderColor: overdue ? colors.danger : colors.border,
-            backgroundColor: pressed ? colors.surfaceSunken : colors.surface,
-            boxShadow: "0 1px 2px rgba(24, 33, 77, 0.05)",
-          })}
-        >
-          <Avatar name={conversation.customer_name} seed={conversation.customer_phone} />
+    // `asChild` keeps the card a real View tree. A plain <Link> renders its
+    // children inside a <Text>, which drops the card's background and flex row.
+    <Link href={{ pathname: "/inbox/[id]", params: { id: conversation.id } }} asChild>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`محادثة ${displayName}${unread ? `، ${unread} رسائل غير مقروءة` : ""}${
+          overdue ? "، تنتظر ردًا" : ""
+        }`}
+      >
+        {({ pressed }) => (
+          <View
+            style={{
+              flexDirection: "row-reverse",
+              gap: spacing.md,
+              padding: spacing.lg,
+              borderRadius: radius.xl,
+              borderCurve: "continuous",
+              borderWidth: 1,
+              borderColor: overdue ? colors.danger : colors.border,
+              backgroundColor: pressed ? colors.surfaceSunken : colors.surface,
+              boxShadow: "0 1px 2px rgba(24, 33, 77, 0.05)",
+            }}
+          >
+            <Avatar name={conversation.customer_name} seed={conversation.customer_phone} />
 
-          <View style={{ flex: 1, gap: spacing.xs + 2 }}>
-            <View
-              style={{
-                flexDirection: "row-reverse",
-                alignItems: "center",
-                gap: spacing.sm,
-              }}
-            >
+            <View style={{ flex: 1, gap: spacing.xs + 2 }}>
+              <View
+                style={{
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  gap: spacing.sm,
+                }}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={{
+                    flex: 1,
+                    ...type.headline,
+                    color: colors.text,
+                    ...rtlText,
+                  }}
+                >
+                  {displayName}
+                </Text>
+                <Text
+                  style={{
+                    ...type.caption,
+                    color: overdue ? colors.danger : colors.textTertiary,
+                    fontVariant: ["tabular-nums"],
+                  }}
+                >
+                  {relativeTimeLabel(conversation.last_message_at)}
+                </Text>
+              </View>
+
               <Text
                 numberOfLines={1}
                 style={{
-                  flex: 1,
-                  ...type.headline,
-                  color: colors.text,
+                  ...type.footnote,
+                  color: colors.textSecondary,
+                  fontVariant: ["tabular-nums"],
                   ...rtlText,
                 }}
               >
-                {displayName}
+                {conversation.customer_phone}
               </Text>
-              <Text
+
+              <View
                 style={{
-                  ...type.caption,
-                  color: overdue ? colors.danger : colors.textTertiary,
-                  fontVariant: ["tabular-nums"],
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: spacing.xs + 2,
                 }}
               >
-                {relativeTimeLabel(conversation.last_message_at)}
-              </Text>
-            </View>
-
-            <Text
-              numberOfLines={1}
-              style={{
-                ...type.footnote,
-                color: colors.textSecondary,
-                fontVariant: ["tabular-nums"],
-                ...rtlText,
-              }}
-            >
-              {conversation.customer_phone}
-            </Text>
-
-            <View
-              style={{
-                flexDirection: "row-reverse",
-                alignItems: "center",
-                flexWrap: "wrap",
-                gap: spacing.xs + 2,
-              }}
-            >
-              <CountBadge count={unread} />
-              {overdue ? (
-                <Badge
-                  tone="danger"
-                  icon="hourglass"
-                  label="تنتظر ردًا"
-                />
-              ) : null}
-              {!conversation.assigned_to ? (
-                <Badge tone="warning" icon="person.crop.circle" label="غير مستلمة" />
-              ) : null}
-              {conversation.bookingStage ? (
-                <Badge
-                  tone="neutral"
-                  label={bookingStageLabel[conversation.bookingStage]}
-                />
-              ) : null}
+                <CountBadge count={unread} />
+                {overdue ? <Badge tone="danger" icon="hourglass" label="تنتظر ردًا" /> : null}
+                {!conversation.assigned_to ? (
+                  <Badge tone="warning" icon="person.crop.circle" label="غير مستلمة" />
+                ) : null}
+                {conversation.bookingStage ? (
+                  <Badge tone="neutral" label={bookingStageLabel[conversation.bookingStage]} />
+                ) : null}
+              </View>
             </View>
           </View>
-        </Pressable>
-      </Link.Trigger>
-
-      <Link.Preview />
-
-      <Link.Menu>
-        <Link.MenuAction
-          title="استلام المحادثة"
-          icon="person.crop.circle.badge.checkmark"
-          onPress={() => {
-            commitFeedback();
-            take.mutate();
-          }}
-        />
-      </Link.Menu>
+        )}
+      </Pressable>
     </Link>
   );
 }

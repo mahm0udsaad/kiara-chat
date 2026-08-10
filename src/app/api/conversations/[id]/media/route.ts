@@ -41,6 +41,13 @@ export async function POST(
   }
 
   const caption = ((form.get("caption") as string | null) ?? "").trim();
+  const voiceNote = form.get("voiceNote") === "true";
+  if (voiceNote && !file.type.toLowerCase().startsWith("audio/")) {
+    return NextResponse.json(
+      { error: "الملاحظة الصوتية يجب أن تكون ملفًا صوتيًا" },
+      { status: 400 }
+    );
+  }
   const buffer = Buffer.from(await file.arrayBuffer());
 
   try {
@@ -53,7 +60,8 @@ export async function POST(
         contentType: file.type || "application/octet-stream",
         filename: file.name || null,
       },
-      caption
+      caption,
+      { ptt: voiceNote }
     );
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

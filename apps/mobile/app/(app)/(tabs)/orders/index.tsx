@@ -106,92 +106,100 @@ function OrderCard({ order }: { order: OrderSummary }) {
   const needsAttention = order.status === "failed";
 
   return (
-    <Link href={{ pathname: "/orders/[id]", params: { id: order.id } }}>
-      <Link.Trigger>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`طلب ${order.customer_name || order.customer_phone}، ${
-            orderStatusLabel[order.status]
-          }، ${formatters.time.format(arrival)}`}
-          style={({ pressed }) => ({
-            flexDirection: "row-reverse",
-            gap: spacing.md,
-            padding: spacing.lg,
-            borderRadius: radius.xl,
-            borderCurve: "continuous",
-            borderWidth: 1,
-            borderColor: needsAttention ? colors.danger : colors.border,
-            backgroundColor: pressed ? colors.surfaceSunken : colors.surface,
-            boxShadow: "0 1px 2px rgba(24, 33, 77, 0.05)",
-          })}
-        >
-          {/* Time rail — the one value an operator scans a schedule for. */}
-          <View style={{ alignItems: "center", gap: 2, minWidth: 62 }}>
-            <Text
-              style={{
-                ...type.title3,
-                color: colors.text,
-                fontVariant: ["tabular-nums"],
-              }}
-            >
-              {formatters.time.format(arrival)}
-            </Text>
-            <Text style={{ ...type.caption, fontWeight: "400", color: colors.textTertiary }}>
-              {durationLabel(order.duration_minutes)}
-            </Text>
-          </View>
-
+    // `asChild` keeps the card a real View tree. A plain <Link> renders its
+    // children inside a <Text>, which drops the card's background and flex row.
+    <Link href={{ pathname: "/orders/[id]", params: { id: order.id } }} asChild>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`طلب ${order.customer_name || order.customer_phone}، ${
+          orderStatusLabel[order.status]
+        }، ${formatters.time.format(arrival)}`}
+      >
+        {({ pressed }) => (
           <View
-            style={{ width: 1, backgroundColor: colors.border, marginVertical: spacing.xs }}
-          />
-
-          <View style={{ flex: 1, gap: spacing.sm }}>
-            <View
-              style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}
-            >
+            style={{
+              flexDirection: "row-reverse",
+              gap: spacing.md,
+              padding: spacing.lg,
+              borderRadius: radius.xl,
+              borderCurve: "continuous",
+              borderWidth: 1,
+              borderColor: needsAttention ? colors.danger : colors.border,
+              backgroundColor: pressed ? colors.surfaceSunken : colors.surface,
+              boxShadow: "0 1px 2px rgba(24, 33, 77, 0.05)",
+            }}
+          >
+            {/* Time rail — the one value an operator scans a schedule for. */}
+            <View style={{ alignItems: "center", gap: 2, minWidth: 62 }}>
               <Text
-                numberOfLines={1}
-                style={{ flex: 1, ...type.headline, color: colors.text, ...rtlText }}
+                style={{
+                  ...type.title3,
+                  color: colors.text,
+                  fontVariant: ["tabular-nums"],
+                }}
               >
-                {order.customer_name || order.customer_phone}
+                {formatters.time.format(arrival)}
               </Text>
-              <Badge
-                label={orderStatusLabel[order.status]}
-                tone={orderStatusTone[order.status]}
-                icon={orderStatusIcon[order.status] as "clock"}
-              />
-            </View>
-
-            <View
-              style={{ flexDirection: "row-reverse", alignItems: "flex-start", gap: spacing.xs + 2 }}
-            >
-              <IconSymbol name="mappin.and.ellipse" color={colors.textTertiary} size={14} />
-              <Text
-                numberOfLines={2}
-                style={{ flex: 1, ...type.footnote, color: colors.textSecondary, ...rtlText }}
-              >
-                {order.customer_location}
-              </Text>
-            </View>
-
-            <View
-              style={{
-                flexDirection: "row-reverse",
-                flexWrap: "wrap",
-                alignItems: "center",
-                gap: spacing.xs + 2,
-              }}
-            >
-              <AssignmentChip icon="sparkles" name={order.specialist_name} />
-              <AssignmentChip icon="car" name={order.driver_name} />
               <Text style={{ ...type.caption, fontWeight: "400", color: colors.textTertiary }}>
-                {tripTypeLabel[order.trip_type]}
+                {durationLabel(order.duration_minutes)}
               </Text>
+            </View>
+
+            <View
+              style={{ width: 1, backgroundColor: colors.border, marginVertical: spacing.xs }}
+            />
+
+            <View style={{ flex: 1, gap: spacing.sm }}>
+              <View
+                style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={{ flex: 1, ...type.headline, color: colors.text, ...rtlText }}
+                >
+                  {order.customer_name || order.customer_phone}
+                </Text>
+                <Badge
+                  label={orderStatusLabel[order.status]}
+                  tone={orderStatusTone[order.status]}
+                  icon={orderStatusIcon[order.status] as "clock"}
+                />
+              </View>
+
+              <View
+                style={{
+                  flexDirection: "row-reverse",
+                  alignItems: "flex-start",
+                  gap: spacing.xs + 2,
+                }}
+              >
+                <IconSymbol name="mappin.and.ellipse" color={colors.textTertiary} size={14} />
+                <Text
+                  numberOfLines={2}
+                  style={{ flex: 1, ...type.footnote, color: colors.textSecondary, ...rtlText }}
+                >
+                  {order.customer_location}
+                </Text>
+              </View>
+
+              <View
+                style={{
+                  flexDirection: "row-reverse",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: spacing.xs + 2,
+                }}
+              >
+                <AssignmentChip icon="sparkles" name={order.specialist_name} />
+                <AssignmentChip icon="car" name={order.driver_name} />
+                <Text style={{ ...type.caption, fontWeight: "400", color: colors.textTertiary }}>
+                  {tripTypeLabel[order.trip_type]}
+                </Text>
+              </View>
             </View>
           </View>
-        </Pressable>
-      </Link.Trigger>
-      <Link.Preview />
+        )}
+      </Pressable>
     </Link>
   );
 }

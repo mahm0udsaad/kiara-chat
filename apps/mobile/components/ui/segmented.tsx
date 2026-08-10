@@ -1,4 +1,5 @@
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useRef } from "react";
+import { I18nManager, Pressable, ScrollView, Text, View } from "react-native";
 
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { tapFeedback } from "@/lib/haptics";
@@ -32,6 +33,10 @@ export function Segmented<T extends string>({
   layout = "fill",
 }: Props<T>) {
   const { colors } = useTheme();
+  const scroller = useRef<ScrollView>(null);
+  // A horizontal ScrollView still opens at its left edge under RTL, which hides
+  // the first (right-most) filter. Park it on the right once, then leave it be.
+  const parked = useRef(false);
 
   const segments = options.map((option) => {
     const active = option.value === value;
@@ -110,11 +115,19 @@ export function Segmented<T extends string>({
   if (layout === "scroll") {
     return (
       <ScrollView
+        ref={scroller}
         horizontal
         showsHorizontalScrollIndicator={false}
         accessibilityRole="tablist"
         accessibilityLabel={accessibilityLabel}
         contentContainerStyle={track}
+        onContentSizeChange={(width) => {
+          if (parked.current || !I18nManager.isRTL) return;
+          parked.current = true;
+          // Over-scrolling clamps to the far edge, which under RTL is the first
+          // filter. Wait a frame so the ScrollView has measured itself first.
+          requestAnimationFrame(() => scroller.current?.scrollTo({ x: width, animated: false }));
+        }}
       >
         {segments}
       </ScrollView>

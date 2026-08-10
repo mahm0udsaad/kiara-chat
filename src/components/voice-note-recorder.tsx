@@ -65,7 +65,15 @@ export function VoiceNoteRecorder({
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 48_000,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       // ogg/opus is what WhatsApp itself uses for voice notes; Safari only
       // offers mp4, which still arrives as playable audio.
       const mime = MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")
@@ -73,7 +81,10 @@ export function VoiceNoteRecorder({
         : MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
           ? "audio/webm;codecs=opus"
           : "";
-      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const rec = new MediaRecorder(stream, {
+        ...(mime ? { mimeType: mime } : {}),
+        audioBitsPerSecond: 128_000,
+      });
       chunksRef.current = [];
       let elapsed = 0;
       rec.ondataavailable = (ev) => {

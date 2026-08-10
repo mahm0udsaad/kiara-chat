@@ -4,6 +4,8 @@ import { listAgents } from "@/lib/interactions";
 import { getConversationById, listConversations } from "@/lib/inbox";
 import { listLabels, getLabelAssignments } from "@/lib/labels";
 import { listSavedReplies } from "@/lib/saved-replies";
+import { listRosterContactPhones } from "@/lib/dispatch";
+import { normalizePhone } from "@/lib/phone";
 import { InboxClient } from "@/components/inbox/inbox-client";
 
 export const dynamic = "force-dynamic";
@@ -28,14 +30,21 @@ export default async function InboxPage({
     isAdmin: session?.role === "admin",
     teamMemberId: session?.teamMemberId ?? null,
   };
-  const [conversations, agents, labels, labelAssignments, savedReplies] =
-    await Promise.all([
-      listConversations(200, viewer),
-      listAgents(),
-      listLabels(),
-      getLabelAssignments(),
-      listSavedReplies(),
-    ]);
+  const [
+    conversations,
+    agents,
+    labels,
+    labelAssignments,
+    savedReplies,
+    rosterPhones,
+  ] = await Promise.all([
+    listConversations(200, viewer),
+    listAgents(),
+    listLabels(),
+    getLabelAssignments(),
+    listSavedReplies(),
+    listRosterContactPhones(),
+  ]);
   const myTeamMemberId = session?.teamMemberId ?? null;
 
   // A customer who booked but hasn't messaged lately falls off the end of the
@@ -55,6 +64,7 @@ export default async function InboxPage({
       labels={labels}
       labelAssignments={labelAssignments}
       savedReplies={savedReplies}
+      dangerExcludedPhones={rosterPhones.map(normalizePhone).filter(Boolean)}
       initialNow={getRequestTime()}
     />
   );

@@ -324,7 +324,8 @@ export async function sendMediaReply(
   conversationId: string,
   sender: { email: string | null; teamMemberId?: string | null },
   file: { buffer: Buffer; contentType: string; filename: string | null },
-  caption: string
+  caption: string,
+  options: { ptt?: boolean } = {}
 ): Promise<{ messageId: string | null; sent: boolean }> {
   const admin = getAdminSupabaseClient();
   const { data: conv } = await admin
@@ -340,7 +341,9 @@ export async function sendMediaReply(
   }
 
   const base64 = file.buffer.toString("base64");
-  const messageType = messageTypeFromContentType(file.contentType);
+  const messageType = options.ptt
+    ? "voice"
+    : messageTypeFromContentType(file.contentType);
   const slot = await uploadBase64Media({
     restaurantId: KIARA_RESTAURANT_ID,
     conversationId,
@@ -356,7 +359,12 @@ export async function sendMediaReply(
       role: "agent",
       content: caption || "",
       message_type: messageType,
-      metadata: { source: "app", sent_by_email: sender.email, media: [slot] },
+      metadata: {
+        source: "app",
+        sent_by_email: sender.email,
+        media: [slot],
+        ...(options.ptt ? { voice_note: true } : {}),
+      },
       sender_team_member_id: sender.teamMemberId ?? null,
       channel: "whatsapp",
       delivery_status: "queued",
@@ -375,6 +383,7 @@ export async function sendMediaReply(
         contentType: file.contentType,
         filename: file.filename ?? undefined,
         caption: caption || undefined,
+        ptt: options.ptt,
       })
   );
 
