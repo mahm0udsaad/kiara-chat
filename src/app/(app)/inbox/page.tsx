@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { getKiaraSession } from "@/lib/tenant";
 import { listAgents } from "@/lib/interactions";
 import { getConversationById, listConversations } from "@/lib/inbox";
@@ -6,6 +7,9 @@ import { listSavedReplies } from "@/lib/saved-replies";
 import { InboxClient } from "@/components/inbox/inbox-client";
 
 export const dynamic = "force-dynamic";
+
+/** One clock snapshot per server render, serialized into the client boundary. */
+const getRequestTime = cache(() => Date.now());
 
 /**
  * `?c=<id>` opens straight onto a thread — what the المحادثة column on /orders
@@ -47,11 +51,11 @@ export default async function InboxPage({
       initialConversationId={requestedId ?? null}
       agents={agents}
       myTeamMemberId={myTeamMemberId}
-      myEmail={session?.email ?? null}
       isAdmin={session?.role === "admin"}
       labels={labels}
       labelAssignments={labelAssignments}
       savedReplies={savedReplies}
+      initialNow={getRequestTime()}
     />
   );
 }

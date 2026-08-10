@@ -34,7 +34,8 @@ export async function getLabelAssignments(): Promise<Record<string, string[]>> {
   const supabase = await createServerSupabaseClient();
   const { data } = await supabase
     .from("conversation_label_assignments")
-    .select("conversation_id, label_id");
+    .select("conversation_id, label_id, conversations!inner(restaurant_id)")
+    .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID);
   const map: Record<string, string[]> = {};
   for (const row of data ?? []) {
     const cid = row.conversation_id as string;

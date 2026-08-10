@@ -25,12 +25,29 @@ export interface KiaraSession {
   teamMemberId: string | null;
 }
 
-export async function getCurrentUser() {
+/**
+ * Verified identity from the current access token.
+ *
+ * `getClaims()` validates the JWT signature and expiry locally when the
+ * project uses asymmetric signing keys. Unlike `getUser()`, it does not make
+ * an unconditional Auth HTTP request on every page navigation.
+ */
+async function getVerifiedIdentity(): Promise<{
+  userId: string;
+  email: string | null;
+} | null> {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return user;
+  const { data, error } = await supabase.auth.getClaims();
+  if (error) return null;
+
+  const userId = data?.claims?.sub;
+  if (typeof userId !== "string" || !userId) return null;
+
+  const email = data.claims.email;
+  return {
+    userId,
+    email: typeof email === "string" ? email : null,
+  };
 }
 
 /**
@@ -41,10 +58,8 @@ export async function getCurrentUser() {
  */
 export const getKiaraSession = cache(async function getKiaraSession(): Promise<KiaraSession | null> {
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const identity = await getVerifiedIdentity();
+  if (!identity) return null;
 
   // Both lookups run concurrently: the member path is the common case, but
   // testing it first made the owner pay two serial round trips on every request.
@@ -53,14 +68,14 @@ export const getKiaraSession = cache(async function getKiaraSession(): Promise<K
       .from("team_members")
       .select("id, role")
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .eq("user_id", user.id)
+      .eq("user_id", identity.userId)
       .eq("is_active", true)
       .maybeSingle(),
     supabase
       .from("restaurants")
       .select("id")
       .eq("id", KIARA_RESTAURANT_ID)
-      .eq("owner_id", user.id)
+      .eq("owner_id", identity.userId)
       .maybeSingle(),
   ]);
 
@@ -70,18 +85,18 @@ export const getKiaraSession = cache(async function getKiaraSession(): Promise<K
     const role: AgentRole =
       member.role === "admin" || owned ? "admin" : "agent";
     return {
-      userId: user.id,
+      userId: identity.userId,
       role,
-      email: user.email ?? null,
+      email: identity.email,
       teamMemberId: (member.id as string) ?? null,
     };
   }
 
   if (owned) {
     return {
-      userId: user.id,
+      userId: identity.userId,
       role: "admin",
-      email: user.email ?? null,
+      email: identity.email,
       teamMemberId: null,
     };
   }

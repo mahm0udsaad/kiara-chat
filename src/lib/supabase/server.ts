@@ -9,8 +9,8 @@ import { cookies, headers } from "next/headers";
  *  2. `Authorization: Bearer <jwt>` — the Expo mobile app (no cookies).
  *
  * Ported from the parent whatsapp-cs app so the mobile phase reuses the same
- * backend auth contract. The bearer branch wraps `auth.getUser()` so call
- * sites that do `getUser()` with no args validate the token transparently.
+ * backend auth contract. The bearer branch wraps the auth verification
+ * methods so call sites validate the header token transparently.
  *
  * Memoized per request: a single navigation used to build this three times
  * (middleware, layout, page), and each fresh client re-ran a network
@@ -40,6 +40,10 @@ export const createServerSupabaseClient = cache(async function createServerSupab
       const originalGetUser = client.auth.getUser.bind(client.auth);
       client.auth.getUser = ((jwt?: string) =>
         originalGetUser(jwt ?? token)) as typeof client.auth.getUser;
+
+      const originalGetClaims = client.auth.getClaims.bind(client.auth);
+      client.auth.getClaims = ((jwt?: string) =>
+        originalGetClaims(jwt ?? token)) as typeof client.auth.getClaims;
 
       return client;
     }

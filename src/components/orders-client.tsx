@@ -1,7 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { arSA } from "date-fns/locale";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AlertTriangle,
   CalendarCheck2,
@@ -19,7 +26,6 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Calendar } from "@/components/ui/calendar";
 import {
   Card,
   CardAction,
@@ -61,12 +67,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group";
-import { DispatchDialog } from "@/components/dispatch-dialog";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 import { formatDuration, formatRelativeTime, TRIP_TYPE_LABEL } from "@/lib/format";
 import { phoneMatches } from "@/lib/phone";
@@ -80,6 +86,17 @@ import type {
   Specialist,
   TripType,
 } from "@/lib/types";
+
+const ArabicCalendar = lazy(() =>
+  import("@/components/arabic-calendar").then((module) => ({
+    default: module.ArabicCalendar,
+  }))
+);
+const loadDispatchDialog = () =>
+  import("@/components/dispatch-dialog").then((module) => ({
+    default: module.DispatchDialog,
+  }));
+const DispatchDialog = lazy(loadDispatchDialog);
 
 const TZ = "Asia/Riyadh";
 const DAY_FMT = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
@@ -465,21 +482,22 @@ export function OrdersClient({
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <Calendar
-                    mode="single"
-                    selected={dateOfKey(selectedDay)}
-                    onSelect={(date) => {
-                      if (date) setSelectedDay(DAY_KEY_FMT.format(date));
-                    }}
-                    locale={arSA}
-                    modifiers={{ booked: bookedDates, failed: failedDates }}
-                    modifiersClassNames={{
-                      booked: "[&_button]:ring-1 [&_button]:ring-primary/30",
-                      failed: "[&_button]:text-destructive [&_button]:ring-destructive/30",
-                    }}
-                    className="mx-auto w-full [--cell-size:2.75rem]"
-                    captionLayout="dropdown"
-                  />
+                  <Suspense fallback={<Skeleton className="h-80 w-full" />}>
+                    <ArabicCalendar
+                      mode="single"
+                      selected={dateOfKey(selectedDay)}
+                      onSelect={(date) => {
+                        if (date) setSelectedDay(DAY_KEY_FMT.format(date));
+                      }}
+                      modifiers={{ booked: bookedDates, failed: failedDates }}
+                      modifiersClassNames={{
+                        booked: "[&_button]:ring-1 [&_button]:ring-primary/30",
+                        failed: "[&_button]:text-destructive [&_button]:ring-destructive/30",
+                      }}
+                      className="mx-auto w-full [--cell-size:2.75rem]"
+                      captionLayout="dropdown"
+                    />
+                  </Suspense>
                 </CardContent>
               </Card>
 
@@ -668,8 +686,14 @@ function OrderCard({
           {!order.driver_id ? (
             <Button
               onClick={() => setDispatchOpen(true)}
-              onPointerEnter={() => void loadDispatchOptions()}
-              onFocus={() => void loadDispatchOptions()}
+              onPointerEnter={() => {
+                void loadDispatchOptions();
+                void loadDispatchDialog();
+              }}
+              onFocus={() => {
+                void loadDispatchOptions();
+                void loadDispatchDialog();
+              }}
             >
               <Car data-icon="inline-start" />
               طلب سائق
@@ -698,12 +722,16 @@ function OrderCard({
         onOpenChange={setDetailsOpen}
         onUpdated={onUpdated}
       />
-      <DispatchDialog
-        order={order}
-        open={dispatchOpen}
-        onOpenChange={setDispatchOpen}
-        onUpdated={onUpdated}
-      />
+      {dispatchOpen ? (
+        <Suspense fallback={null}>
+          <DispatchDialog
+            order={order}
+            open
+            onOpenChange={setDispatchOpen}
+            onUpdated={onUpdated}
+          />
+        </Suspense>
+      ) : null}
     </li>
   );
 }

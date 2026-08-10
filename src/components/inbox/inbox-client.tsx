@@ -3,6 +3,7 @@
 import {
   Fragment,
   lazy,
+  memo,
   Suspense,
   useCallback,
   useEffect,
@@ -83,6 +84,7 @@ import {
 import {
   SECTION_LABEL,
   SECTION_ORDER,
+  canViewConversation,
   routedToOf,
   sectionOf,
 } from "@/lib/conversation-meta";
@@ -95,7 +97,10 @@ import type { CatalogItem } from "@/lib/catalog";
 import { catalogImageFile } from "./catalog-image";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 import { DaySeparator, MessageBubble } from "./message-bubble";
-import { useInboxRealtime } from "./use-inbox-realtime";
+import {
+  useInboxRealtime,
+  type ConversationRealtimeChange,
+} from "./use-inbox-realtime";
 import { TypingDots, useTyping } from "./use-typing";
 import {
   AttachmentPreview,
@@ -230,28 +235,174 @@ function isHandledOnWhatsApp(c: Conversation): boolean {
   );
 }
 
+const EMPTY_LABEL_IDS: readonly string[] = [];
+
+const ConversationListRow = memo(function ConversationListRow({
+  conversation,
+  selected,
+  typing,
+  unreadCount,
+  bookingCleared,
+  labelIds,
+  labelMap,
+  owner,
+  route,
+  now,
+  onSelect,
+}: {
+  conversation: Conversation;
+  selected: boolean;
+  typing: boolean;
+  unreadCount: number;
+  bookingCleared: boolean;
+  labelIds: readonly string[];
+  labelMap: Record<string, Label>;
+  owner: string | null;
+  route: string | null;
+  now: number;
+  onSelect: (conversation: Conversation) => void;
+}) {
+  const section = sectionOf(conversation);
+  const bookingStage = bookingStageOf(conversation);
+  const handledOnWhatsApp = isHandledOnWhatsApp(conversation);
+  const replyOverdue = replyDelayMinutes(conversation, now) !== null;
+  const conversationLabels = labelIds
+    .map((id) => labelMap[id])
+    .filter((label): label is Label => Boolean(label));
+
+  return (
+    <button
+      onClick={() => onSelect(conversation)}
+      className={cn(
+        "flex w-full flex-col gap-1 border-b px-4 py-3 text-right transition [contain-intrinsic-size:auto_96px] [content-visibility:auto] hover:bg-[var(--brand-soft)]",
+        selected && "bg-[var(--brand-soft)]",
+        handledOnWhatsApp && "border-r-4 border-r-emerald-500"
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-medium text-[var(--foreground)]">
+          {conversation.customer_name || conversation.customer_phone}
+        </span>
+        <span className="shrink-0 text-[10px] text-[var(--subtle)]">
+          {formatRelativeTime(conversation.last_message_at, now)}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        {typing ? (
+          <span className="flex items-center gap-1 truncate text-xs font-medium text-[var(--brand)]">
+            يكتب الآن
+            <TypingDots />
+          </span>
+        ) : (
+          <span dir="ltr" className="truncate text-xs text-muted-foreground">
+            {conversation.customer_phone}
+          </span>
+        )}
+        <div className="flex items-center gap-1">
+          {handledOnWhatsApp ? (
+            <span
+              className="flex size-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-600"
+              title="تمت المعالجة عبر تطبيق واتساب"
+            >
+              <WhatsAppIcon size={12} />
+              <span className="sr-only">تمت المعالجة عبر تطبيق واتساب</span>
+            </span>
+          ) : null}
+          {unreadCount ? (
+            <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+              {unreadCount}
+            </span>
+          ) : null}
+          {bookingRequestOf(conversation) && !bookingCleared ? (
+            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+              🤖 طلب حجز
+            </span>
+          ) : null}
+          {section ? (
+            <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] text-sky-700">
+              {SECTION_LABEL[section]}
+            </span>
+          ) : null}
+          {replyOverdue ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
+              <AlertTriangle aria-hidden="true" />
+              تنتظر ردًا
+            </span>
+          ) : null}
+          <span className="rounded-full bg-[var(--brand-soft)] px-2 py-0.5 text-[10px] text-[var(--brand)]">
+            {conversationStateLabel(conversation)}
+          </span>
+          {bookingStage ? (
+            <Badge variant="secondary">{BOOKING_STAGE_LABEL[bookingStage]}</Badge>
+          ) : null}
+        </div>
+      </div>
+      {conversationLabels.length ? (
+        <div className="flex flex-wrap gap-1">
+          {conversationLabels.map((label) => (
+            <span
+              key={label.id}
+              className={cn(
+                "rounded border px-1.5 py-0.5 text-[9px]",
+                LABEL_CLASSES[label.color]
+              )}
+            >
+              {label.name}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {owner || route ? (
+        <div className="flex flex-wrap items-center gap-1">
+          {owner ? (
+            <span className="flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
+              <UserCheck size={11} aria-hidden="true" />
+              المسؤول: {owner}
+            </span>
+          ) : null}
+          {route ? (
+            <span className="flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+              <Lock size={11} aria-hidden="true" />
+              {route}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+    </button>
+  );
+});
+
 export function InboxClient({
-  conversations,
+  conversations: serverConversations,
   agents,
   myTeamMemberId,
   isAdmin,
   labels: initialLabels,
   labelAssignments: initialAssignments,
   savedReplies,
+  initialNow,
   initialConversationId = null,
 }: {
   conversations: Conversation[];
   agents: AgentInfo[];
   myTeamMemberId: string | null;
-  myEmail: string | null;
   isAdmin: boolean;
   labels: Label[];
   labelAssignments: Record<string, string[]>;
   savedReplies: SavedReply[];
+  /** Server snapshot shared by SSR and hydration; the live timer takes over after mount. */
+  initialNow: number;
   /** `?c=<id>` — the thread /orders sent the reader here to read. */
   initialConversationId?: string | null;
 }) {
   const router = useRouter();
+  const [conversations, setConversations] = useState(serverConversations);
+  const [syncedServerConversations, setSyncedServerConversations] =
+    useState(serverConversations);
+  if (syncedServerConversations !== serverConversations) {
+    setSyncedServerConversations(serverConversations);
+    setConversations(serverConversations);
+  }
   const [selected, setSelected] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -273,7 +424,7 @@ export function InboxClient({
     selectedRef.current = selected;
   }, [selected]);
   const [busy, setBusy] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(initialNow);
   const [draft, setDraft] = useState("");
   const [notes, setNotes] = useState<InternalNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
@@ -303,13 +454,6 @@ export function InboxClient({
       // The visible sheet owns error feedback if the warm-up fails.
     });
   }, []);
-
-  // Warm the infrequently used feature only after the inbox has become usable.
-  // This keeps navigation fast but removes the first-open network waterfall.
-  useEffect(() => {
-    const timer = window.setTimeout(preloadOrderSheet, 1200);
-    return () => window.clearTimeout(timer);
-  }, [preloadOrderSheet]);
 
   // Media
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -559,21 +703,48 @@ export function InboxClient({
   }
 
   // ---- live updates (Supabase Realtime) ----
-  // Conversation-list changes arrive in bursts (message insert + unread bump +
-  // reorder) — coalesce them into one server refresh.
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scheduleListRefresh = useCallback(() => {
-    if (refreshTimer.current) return;
-    refreshTimer.current = setTimeout(() => {
-      refreshTimer.current = null;
-      router.refresh();
-    }, 800);
-  }, [router]);
-  useEffect(
-    () => () => {
-      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+  // Patch exactly one list row. The previous implementation refreshed this
+  // entire route after every burst, repeating auth + five database reads.
+  const onRealtimeConversation = useCallback(
+    (change: ConversationRealtimeChange) => {
+      const rowId = change.new.id ?? change.old.id;
+      if (!rowId) return;
+
+      setConversations((previous) => {
+        if (change.eventType === "DELETE") {
+          return previous.filter((conversation) => conversation.id !== rowId);
+        }
+
+        const current = previous.find((conversation) => conversation.id === rowId);
+        const nextConversation = {
+          ...(current ?? {}),
+          ...change.new,
+        } as Conversation;
+
+        // Realtime is still protected by RLS, and this shared visibility check
+        // also removes a row immediately when an admin routes it elsewhere.
+        if (
+          !canViewConversation(nextConversation, {
+            isAdmin,
+            teamMemberId: myTeamMemberId,
+          })
+        ) {
+          return previous.filter((conversation) => conversation.id !== rowId);
+        }
+
+        const next = [
+          nextConversation,
+          ...previous.filter((conversation) => conversation.id !== rowId),
+        ];
+        next.sort((a, b) =>
+          (b.last_message_at ?? b.started_at).localeCompare(
+            a.last_message_at ?? a.started_at
+          )
+        );
+        return next.slice(0, 200);
+      });
     },
-    []
+    [isAdmin, myTeamMemberId]
   );
 
   // Silently refetch the open thread (through the API — it signs media URLs).
@@ -632,7 +803,7 @@ export function InboxClient({
   useInboxRealtime({
     onNewMessage: onRealtimeMessage,
     onMessageUpdated: onRealtimeMessageUpdated,
-    onConversationsChanged: scheduleListRefresh,
+    onConversationChanged: onRealtimeConversation,
   });
 
   const isTyping = useTyping();
@@ -1146,7 +1317,9 @@ export function InboxClient({
     selected && (isAdmin || (myTeamMemberId && selected.assigned_to === myTeamMemberId))
   );
   const canTake = Boolean(selected && !selected.assigned_to && myTeamMemberId);
-  const selectedReplyDelay = selected ? replyDelayMinutes(selected, now) : null;
+  const selectedReplyOverdue = selected
+    ? replyDelayMinutes(selected, now) !== null
+    : false;
 
   // Feeds the order's location field: a pin or a maps link she shared fills it
   // outright, a typed line is only offered as a suggestion.
@@ -1268,120 +1441,22 @@ export function InboxClient({
           {filtered.length === 0 ? (
             <p className="p-4 text-sm text-muted-foreground">لا توجد نتائج.</p>
           ) : (
-            filtered.map((c) => {
-              const owner = ownerLabel(c);
-              const route = routeLabel(c);
-              const section = sectionOf(c);
-              const bookingStage = bookingStageOf(c);
-              const wa = isHandledOnWhatsApp(c);
-              const delay = replyDelayMinutes(c, now);
-              const cLabels = (assignments[c.id] ?? [])
-                .map((id) => labelMap[id])
-                .filter(Boolean) as Label[];
-              return (
-                <button
-                  key={c.id}
-                  onClick={() => loadMessages(c)}
-                  className={cn(
-                    "flex w-full flex-col gap-1 border-b px-4 py-3 text-right transition hover:bg-[var(--brand-soft)]",
-                    selected?.id === c.id && "bg-[var(--brand-soft)]",
-                    wa && "border-r-4 border-r-emerald-500"
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate font-medium text-[var(--foreground)]">
-                      {c.customer_name || c.customer_phone}
-                    </span>
-                    <span className="shrink-0 text-[10px] text-[var(--subtle)]">
-                      {formatRelativeTime(c.last_message_at)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    {isTyping(c.id) ? (
-                      <span className="flex items-center gap-1 truncate text-xs font-medium text-[var(--brand)]">
-                        يكتب الآن
-                        <TypingDots />
-                      </span>
-                    ) : (
-                      <span dir="ltr" className="truncate text-xs text-muted-foreground">
-                        {c.customer_phone}
-                      </span>
-                    )}
-                    <div className="flex items-center gap-1">
-                      {wa ? (
-                        <span
-                          className="flex size-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-600"
-                          title="تمت المعالجة عبر تطبيق واتساب"
-                        >
-                          <WhatsAppIcon size={12} />
-                          <span className="sr-only">تمت المعالجة عبر تطبيق واتساب</span>
-                        </span>
-                      ) : null}
-                      {unreadOf(c) ? (
-                        <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                          {c.unread_count}
-                        </span>
-                      ) : null}
-                      {bookingRequestOf(c) && !clearedBookings.has(c.id) ? (
-                        <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-                          🤖 طلب حجز
-                        </span>
-                      ) : null}
-                      {section ? (
-                        <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] text-sky-700">
-                          {SECTION_LABEL[section]}
-                        </span>
-                      ) : null}
-                      {delay !== null ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium text-destructive">
-                          <AlertTriangle aria-hidden="true" />
-                          تأخر الرد {delay} د
-                        </span>
-                      ) : null}
-                      <span className="rounded-full bg-[var(--brand-soft)] px-2 py-0.5 text-[10px] text-[var(--brand)]">
-                        {conversationStateLabel(c)}
-                      </span>
-                      {bookingStage ? (
-                        <Badge variant="secondary">
-                          {BOOKING_STAGE_LABEL[bookingStage]}
-                        </Badge>
-                      ) : null}
-                    </div>
-                  </div>
-                  {cLabels.length ? (
-                    <div className="flex flex-wrap gap-1">
-                      {cLabels.map((l) => (
-                        <span
-                          key={l.id}
-                          className={cn(
-                            "rounded border px-1.5 py-0.5 text-[9px]",
-                            LABEL_CLASSES[l.color]
-                          )}
-                        >
-                          {l.name}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                  {owner || route ? (
-                    <div className="flex flex-wrap items-center gap-1">
-                      {owner ? (
-                        <span className="flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
-                          <UserCheck size={11} aria-hidden="true" />
-                          المسؤول: {owner}
-                        </span>
-                      ) : null}
-                      {route ? (
-                        <span className="flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-                          <Lock size={11} aria-hidden="true" />
-                          {route}
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </button>
-              );
-            })
+            filtered.map((conversation) => (
+              <ConversationListRow
+                key={conversation.id}
+                conversation={conversation}
+                selected={selected?.id === conversation.id}
+                typing={isTyping(conversation.id)}
+                unreadCount={unreadOf(conversation)}
+                bookingCleared={clearedBookings.has(conversation.id)}
+                labelIds={assignments[conversation.id] ?? EMPTY_LABEL_IDS}
+                labelMap={labelMap}
+                owner={ownerLabel(conversation)}
+                route={routeLabel(conversation)}
+                now={now}
+                onSelect={loadMessages}
+              />
+            ))
           )}
         </div>
       </aside>
@@ -1503,7 +1578,8 @@ export function InboxClient({
                       selected.customer_phone
                     ) : (
                       `آخر رسالة ${formatRelativeTime(
-                        selected.last_message_at ?? selected.started_at
+                        selected.last_message_at ?? selected.started_at,
+                        now
                       )}`
                     )}
                   </p>
@@ -1565,12 +1641,12 @@ export function InboxClient({
               </div>
             </header>
 
-            {selectedReplyDelay !== null ? (
+            {selectedReplyOverdue ? (
               <Alert variant="destructive" className="rounded-none border-x-0 border-t-0">
                 <AlertTriangle />
                 <AlertTitle>تأخر الرد على العميلة</AlertTitle>
                 <AlertDescription>
-                  آخر رسالة من العميلة تنتظر ردًا منذ {selectedReplyDelay.toLocaleString("ar")} دقيقة.
+                  آخر رسالة من العميلة ما زالت تنتظر ردًا.
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -1951,6 +2027,7 @@ export function InboxClient({
               title="خيارات المحادثة"
               description="حددي مرحلة الحجز، ثم أديري المسؤول والتوجيه والتصنيفات."
               contentClassName="sm:max-w-2xl"
+              mobileBottomSheet
             >
               <div className="flex flex-col gap-5">
                 <FieldSet className="rounded-xl border p-4">
@@ -2146,15 +2223,15 @@ export function InboxClient({
                       <span className="text-xs text-[var(--subtle)]">لا توجد تصنيفات بعد.</span>
                     ) : null}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <input
                       value={newLabelName}
                       onChange={(e) => setNewLabelName(e.target.value)}
                       aria-label="اسم التصنيف الجديد"
                       placeholder="تصنيف جديد…"
-                      className="min-h-10 flex-1 rounded-lg border px-2 text-sm outline-none"
+                      className="min-h-10 w-full min-w-0 flex-1 rounded-lg border px-2 text-sm outline-none"
                     />
-                    <div className="flex gap-1">
+                    <div className="flex justify-center gap-1 sm:justify-start">
                       {NEW_LABEL_COLORS.map((col) => (
                         <button
                           key={col}
@@ -2175,7 +2252,7 @@ export function InboxClient({
                       type="button"
                       onClick={createLabel}
                       disabled={!newLabelName.trim()}
-                      className="flex min-h-10 items-center gap-1 rounded-lg bg-[var(--brand)] px-3 text-xs text-white disabled:opacity-60"
+                      className="flex min-h-10 items-center justify-center gap-1 rounded-lg bg-[var(--brand)] px-3 text-xs text-white disabled:opacity-60"
                     >
                       <Plus size={13} aria-hidden="true" /> إضافة
                     </button>
@@ -2200,7 +2277,7 @@ export function InboxClient({
                       ))}
                     </ul>
                   )}
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <input
                       value={noteDraft}
                       onChange={(e) => setNoteDraft(e.target.value)}
@@ -2212,7 +2289,7 @@ export function InboxClient({
                       }}
                       aria-label="ملاحظة داخلية جديدة"
                       placeholder="أضف ملاحظة داخلية…"
-                      className="min-h-10 flex-1 rounded-lg border px-2 text-sm outline-none"
+                      className="min-h-10 w-full min-w-0 flex-1 rounded-lg border px-2 text-sm outline-none"
                     />
                     <button
                       type="button"

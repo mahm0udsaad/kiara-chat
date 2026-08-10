@@ -1,23 +1,27 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { useTransition } from "react";
+import { signOut } from "@/app/actions/auth";
 import { clearDispatchOptionsCache } from "@/lib/dispatch-options-client";
 
 export function SignOutButton() {
-  const router = useRouter();
-  async function signOut() {
+  const [pending, startTransition] = useTransition();
+
+  function handleSignOut() {
     clearDispatchOptionsCache();
-    await createClient().auth.signOut();
-    router.push("/login");
-    router.refresh();
+    startTransition(() => {
+      void signOut();
+    });
   }
+
   return (
     <button
-      onClick={signOut}
-      className="rounded-md border px-3 py-1 transition hover:bg-[var(--brand-soft)]"
+      type="button"
+      onClick={handleSignOut}
+      disabled={pending}
+      className="rounded-md border px-3 py-1 transition hover:bg-[var(--brand-soft)] disabled:opacity-60"
     >
-      خروج
+      {pending ? "جارٍ الخروج…" : "خروج"}
     </button>
   );
 }

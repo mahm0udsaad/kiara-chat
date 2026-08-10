@@ -5,6 +5,6 @@ import { listAgents } from "@/lib/interactions";
 export async function GET() {
   const session = await getKiaraSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const agents = await listAgents();
+  const agents = await listAgents({ includeEmails: true });
   return NextResponse.json({ agents });
 }

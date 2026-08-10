@@ -299,6 +299,10 @@ export async function createBooking(
 export interface DispatchBookingInput {
   specialistId: string;
   driverId: string;
+  /** Staff-editable WhatsApp body; the signed session link is appended server-side. */
+  driverMessage?: string;
+  /** Rekaz does not carry this dispatch-only choice. */
+  tripType?: TripType;
   /** Optional staff note included in the translated specialist message. */
   specialistNote?: string;
   /**
@@ -354,6 +358,7 @@ export async function dispatchBooking(
   if (order.status === "sent") {
     throw new Error("تم إرسال هذا الطلب بالفعل");
   }
+  const tripType = input.tripType ?? order.trip_type;
 
   type SpecialistContact = {
     id: string;
@@ -391,7 +396,7 @@ export async function dispatchBooking(
       .eq("id", order.conversation_id)
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .maybeSingle(),
-    priceForTrip(order.trip_type),
+    priceForTrip(tripType),
   ]);
   if (!specialist) throw new Error("Specialist not found");
   if (!driver) throw new Error("Driver not found");
@@ -404,6 +409,7 @@ export async function dispatchBooking(
     .update({
       specialist_id: input.specialistId,
       driver_id: input.driverId,
+      trip_type: tripType,
       price,
       status: "pending",
       updated_at: new Date().toISOString(),
@@ -421,12 +427,20 @@ export async function dispatchBooking(
     customerLocation: order.customer_location,
     customerName: (conv.customer_name as string | null) ?? null,
     customerPhone: order.customer_phone,
-    tripType: order.trip_type,
+    tripType,
   };
-  const driverMessage = formatDriverOrderMessage({
-    ...orderDetails,
-    sessionLink: fieldSessionLink("driver", input.driverId),
-  });
+  const driverSessionLink = fieldSessionLink("driver", input.driverId);
+  const driverBody =
+    input.driverMessage?.trim().slice(0, 3000) ||
+    formatDriverOrderMessage(orderDetails);
+  const driverMessage = driverSessionLink
+    ? [
+        driverBody,
+        "",
+        "📲 جلساتك وتأكيد البداية والنهاية:",
+        driverSessionLink,
+      ].join("\n")
+    : driverBody;
   const specialistPhone = (specialist.phone as string | null)?.trim();
   const arabicSpecialistMessage = formatSpecialistOrderMessage({
     ...orderDetails,

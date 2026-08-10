@@ -59,9 +59,12 @@ export function formatDayLabel(iso: string): string {
 }
 
 /** Relative Arabic timestamp (e.g. "قبل ٣ دقائق"). */
-export function formatRelativeTime(iso: string | null | undefined): string {
+export function formatRelativeTime(
+  iso: string | null | undefined,
+  now = Date.now()
+): string {
   if (!iso) return "";
-  const diffSec = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+  const diffSec = Math.round((new Date(iso).getTime() - now) / 1000);
   const abs = Math.abs(diffSec);
   if (abs < 60) return rtf.format(Math.round(diffSec), "second");
   if (abs < 3600) return rtf.format(Math.round(diffSec / 60), "minute");

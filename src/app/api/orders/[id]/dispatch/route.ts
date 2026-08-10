@@ -30,6 +30,8 @@ export async function POST(
   let specialistId: string | undefined;
   let driverId: string | undefined;
   let specialistNote: string | undefined;
+  let driverMessage: string | undefined;
+  let tripType: DispatchBookingInput["tripType"];
   let specialistVoice: DispatchBookingInput["specialistVoice"];
 
   if ((request.headers.get("content-type") ?? "").includes("multipart/form-data")) {
@@ -42,6 +44,12 @@ export async function POST(
     specialistId = (form.get("specialistId") as string | null)?.trim();
     driverId = (form.get("driverId") as string | null)?.trim();
     specialistNote = (form.get("specialistNote") as string | null)?.trim().slice(0, 500);
+    driverMessage = (form.get("driverMessage") as string | null)?.trim().slice(0, 3000);
+    const formTripType = form.get("tripType");
+    tripType =
+      formTripType === "round_trip" || formTripType === "one_way"
+        ? formTripType
+        : undefined;
     const voice = form.get("specialistVoice");
     if (voice instanceof File && voice.size > 0) {
       if (voice.size > MAX_VOICE_BYTES) {
@@ -61,19 +69,21 @@ export async function POST(
     specialistId = (body?.specialistId as string | undefined)?.trim();
     driverId = (body?.driverId as string | undefined)?.trim();
     specialistNote = (body?.specialistNote as string | undefined)?.trim().slice(0, 500);
+    driverMessage = (body?.driverMessage as string | undefined)?.trim().slice(0, 3000);
+    tripType =
+      body?.tripType === "round_trip" || body?.tripType === "one_way"
+        ? body.tripType
+        : undefined;
   }
 
   if (!specialistId) {
     return NextResponse.json({ error: "اختاري الأخصائية" }, { status: 400 });
   }
-  if (!specialistNote && !specialistVoice) {
-    return NextResponse.json(
-      { error: "أضيفي رسالة مكتوبة أو صوتية للأخصائية" },
-      { status: 400 }
-    );
-  }
   if (!driverId) {
     return NextResponse.json({ error: "اختاري السائق" }, { status: 400 });
+  }
+  if (!driverMessage) {
+    return NextResponse.json({ error: "رسالة السائق مطلوبة" }, { status: 400 });
   }
 
   try {
@@ -89,6 +99,8 @@ export async function POST(
       driverId,
       specialistNote: specialistNote || undefined,
       specialistVoice,
+      driverMessage,
+      tripType,
     });
     return NextResponse.json({
       ok: true,

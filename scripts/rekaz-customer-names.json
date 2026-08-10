@@ -1,0 +1,19 @@
+{
+  "_comment": "Rekaz customer directory (platform.rekaz.io/customers) matched against Kiara's conversations on 2026-08-02. Phone is E.164; name is the salon's own label, which usually carries the district ('حصه الفيصلية') where WhatsApp only gives a pushName ('♥️').",
+  "customers": [
+    { "phone": "+966565348171", "name": "مها حي الفهد" },
+    { "phone": "+966551424344", "name": "ليلى الغويلا🍀" },
+    { "phone": "+966568462492", "name": "علا زور وادعه 🌿", "address": "زور وادعه" },
+    { "phone": "+966534145584", "name": "دحضه 🍃" },
+    { "phone": "+966561682451", "name": "أشواق / رجلا💞", "address": "رجلا" },
+    { "phone": "+966552086964", "name": "ثريا الحصين🍃" },
+    { "phone": "+966568298181", "name": "Hanan", "address": "البلد" },
+    { "phone": "+966536489713", "name": "دحضه🍃" },
+    { "phone": "+966556350179", "name": "رند البلدد 🌿" },
+    { "phone": "+966555343053", "name": "نوف", "address": "الامير مشعل" },
+    { "phone": "+966551419454", "name": "رنا:شعاع/ العريسة 🌸" },
+    { "phone": "+966562880323", "name": "حصه الفيصلية🍀" },
+    { "phone": "+966545624442", "name": "منال دحضه🍃🤍" },
+    { "phone": "+966533325813", "name": "Maram" }
+  ]
+}

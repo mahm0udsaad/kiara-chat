@@ -23,6 +23,43 @@ export const RESERVATION_FOLLOW_UP_LABEL: Record<
   cancelled: "العميلة ألغت",
 };
 
+export const MAX_RESERVATION_REMINDER_LENGTH = 3000;
+
+/** Build the default WhatsApp copy that staff can edit before confirming. */
+export function reservationReminderMessage(input: {
+  customerName: unknown;
+  arrivalAt: unknown;
+  services: unknown;
+}): string | null {
+  const customerName = String(input.customerName ?? "").trim().slice(0, 80);
+  const arrival = new Date(String(input.arrivalAt ?? ""));
+  const services = Array.isArray(input.services)
+    ? input.services
+        .map((service) => String(service).trim())
+        .filter(Boolean)
+        .slice(0, 10)
+    : [];
+  if (Number.isNaN(arrival.getTime()) || !services.length) return null;
+
+  const day = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    timeZone: "Asia/Riyadh",
+  }).format(arrival);
+  const time = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Riyadh",
+  }).format(arrival);
+
+  return [
+    `مرحبًا ${customerName || "عميلتنا"}،`,
+    `نذكّرك بموعدك ${day} الساعة ${time} لخدمة ${services.join("، ")}.`,
+    "فضلاً أكدي حضورك، أو أخبرينا الآن إذا رغبتِ بإلغاء الحجز قبل انطلاق السائق.",
+  ].join("\n");
+}
+
 export function isReservationFollowUpStatus(
   value: unknown
 ): value is ReservationFollowUpStatus {

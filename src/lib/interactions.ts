@@ -381,8 +381,16 @@ export async function sendMediaReply(
   return { messageId, sent: false };
 }
 
-/** Active Kiara agents (for the transfer picker), with emails resolved. */
-export async function listAgents(): Promise<AgentInfo[]> {
+/**
+ * Active Kiara agents for routing/ownership pickers.
+ *
+ * Names live on `team_members`, so the Inbox does not need one Auth Admin
+ * request per employee. API consumers that still need email fallbacks can opt
+ * in explicitly.
+ */
+export async function listAgents(
+  options: { includeEmails?: boolean } = {}
+): Promise<AgentInfo[]> {
   const admin = getAdminSupabaseClient();
   const { data } = await admin
     .from("team_members")
@@ -394,11 +402,13 @@ export async function listAgents(): Promise<AgentInfo[]> {
   return Promise.all(
     rows.map(async (a) => {
       let email: string | null = null;
-      try {
-        const u = await admin.auth.admin.getUserById(a.user_id as string);
-        email = u.data.user?.email ?? null;
-      } catch {
-        /* ignore */
+      if (options.includeEmails) {
+        try {
+          const u = await admin.auth.admin.getUserById(a.user_id as string);
+          email = u.data.user?.email ?? null;
+        } catch {
+          /* ignore */
+        }
       }
       const fullName = ((a.full_name as string) || "").trim();
       return {

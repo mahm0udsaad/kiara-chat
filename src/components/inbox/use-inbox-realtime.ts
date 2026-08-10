@@ -2,6 +2,13 @@
 
 import { useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import type { Conversation } from "@/lib/types";
+
+export interface ConversationRealtimeChange {
+  eventType: "INSERT" | "UPDATE" | "DELETE";
+  new: Partial<Conversation>;
+  old: Partial<Conversation>;
+}
 
 /**
  * Live inbox updates via Supabase Realtime (postgres_changes).
@@ -19,30 +26,31 @@ import { createClient } from "@/lib/supabase/client";
  *                          response now (the provider call moved to `after()`),
  *                          so this is how "queued" becomes "sent"/"failed"
  *                          without a refetch.
- * - any conversations change → onConversationsChanged() so the list reorders
- *                          and unread badges update.
+ * - any conversations change → pass the changed row to the inbox so it can
+ *                          patch, reorder, or remove one item without
+ *                          refetching the whole Server Component tree.
  */
 export function useInboxRealtime({
   onNewMessage,
   onMessageUpdated,
-  onConversationsChanged,
+  onConversationChanged,
 }: {
   onNewMessage: (conversationId: string) => void;
   onMessageUpdated: (
     id: string,
     patch: { delivery_status?: string | null; external_message_sid?: string | null }
   ) => void;
-  onConversationsChanged: () => void;
+  onConversationChanged: (change: ConversationRealtimeChange) => void;
 }) {
   // Keep the callbacks in refs so the subscription survives re-renders.
   const onNewMessageRef = useRef(onNewMessage);
   const onMessageUpdatedRef = useRef(onMessageUpdated);
-  const onConversationsChangedRef = useRef(onConversationsChanged);
+  const onConversationChangedRef = useRef(onConversationChanged);
   useEffect(() => {
     onNewMessageRef.current = onNewMessage;
     onMessageUpdatedRef.current = onMessageUpdated;
-    onConversationsChangedRef.current = onConversationsChanged;
-  }, [onNewMessage, onMessageUpdated, onConversationsChanged]);
+    onConversationChangedRef.current = onConversationChanged;
+  }, [onNewMessage, onMessageUpdated, onConversationChanged]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -55,8 +63,8 @@ export function useInboxRealtime({
           const conversationId = (payload.new as { conversation_id?: string })
             .conversation_id;
           if (conversationId) onNewMessageRef.current(conversationId);
-          // A new message also bumps the conversation's ordering/unread state.
-          onConversationsChangedRef.current();
+          // The write path updates the parent conversation immediately after
+          // inserting the message. That UPDATE carries ordering/unread state.
         }
       )
       .on(
@@ -78,7 +86,13 @@ export function useInboxRealtime({
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "conversations" },
-        () => onConversationsChangedRef.current()
+        (payload) => {
+          onConversationChangedRef.current({
+            eventType: payload.eventType,
+            new: payload.new as Partial<Conversation>,
+            old: payload.old as Partial<Conversation>,
+          });
+        }
       )
       .subscribe();
 

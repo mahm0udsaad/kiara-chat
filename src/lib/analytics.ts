@@ -14,6 +14,7 @@
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import type { CsStatus, LabelColor } from "@/lib/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface LabelCount {
   id: string;
@@ -63,33 +64,106 @@ function csStatusOf(metadata: unknown, status: string): CsStatus {
   return status === "resolved" ? "resolved" : "open";
 }
 
+interface MessageStats {
+  total: number;
+  byAgent: Map<string, { count: number; lastReplyAt: string | null }>;
+}
+
+/**
+ * Count message activity in Postgres instead of transferring every message.
+ *
+ * The Data API caps normal row responses (1,000 in this project), which made
+ * the old report both heavy and silently incomplete. Exact HEAD counts are not
+ * row-limited, and only one timestamp row is returned per employee.
+ */
+async function getMessageStats(
+  admin: SupabaseClient,
+  memberIds: string[]
+): Promise<MessageStats> {
+  const messageCountQuery = () =>
+    admin
+      .from("messages")
+      .select("conversations!inner(restaurant_id)", {
+        count: "exact",
+        head: true,
+      })
+      .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
+      .eq("role", "agent");
+
+  const [totalResult, agentResults] = await Promise.all([
+    messageCountQuery(),
+    Promise.all(
+      memberIds.map(async (memberId) => {
+        const [countResult, latestResult] = await Promise.all([
+          messageCountQuery().eq("sender_team_member_id", memberId),
+          admin
+            .from("messages")
+            .select("created_at, conversations!inner(restaurant_id)")
+            .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
+            .eq("role", "agent")
+            .eq("sender_team_member_id", memberId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+        ]);
+        if (countResult.error) throw new Error(countResult.error.message);
+        if (latestResult.error) throw new Error(latestResult.error.message);
+        return [
+          memberId,
+          {
+            count: countResult.count ?? 0,
+            lastReplyAt:
+              (latestResult.data?.created_at as string | undefined) ?? null,
+          },
+        ] as const;
+      })
+    ),
+  ]);
+  if (totalResult.error) throw new Error(totalResult.error.message);
+
+  return {
+    total: totalResult.count ?? 0,
+    byAgent: new Map(agentResults),
+  };
+}
+
 export async function getTeamReport(): Promise<TeamReport> {
   const admin = getAdminSupabaseClient();
 
-  const [membersRes, convRes, labelRes, assignRes, msgRes] = await Promise.all([
+  // Materialize the member query once: message aggregates depend on its ids,
+  // while the other report queries continue in parallel.
+  const membersPromise = Promise.resolve(
     admin
       .from("team_members")
       .select("id, user_id, role, full_name, is_active")
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .order("created_at"),
-    admin
-      .from("conversations")
-      .select("id, assigned_to, status, metadata")
-      .eq("restaurant_id", KIARA_RESTAURANT_ID),
-    admin
-      .from("conversation_labels")
-      .select("id, name, color")
-      .eq("restaurant_id", KIARA_RESTAURANT_ID),
-    admin
-      .from("conversation_label_assignments")
-      .select("conversation_id, label_id, conversations!inner(restaurant_id)")
-      .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID),
-    admin
-      .from("messages")
-      .select("sender_team_member_id, created_at, role, conversations!inner(restaurant_id)")
-      .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
-      .eq("role", "agent"),
-  ]);
+      .order("created_at")
+  );
+  const messageStatsPromise = membersPromise.then((result) => {
+    if (result.error) throw new Error(result.error.message);
+    return getMessageStats(
+      admin,
+      (result.data ?? []).map((member) => member.id as string)
+    );
+  });
+
+  const [membersRes, convRes, labelRes, assignRes, messageStats] =
+    await Promise.all([
+      membersPromise,
+      admin
+        .from("conversations")
+        .select("id, assigned_to, status, metadata")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID),
+      admin
+        .from("conversation_labels")
+        .select("id, name, color")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID),
+      admin
+        .from("conversation_label_assignments")
+        .select("conversation_id, label_id, conversations!inner(restaurant_id)")
+        .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID),
+      messageStatsPromise,
+    ]);
 
   const members = membersRes.data ?? [];
   const conversations = convRes.data ?? [];
@@ -97,10 +171,6 @@ export async function getTeamReport(): Promise<TeamReport> {
   const assignments = (assignRes.data ?? []) as {
     conversation_id: string;
     label_id: string;
-  }[];
-  const messages = (msgRes.data ?? []) as {
-    sender_team_member_id: string | null;
-    created_at: string;
   }[];
 
   const labelById = new Map(labels.map((l) => [l.id, l]));
@@ -133,18 +203,6 @@ export async function getTeamReport(): Promise<TeamReport> {
     }
   }
 
-  const msgCount = new Map<string, number>();
-  const lastReply = new Map<string, string>();
-  let messagesSentTotal = 0;
-  for (const m of messages) {
-    messagesSentTotal += 1;
-    const id = m.sender_team_member_id;
-    if (!id) continue; // sent from the WhatsApp phone app, or before attribution existed
-    msgCount.set(id, (msgCount.get(id) ?? 0) + 1);
-    const prev = lastReply.get(id);
-    if (!prev || m.created_at > prev) lastReply.set(id, m.created_at);
-  }
-
   const totals = {
     conversations: conversations.length,
     unassigned: 0,
@@ -152,7 +210,7 @@ export async function getTeamReport(): Promise<TeamReport> {
     waiting: 0,
     resolved: 0,
     handledOnWhatsApp: 0,
-    messagesSent: messagesSentTotal,
+    messagesSent: messageStats.total,
     complaints: complaintsTotal,
   };
 
@@ -210,9 +268,9 @@ export async function getTeamReport(): Promise<TeamReport> {
         waiting: bucket.waiting,
         resolved: bucket.resolved,
         totalHandled: bucket.running + bucket.waiting + bucket.resolved,
-        messagesSent: msgCount.get(id) ?? 0,
+        messagesSent: messageStats.byAgent.get(id)?.count ?? 0,
         complaints: complaintsByAgent.get(id) ?? 0,
-        lastReplyAt: lastReply.get(id) ?? null,
+        lastReplyAt: messageStats.byAgent.get(id)?.lastReplyAt ?? null,
         labels: agentLabels,
       };
     })

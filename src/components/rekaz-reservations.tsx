@@ -2,7 +2,6 @@
 
 import { Fragment, lazy, Suspense, useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { arSA } from "date-fns/locale";
 import {
   AlertTriangle,
   Bell,
@@ -35,7 +34,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Calendar } from "@/components/ui/calendar";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Card,
   CardContent,
@@ -50,8 +56,17 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -60,24 +75,34 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { CustomerTimelineSheet } from "@/components/customer-timeline-sheet";
-import { DispatchDialog } from "@/components/dispatch-dialog";
 import { cn } from "@/lib/utils";
 import { normalizePhone, phoneMatches } from "@/lib/phone";
 import { formatRelativeTime } from "@/lib/format";
 import type { ReservationsSnapshot, RekazReservation } from "@/lib/reservations";
 import {
+  MAX_RESERVATION_REMINDER_LENGTH,
   RESERVATION_FOLLOW_UP_LABEL,
   reservationDayKey,
+  reservationReminderMessage,
   type ReservationFollowUp,
   type ReservationFollowUpMap,
   type ReservationFollowUpStatus,
 } from "@/lib/reservation-follow-up";
-import type { BookingRequest, DriverOrderRow } from "@/lib/types";
+import type { DriverOrderRow } from "@/lib/types";
 
-const CreateOrderSheet = lazy(() =>
-  import("@/components/inbox/create-order-sheet").then((m) => ({
-    default: m.CreateOrderSheet,
+const ArabicCalendar = lazy(() =>
+  import("@/components/arabic-calendar").then((module) => ({
+    default: module.ArabicCalendar,
+  }))
+);
+const DispatchDialog = lazy(() =>
+  import("@/components/dispatch-dialog").then((module) => ({
+    default: module.DispatchDialog,
+  }))
+);
+const CustomerTimelineSheet = lazy(() =>
+  import("@/components/customer-timeline-sheet").then((module) => ({
+    default: module.CustomerTimelineSheet,
   }))
 );
 
@@ -208,8 +233,8 @@ const riyal = (value: number) => `${value.toLocaleString("ar-SA")} ر.س`;
  * Rekaz is the source of truth: every row here comes from the platform, and
  * nothing on this tab writes back to it. The one column Rekaz doesn't have is
  * إجراءات — طلب سائق hangs a driver order off the customer's WhatsApp thread
- * (created on the spot if she never wrote) and opens the same booking sheet the
- * inbox uses, prefilled from her whole visit.
+ * (created on the spot if she never wrote), fills it directly from her Rekaz
+ * visit, and opens one confirmation dialog for the specialist and driver.
  *
  * تحديث من ركاز re-pulls on demand. The tab renders the published snapshot
  * rather than calling Rekaz on load, so the platform being slow costs a button
@@ -240,10 +265,6 @@ export function RekazReservations({
     phone: string;
     name: string;
   } | null>(null);
-  const [dispatchFor, setDispatchFor] = useState<{
-    visit: Visit;
-    conversationId: string;
-  } | null>(null);
   const [dispatchOrder, setDispatchOrder] = useState<{
     order: DriverOrderRow;
     specialistName: string | null;
@@ -251,6 +272,9 @@ export function RekazReservations({
   const [preparing, setPreparing] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [reminding, setReminding] = useState<string | null>(null);
+  const [reminderFor, setReminderFor] = useState<Visit | null>(null);
+  const [reminderMessage, setReminderMessage] = useState("");
+  const [reminderError, setReminderError] = useState<string | null>(null);
   const [followUpBusy, setFollowUpBusy] = useState<string | null>(null);
   const [followUpOverrides, setFollowUpOverrides] = useState<ReservationFollowUpMap>({});
   const [error, setError] = useState<string | null>(null);
@@ -386,7 +410,7 @@ export function RekazReservations({
     []
   );
 
-  /** Open the booking sheet on the customer's thread. */
+  /** Create the dispatch record silently from Rekaz, then choose its recipients. */
   const requestDriver = useCallback(
     async (visit: Visit) => {
       setError(null);
@@ -394,17 +418,58 @@ export function RekazReservations({
         setError("لا يمكن طلب سائق لزيارة ألغتها العميلة");
         return;
       }
+      if (!visit.location) {
+        setError("لا يوجد موقع للعميلة في حجز ركاز. أضيفي الموقع في ركاز ثم حدّثي الحجوزات.");
+        return;
+      }
       setPreparing(visit.key);
       try {
         const conversationId = await resolveConversation(visit);
-        setDispatchFor({ visit, conversationId });
+        const customerLocation = [
+          visit.location.label,
+          `https://maps.google.com/?q=${visit.location.lat},${visit.location.lng}`,
+        ]
+          .filter(Boolean)
+          .join(" — ");
+        const response = await fetch(`/api/conversations/${conversationId}/orders`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            arrivalAt: visit.startAt,
+            customerLocation,
+            durationMinutes: Math.max(
+              1,
+              Math.round(
+                (visit.endAt.getTime() - new Date(visit.startAt).getTime()) / 60_000
+              )
+            ),
+            tripType: "one_way",
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data?.error ?? "تعذّر تجهيز طلب السائق");
+        }
+        const order = data.order as DriverOrderRow;
+        setDispatchOrder({
+          order: {
+            ...order,
+            specialist_name: null,
+            driver_name: null,
+            driver_phone: null,
+            customer_name: visit.customerName,
+            updated_by_name: null,
+          },
+          specialistName: visit.services[0]?.providers[0] ?? null,
+        });
+        router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "تعذّر تجهيز المحادثة");
+        setError(e instanceof Error ? e.message : "تعذّر تجهيز طلب السائق");
       } finally {
         setPreparing(null);
       }
     },
-    [followUps, resolveConversation]
+    [followUps, resolveConversation, router]
   );
 
   /** Jump to the inbox with this customer's thread open. */
@@ -424,24 +489,39 @@ export function RekazReservations({
     [resolveConversation, router]
   );
 
-  /** Ask for attendance/cancellation before the driver leaves. */
+  const openReminder = useCallback((visit: Visit) => {
+    setReminderMessage(
+      reservationReminderMessage({
+        customerName: visit.customerName,
+        arrivalAt: visit.startAt,
+        services: visit.services.map((service) => service.service),
+      }) ?? ""
+    );
+    setReminderError(null);
+    setReminderFor(visit);
+  }, []);
+
+  /** Send the exact reminder text the employee reviewed and edited. */
   const sendReminder = useCallback(
-    async (visit: Visit) => {
+    async (visit: Visit, message: string) => {
       setError(null);
+      setReminderError(null);
+      if (!message.trim()) {
+        setReminderError("اكتبي نص التذكير قبل الإرسال");
+        return;
+      }
       setReminding(visit.key);
       try {
         const conversationId = await resolveConversation(visit);
         const response = await fetch(
           `/api/conversations/${conversationId}/reservation-follow-up`,
           {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               action: "remind",
               dayKey: reservationDayKey(visit.startAt),
-              customerName: visit.customerName,
-              arrivalAt: visit.startAt,
-              services: visit.services.map((service) => service.service),
+              message,
             }),
           }
         );
@@ -451,8 +531,10 @@ export function RekazReservations({
           ...current,
           [visit.key]: data.followUp as ReservationFollowUp,
         }));
+        setReminderFor(null);
+        setReminderMessage("");
       } catch (e) {
-        setError(e instanceof Error ? e.message : "تعذّر إرسال التذكير");
+        setReminderError(e instanceof Error ? e.message : "تعذّر إرسال التذكير");
       } finally {
         setReminding(null);
       }
@@ -557,21 +639,6 @@ export function RekazReservations({
       </Empty>
     );
   }
-
-  const dispatchBooking: BookingRequest | null = dispatchFor
-    ? {
-        status: "pending",
-        summary: dispatchFor.visit.services.map((s) => s.service).join(" + "),
-        service: dispatchFor.visit.services.map((s) => s.service).join(" + "),
-        time: `${DAY_FMT.format(new Date(dispatchFor.visit.startAt))} · ${TIME_FMT.format(
-          new Date(dispatchFor.visit.startAt)
-        )} → ${TIME_FMT.format(dispatchFor.visit.endAt)}`,
-        location: dispatchFor.visit.location
-          ? `${dispatchFor.visit.location.label} — https://maps.google.com/?q=${dispatchFor.visit.location.lat},${dispatchFor.visit.location.lng}`.trim()
-          : "",
-        at: snapshot.syncedAt,
-      }
-    : null;
 
   return (
     <div className="space-y-3">
@@ -738,20 +805,21 @@ export function RekazReservations({
               <CardTitle className="text-base">تقويم الحجوزات</CardTitle>
             </CardHeader>
             <CardContent>
-              <Calendar
-                mode="single"
-                selected={dateOfKey(selectedDay)}
-                onSelect={(date) => {
-                  if (date) setSelectedDay(DAY_KEY_FMT.format(date));
-                }}
-                locale={arSA}
-                modifiers={{ booked: bookedDates }}
-                modifiersClassNames={{
-                  booked: "[&_button]:font-bold [&_button]:ring-1 [&_button]:ring-[var(--brand)]/40",
-                }}
-                className="mx-auto w-full [--cell-size:2.5rem]"
-                captionLayout="dropdown"
-              />
+              <Suspense fallback={<Skeleton className="h-80 w-full" />}>
+                <ArabicCalendar
+                  mode="single"
+                  selected={dateOfKey(selectedDay)}
+                  onSelect={(date) => {
+                    if (date) setSelectedDay(DAY_KEY_FMT.format(date));
+                  }}
+                  modifiers={{ booked: bookedDates }}
+                  modifiersClassNames={{
+                    booked: "[&_button]:font-bold [&_button]:ring-1 [&_button]:ring-[var(--brand)]/40",
+                  }}
+                  className="mx-auto w-full [--cell-size:2.5rem]"
+                  captionLayout="dropdown"
+                />
+              </Suspense>
               <p className="mt-2 text-center text-xs text-muted-foreground">
                 الأيام المميّزة تحتوي حجوزات.
               </p>
@@ -791,7 +859,7 @@ export function RekazReservations({
                       reminding={reminding === visit.key}
                       followUp={followUps[visit.key]}
                       followUpBusy={followUpBusy?.startsWith(`${visit.key}:`) ?? false}
-                      onRemind={() => sendReminder(visit)}
+                      onRemind={() => openReminder(visit)}
                       onConfirm={() => updateFollowUp(visit, "confirmed")}
                       onCancel={() => updateFollowUp(visit, "cancelled")}
                       onReviewDispatch={() => {
@@ -908,7 +976,7 @@ export function RekazReservations({
                             followUp={followUp}
                             reminding={reminding === key}
                             busy={followUpBusy?.startsWith(`${key}:`) ?? false}
-                            onRemind={() => sendReminder(visit)}
+                            onRemind={() => openReminder(visit)}
                             onConfirm={() => updateFollowUp(visit, "confirmed")}
                             onCancel={() => updateFollowUp(visit, "cancelled")}
                             compact
@@ -1121,54 +1189,119 @@ export function RekazReservations({
         </div>
       ) : null}
 
-      {dispatchFor ? (
+      {dispatchOrder ? (
         <Suspense fallback={null}>
-          <CreateOrderSheet
+          <DispatchDialog
+            order={dispatchOrder.order}
             open
-            onClose={() => setDispatchFor(null)}
-            conversationId={dispatchFor.conversationId}
-            booking={dispatchBooking}
-            initialArrival={dispatchFor.visit.startAt}
-            initialDurationMinutes={Math.round(
-              (dispatchFor.visit.endAt.getTime() -
-                new Date(dispatchFor.visit.startAt).getTime()) /
-                60_000
-            )}
-            continueToDispatch
-            onOrderCreated={(order) => {
-              setDispatchOrder({
-                order: { ...order, customer_name: dispatchFor.visit.customerName },
-                specialistName: dispatchFor.visit.services[0]?.providers[0] ?? null,
-              });
+            preferredSpecialistName={dispatchOrder.specialistName}
+            onOpenChange={(open) => {
+              if (!open) setDispatchOrder(null);
+            }}
+            onUpdated={(order) => {
+              setDispatchOrder((current) =>
+                current ? { ...current, order } : current
+              );
               router.refresh();
             }}
           />
         </Suspense>
       ) : null}
 
-      {dispatchOrder ? (
-        <DispatchDialog
-          order={dispatchOrder.order}
-          open
-          preferredSpecialistName={dispatchOrder.specialistName}
-          onOpenChange={(open) => {
-            if (!open) setDispatchOrder(null);
-          }}
-          onUpdated={(order) => {
-            setDispatchOrder((current) =>
-              current ? { ...current, order } : current
-            );
-            router.refresh();
-          }}
-        />
+      {timelineFor ? (
+        <Suspense fallback={null}>
+          <CustomerTimelineSheet
+            phone={timelineFor.phone}
+            name={timelineFor.name}
+            open
+            onClose={() => setTimelineFor(null)}
+          />
+        </Suspense>
       ) : null}
 
-      <CustomerTimelineSheet
-        phone={timelineFor?.phone ?? null}
-        name={timelineFor?.name ?? null}
-        open={Boolean(timelineFor)}
-        onClose={() => setTimelineFor(null)}
-      />
+      <Dialog
+        open={Boolean(reminderFor)}
+        onOpenChange={(open) => {
+          if (!open && !reminding) {
+            setReminderFor(null);
+            setReminderMessage("");
+            setReminderError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {followUps[reminderFor?.key ?? ""]?.reminded_at
+                ? "إعادة إرسال التذكير؟"
+                : "إرسال تذكير للعميلة؟"}
+            </DialogTitle>
+            <DialogDescription>
+              راجعي الرسالة التي ستصل إلى العميلة عبر واتساب قبل الإرسال.
+            </DialogDescription>
+          </DialogHeader>
+          {reminderFor ? (
+            <FieldGroup>
+              <Field data-invalid={Boolean(reminderError)}>
+                <FieldLabel htmlFor={`reminder-message-${reminderFor.key}`}>
+                  نص رسالة واتساب
+                </FieldLabel>
+                <Textarea
+                  id={`reminder-message-${reminderFor.key}`}
+                  value={reminderMessage}
+                  onChange={(event) => {
+                    setReminderMessage(event.target.value);
+                    setReminderError(null);
+                  }}
+                  maxLength={MAX_RESERVATION_REMINDER_LENGTH}
+                  className="min-h-40 leading-7"
+                  aria-invalid={Boolean(reminderError)}
+                  disabled={Boolean(reminding)}
+                />
+                <FieldDescription>
+                  هذه هي الرسالة نفسها التي ستُرسل. يمكنك تعديلها قبل التأكيد. ·{" "}
+                  {reminderMessage.length.toLocaleString("ar-SA")} من{" "}
+                  {MAX_RESERVATION_REMINDER_LENGTH.toLocaleString("ar-SA")}
+                </FieldDescription>
+                {reminderError ? <FieldError>{reminderError}</FieldError> : null}
+              </Field>
+              <p dir="ltr" className="text-start text-xs text-muted-foreground">
+                {reminderFor.customerPhone}
+              </p>
+            </FieldGroup>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setReminderFor(null);
+                setReminderMessage("");
+                setReminderError(null);
+              }}
+              disabled={Boolean(reminding)}
+            >
+              رجوع
+            </Button>
+            <Button
+              type="button"
+              onClick={() =>
+                reminderFor && void sendReminder(reminderFor, reminderMessage)
+              }
+              disabled={
+                !reminderFor || !reminderMessage.trim() || Boolean(reminding)
+              }
+            >
+              {reminding ? (
+                <Loader2 data-icon="inline-start" className="animate-spin" />
+              ) : (
+                <Bell data-icon="inline-start" />
+              )}
+              إرسال التذكير
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
