@@ -12,7 +12,11 @@ import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { Segmented } from "@/components/ui/segmented";
 import { rtlText, spacing, type } from "@/constants/theme";
 import { useBootstrap } from "@/lib/queries";
-import { unregisterInboxNotifications } from "@/lib/notifications";
+import {
+  notificationStateLabel,
+  unregisterInboxNotifications,
+} from "@/lib/notifications";
+import { useNotificationStatus } from "@/providers/notification-provider";
 import { useAuth } from "@/providers/auth-provider";
 import { type AppearancePreference, useTheme } from "@/providers/theme-provider";
 
@@ -34,6 +38,8 @@ export default function AccountScreen() {
   const bootstrap = useBootstrap();
   const { signOut } = useAuth();
   const queryClient = useQueryClient();
+  const notification = useNotificationStatus();
+  const notificationsOn = notification.registration?.state === "registered";
 
   if (bootstrap.isLoading) return <LoadingScreen />;
   if (bootstrap.isError || !bootstrap.data) {
@@ -115,6 +121,40 @@ export default function AccountScreen() {
           ))}
         </View>
       </Card>
+
+      {/* Notifications — a phone that never registered used to look identical
+          to one that did, and simply received nothing. */}
+      <View style={{ gap: spacing.sm }}>
+        <SectionHeader title="الإشعارات" />
+        <Card>
+          <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+            <Badge
+              label={notificationsOn ? "مفعّلة" : "غير مفعّلة"}
+              tone={notificationsOn ? "success" : "warning"}
+              icon={notificationsOn ? "checkmark.circle" : "exclamationmark.triangle"}
+            />
+          </View>
+          <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+            {notification.registration
+              ? notification.registration.state === "failed"
+                ? notification.registration.message
+                : notificationStateLabel[notification.registration.state]
+              : "جارٍ التحقق من حالة الإشعارات…"}
+          </Text>
+          <Text style={{ ...type.footnote, color: colors.textTertiary, ...rtlText }}>
+            تصلك تنبيهات المحادثات الجديدة غير المستلمة، والمحادثات المتأخرة (خطر)، وكل رسالة
+            في محادثاتك.
+          </Text>
+          {notificationsOn ? null : (
+            <PrimaryButton
+              label="تفعيل الإشعارات"
+              variant="tinted"
+              icon="bell"
+              onPress={() => void notification.refresh()}
+            />
+          )}
+        </Card>
+      </View>
 
       {/* Appearance */}
       <View style={{ gap: spacing.sm }}>

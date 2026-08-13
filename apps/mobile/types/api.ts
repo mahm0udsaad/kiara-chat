@@ -35,6 +35,14 @@ export type BootstrapResponse = {
     views: { id: InboxView; label: string }[];
   };
   agents: { id: string; fullName: string | null; email: string | null }[];
+  savedReplies: SavedReply[];
+};
+
+/** A canned reply the team keeps for the questions that repeat. */
+export type SavedReply = {
+  id: string;
+  title: string;
+  body: string;
 };
 
 export type InboxView = "new" | "mine" | "unassigned" | "danger";
@@ -54,13 +62,38 @@ export type ConversationSummary = {
   dangerMinutes: number | null;
 };
 
+/** One stored attachment on a message, as the engine and composer record it. */
+export type MediaSlot = {
+  storage_path: string | null;
+  content_type: string;
+  size_bytes: number | null;
+  original_filename?: string | null;
+  /** "stored" is the only state with bytes behind it. */
+  delivery_status?: "stored" | "too_large" | "failed" | string;
+};
+
 export type ConversationMessage = {
   id: string;
   conversation_id: string;
   role: "customer" | "agent" | "system";
   content: string;
+  /** text | image | audio | voice | video | document | location | … */
   message_type: string;
+  metadata?: { media?: MediaSlot[] } & Record<string, unknown> | null;
+  delivery_status?: string | null;
   created_at: string;
+};
+
+/** A service or package from the spa's price list. */
+export type CatalogItem = {
+  id: string;
+  name: string;
+  description: string;
+  price: number | null;
+  currency: string;
+  category: string;
+  imageUrl: string | null;
+  isAvailable: boolean;
 };
 
 export type ConversationDetail = {

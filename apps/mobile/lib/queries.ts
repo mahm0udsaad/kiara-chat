@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
 
-import { apiRequest } from "@/lib/api";
+import { apiRequest, apiUpload, type UploadFile } from "@/lib/api";
 import type {
   BootstrapResponse,
+  CatalogItem,
   ConversationDetail,
   ConversationSummary,
   ConversationsResponse,
@@ -43,6 +44,8 @@ export const queryKeys = {
   fieldOrders: ["field-orders"] as const,
   fieldOrder: (id: string) => ["field-order", id] as const,
   customerTimeline: (phone: string) => ["customer-timeline", phone] as const,
+  catalog: ["catalog"] as const,
+  mediaUrl: (path: string) => ["media-url", path] as const,
 };
 
 export function useBootstrap(enabled = true) {
@@ -151,6 +154,69 @@ export function useReply(id: string) {
         queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
       ]);
     },
+  });
+}
+
+/**
+ * Send one attachment — a photo, a document, or a voice note.
+ *
+ * `voiceNote` is what turns an audio file into a WhatsApp push-to-talk bubble
+ * rather than a plain audio attachment, so it is set only for something the
+ * microphone just captured.
+ */
+export function useSendMedia(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      file: UploadFile;
+      caption?: string;
+      voiceNote?: boolean;
+    }) =>
+      apiUpload<{
+        conversationId: string;
+        messageId: string | null;
+        deliveryStatus: string;
+      }>(`/conversations/${id}/media`, {
+        file: input.file,
+        ...(input.caption ? { caption: input.caption } : {}),
+        ...(input.voiceNote ? { voiceNote: "true" } : {}),
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
+      ]);
+    },
+  });
+}
+
+/** The services and packages the composer can drop into a reply. */
+export function useCatalog(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.catalog,
+    queryFn: () => apiRequest<{ items: CatalogItem[] }>("/catalog"),
+    enabled,
+    // The price list changes a few times a year, not a few times an hour.
+    staleTime: 30 * 60_000,
+  });
+}
+
+/**
+ * A signed URL for one stored attachment. The signature lasts an hour, so the
+ * cache is held just under that and never refetched in the background — a
+ * thread being re-read should not re-sign every photo in it.
+ */
+export function useMediaUrl(path: string | null) {
+  return useQuery({
+    queryKey: queryKeys.mediaUrl(path ?? ""),
+    queryFn: () =>
+      apiRequest<{ url: string; expiresIn: number }>(
+        `/media?path=${encodeURIComponent(path!)}`,
+      ),
+    enabled: Boolean(path),
+    staleTime: 50 * 60_000,
+    gcTime: 55 * 60_000,
+    retry: 1,
   });
 }
 

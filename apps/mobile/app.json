@@ -55,7 +55,21 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "يستخدم كيارا الميكروفون لتسجيل الملاحظات الصوتية التي ترسلينها للعميلات."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "يستخدم كيارا صورك لإرسالها في المحادثات مع العميلات.",
+          "cameraPermission": "يستخدم كيارا الكاميرا لالتقاط صورة وإرسالها في المحادثة."
+        }
+      ],
+      "expo-document-picker"
     ],
     "experiments": {
       "typedRoutes": true

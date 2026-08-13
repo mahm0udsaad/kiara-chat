@@ -49,12 +49,42 @@ function projectId(): string | undefined {
   );
 }
 
+/**
+ * Why a device is not receiving push, in the words the account screen shows.
+ *
+ * Registration used to return void and every caller swallowed the failure, so
+ * a phone that never registered looked exactly like one that did — and the
+ * team simply got no alerts, with nothing anywhere saying why.
+ */
+export type NotificationRegistration =
+  | { state: "registered" }
+  | { state: "simulator" }
+  | { state: "no_project_id" }
+  | { state: "denied" }
+  | { state: "failed"; message: string };
+
+export const notificationStateLabel: Record<
+  NotificationRegistration["state"],
+  string
+> = {
+  registered: "الإشعارات مفعّلة على هذا الجهاز.",
+  simulator: "الإشعارات لا تعمل على المحاكي — جرّبي على جهاز حقيقي.",
+  no_project_id: "إعداد المشروع ناقص (EAS project id).",
+  denied: "الإشعارات محظورة. فعّليها من إعدادات الجهاز ثم أعيدي المحاولة.",
+  failed: "تعذّر تفعيل الإشعارات.",
+};
+
+type Identity = { expoToken: string; deviceId: string };
+
 async function notificationIdentity(
   requestPermission: boolean,
   keys: { device: string; token: string },
-) {
+): Promise<Identity | NotificationRegistration> {
   const id = projectId();
-  if (!Device.isDevice || !id) return null;
+  // Expo push tokens are only issued to real hardware; a simulator always
+  // fails here, which is the single most common reason for "no alerts".
+  if (!Device.isDevice) return { state: "simulator" };
+  if (!id) return { state: "no_project_id" };
   await ensureAndroidChannel();
   const current = await Notifications.getPermissionsAsync();
   const permission =
@@ -63,22 +93,36 @@ async function notificationIdentity(
       : requestPermission
         ? await Notifications.requestPermissionsAsync()
         : current;
-  if (!permissionGranted(permission)) return null;
+  if (!permissionGranted(permission)) return { state: "denied" };
   const expoToken = (await Notifications.getExpoPushTokenAsync({ projectId: id })).data;
   await SecureStore.setItemAsync(keys.token, expoToken);
   return { expoToken, deviceId: await deviceId(keys.device) };
 }
 
-export async function registerFieldNotifications(): Promise<void> {
+function isIdentity(
+  value: Identity | NotificationRegistration,
+): value is Identity {
+  return "expoToken" in value;
+}
+
+export async function registerFieldNotifications(): Promise<NotificationRegistration> {
   const identity = await notificationIdentity(true, {
     device: FIELD_DEVICE_ID_KEY,
     token: FIELD_REGISTERED_TOKEN_KEY,
   });
-  if (!identity) return;
-  await apiRequest<{ registered: true }>("/field/push-token", {
-    method: "POST",
-    body: JSON.stringify(identity),
-  });
+  if (!isIdentity(identity)) return identity;
+  try {
+    await apiRequest<{ registered: true }>("/field/push-token", {
+      method: "POST",
+      body: JSON.stringify(identity),
+    });
+    return { state: "registered" };
+  } catch (error) {
+    return {
+      state: "failed",
+      message: error instanceof Error ? error.message : "تعذّر تفعيل الإشعارات",
+    };
+  }
 }
 
 export async function unregisterFieldNotifications(): Promise<void> {
@@ -92,17 +136,25 @@ export async function unregisterFieldNotifications(): Promise<void> {
   await SecureStore.deleteItemAsync(FIELD_REGISTERED_TOKEN_KEY);
 }
 
-export async function registerInboxNotifications(): Promise<void> {
+export async function registerInboxNotifications(): Promise<NotificationRegistration> {
   const identity = await notificationIdentity(true, {
     device: INBOX_DEVICE_ID_KEY,
     token: INBOX_REGISTERED_TOKEN_KEY,
   });
-  if (!identity) return;
+  if (!isIdentity(identity)) return identity;
   const platform = process.env.EXPO_OS === "ios" ? "ios" : "android";
-  await apiRequest<{ registered: true }>("/push-token", {
-    method: "POST",
-    body: JSON.stringify({ ...identity, platform }),
-  });
+  try {
+    await apiRequest<{ registered: true }>("/push-token", {
+      method: "POST",
+      body: JSON.stringify({ ...identity, platform }),
+    });
+    return { state: "registered" };
+  } catch (error) {
+    return {
+      state: "failed",
+      message: error instanceof Error ? error.message : "تعذّر تفعيل الإشعارات",
+    };
+  }
 }
 
 export async function unregisterInboxNotifications(): Promise<void> {

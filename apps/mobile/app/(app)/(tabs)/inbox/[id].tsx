@@ -3,13 +3,17 @@ import { useEffect, useMemo, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
-  Pressable,
   Text,
   TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { Composer } from "@/components/inbox/composer";
+import {
+  MEDIA_MESSAGE_TYPES,
+  MediaAttachment,
+} from "@/components/inbox/media-attachment";
 import { PrimaryButton } from "@/components/primary-button";
 import { ReminderConfirmationStrip } from "@/components/reminder-confirmation-strip";
 import { TypingIndicator } from "@/components/typing-indicator";
@@ -24,12 +28,10 @@ import {
   formatters,
   relativeDayLabel,
 } from "@/lib/format";
-import { commitFeedback } from "@/lib/haptics";
 import {
   useBootstrap,
   useConversation,
   useMarkConversationRead,
-  useReply,
   useTakeConversation,
   useTakeOverConversation,
   useUpdateReminderConfirmation,
@@ -121,12 +123,17 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
   }
 
   const outbound = message.role === "agent";
-  const isMedia = !message.content;
+  const slots = MEDIA_MESSAGE_TYPES.has(message.message_type)
+    ? (message.metadata?.media ?? [])
+    : [];
+  // A media message with no caption and nothing renderable still needs to say
+  // *something*, otherwise the bubble is an empty box.
+  const placeholder = slots.length === 0 && !message.content;
 
   return (
     <View
       style={{
-        maxWidth: "84%",
+        maxWidth: slots.length ? "88%" : "84%",
         alignSelf: outbound ? "flex-start" : "flex-end",
         paddingHorizontal: spacing.md + 2,
         paddingVertical: spacing.sm + 2,
@@ -141,26 +148,37 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
         borderColor: colors.border,
       }}
     >
-      <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.xs + 2 }}>
-        {isMedia ? (
-          <IconSymbol
-            name="paperplane.fill"
-            color={outbound ? colors.onBrand : colors.textTertiary}
-            size={14}
-          />
-        ) : null}
-        <Text
-          selectable
-          style={{
-            ...type.body,
-            color: outbound ? colors.onBrand : colors.text,
-            fontStyle: isMedia ? "italic" : "normal",
-            ...rtlText,
-          }}
-        >
-          {message.content || "رسالة وسائط"}
-        </Text>
-      </View>
+      {slots.map((slot, index) => (
+        <MediaAttachment
+          key={slot.storage_path ?? `${message.id}-${index}`}
+          slot={slot}
+          messageType={message.message_type}
+          outbound={outbound}
+        />
+      ))}
+
+      {message.content || placeholder ? (
+        <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.xs + 2 }}>
+          {placeholder ? (
+            <IconSymbol
+              name="paperplane.fill"
+              color={outbound ? colors.onBrand : colors.textTertiary}
+              size={14}
+            />
+          ) : null}
+          <Text
+            selectable
+            style={{
+              ...type.body,
+              color: outbound ? colors.onBrand : colors.text,
+              fontStyle: placeholder ? "italic" : "normal",
+              ...rtlText,
+            }}
+          >
+            {message.content || "رسالة وسائط"}
+          </Text>
+        </View>
+      ) : null}
       <Text
         style={{
           ...type.caption,
@@ -192,9 +210,7 @@ export default function ConversationScreen() {
   const { mutate: markRead } = useMarkConversationRead(id);
   const take = useTakeConversation(id);
   const takeover = useTakeOverConversation(id);
-  const reply = useReply(id);
   const reminderConfirmation = useUpdateReminderConfirmation(id);
-  const [draft, setDraft] = useState("");
   const [takeoverReason, setTakeoverReason] = useState("");
 
   const messages = conversation.data?.messages;
@@ -229,14 +245,6 @@ export default function ConversationScreen() {
   const assignedName =
     bootstrap.data?.agents.find((agent) => agent.id === current.assigned_to)
       ?.fullName ?? "موظفة أخرى";
-  const canSend = Boolean(draft.trim()) && !reply.isPending;
-
-  const send = () => {
-    const text = draft.trim();
-    if (!text || reply.isPending) return;
-    commitFeedback();
-    reply.mutate(text, { onSuccess: () => setDraft("") });
-  };
 
   return (
     <KeyboardAvoidingView
@@ -413,53 +421,7 @@ export default function ConversationScreen() {
             )}
           </>
         ) : (
-          <>
-            {reply.error ? <InlineAlert message={reply.error.message} /> : null}
-            <View style={{ flexDirection: "row-reverse", alignItems: "flex-end", gap: spacing.sm }}>
-              <TextInput
-                accessibilityLabel="نص الرد"
-                multiline
-                placeholder="اكتبي الرد…"
-                placeholderTextColor={colors.textTertiary}
-                value={draft}
-                onChangeText={setDraft}
-                style={{
-                  flex: 1,
-                  minHeight: hitSize.comfortable,
-                  maxHeight: 132,
-                  paddingHorizontal: spacing.lg,
-                  paddingVertical: spacing.md,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  borderRadius: radius["2xl"],
-                  borderCurve: "continuous",
-                  backgroundColor: colors.surfaceSunken,
-                  ...type.body,
-                  color: colors.text,
-                  ...rtlText,
-                }}
-              />
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="إرسال الرد"
-                accessibilityState={{ disabled: !canSend, busy: reply.isPending }}
-                disabled={!canSend}
-                onPress={send}
-                style={({ pressed }) => ({
-                  width: hitSize.comfortable,
-                  height: hitSize.comfortable,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderRadius: radius.full,
-                  backgroundColor: colors.brand,
-                  opacity: !canSend ? 0.4 : pressed ? 0.75 : 1,
-                  transform: [{ scale: pressed && canSend ? 0.92 : 1 }],
-                })}
-              >
-                <IconSymbol name="arrow.up" color={colors.onBrand} size={22} />
-              </Pressable>
-            </View>
-          </>
+          <Composer conversationId={id} />
         )}
       </View>
     </KeyboardAvoidingView>

@@ -45,7 +45,19 @@ export type IconName =
   | "info.circle"
   | "arrow.triangle.2.circlepath"
   | "figure.walk"
-  | "banknote";
+  | "banknote"
+  | "plus"
+  | "xmark"
+  | "mic"
+  | "mic.fill"
+  | "camera"
+  | "photo"
+  | "doc"
+  | "doc.text"
+  | "play.fill"
+  | "pause.fill"
+  | "trash"
+  | "waveform";
 
 const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcons>["name"]> = {
   message: "chat-bubble-outline",
@@ -85,6 +97,18 @@ const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcon
   "arrow.triangle.2.circlepath": "sync",
   "figure.walk": "directions-walk",
   banknote: "payments",
+  plus: "add",
+  xmark: "close",
+  mic: "mic-none",
+  "mic.fill": "mic",
+  camera: "photo-camera",
+  photo: "image",
+  doc: "insert-drive-file",
+  "doc.text": "description",
+  "play.fill": "play-arrow",
+  "pause.fill": "pause",
+  trash: "delete-outline",
+  waveform: "graphic-eq",
 };
 
 type Props = {

@@ -9,7 +9,7 @@ import { after, NextRequest, NextResponse } from "next/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { runBotTurn } from "@/lib/bot/reply";
 import { broadcastTyping } from "@/lib/presence";
-import { notifyAssignedInboxMessage } from "@/lib/inbox-notifications";
+import { notifyInboundInboxMessage } from "@/lib/inbox-notifications";
 import {
   findOrCreateConversation,
   findConversationByLid,
@@ -165,10 +165,10 @@ export async function POST(request: NextRequest) {
 
   await bumpConversationActivity(conv.id, { inbound: !event.fromMe });
 
-  // A live inbound assigned/routed to one employee refreshes only that
-  // employee's mobile inbox and sends push only to their registered devices.
+  // A live inbound wakes the employee who owns the chat, or — when nobody has
+  // claimed it yet — the whole team, so it does not sit unanswered.
   if (!event.fromMe && isLive(event.timestamp)) {
-    after(() => notifyAssignedInboxMessage(conversationId));
+    after(() => notifyInboundInboxMessage(conversationId));
   }
 
   // fromMe + new id => sent from the phone app (our sends are deduped above).
