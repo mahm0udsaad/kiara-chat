@@ -1,0 +1,129 @@
+import { Link, Stack } from "expo-router";
+import { Pressable, RefreshControl, FlatList, Text, View } from "react-native";
+
+import { EmptyState, ErrorState, LoadingScreen } from "@/components/screen-state";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { IconSymbol } from "@/components/ui/icon-symbol";
+import { radius, rtlText, spacing, type } from "@/constants/theme";
+import { durationLabel, formatters, relativeDayLabel } from "@/lib/format";
+import { useBootstrap, useFieldOrders } from "@/lib/queries";
+import { useTheme } from "@/providers/theme-provider";
+import type { FieldOrder } from "@/types/api";
+
+function OrderCard({ order }: { order: FieldOrder }) {
+  const { colors } = useTheme();
+  const completed = Boolean(order.progress.completedAt);
+  return (
+    <Link href={{ pathname: "/field/orders/[id]", params: { id: order.id } }} asChild>
+      <Pressable accessibilityRole="button" accessibilityLabel={`فتح طلب ${order.customerName ?? order.customerPhone}`}>
+        {({ pressed }) => (
+          <Card style={{ gap: spacing.md, opacity: pressed ? 0.75 : completed ? 0.7 : 1 }}>
+            <View style={{ flexDirection: "row-reverse", alignItems: "flex-start", gap: spacing.md }}>
+              <View style={{ flex: 1, gap: spacing.xs }}>
+                <Text numberOfLines={1} style={{ ...type.title3, color: colors.text, ...rtlText }}>
+                  {order.customerName || order.customerPhone}
+                </Text>
+                <Text style={{ ...type.calloutStrong, color: colors.brand, ...rtlText }}>
+                  {relativeDayLabel(order.arrivalAt)} · {formatters.time.format(new Date(order.arrivalAt))}
+                </Text>
+              </View>
+              <Badge
+                label={completed ? "مكتمل" : order.canAct ? "بانتظارك" : "قيد التنفيذ"}
+                tone={completed ? "success" : order.canAct ? "warning" : "neutral"}
+                icon={completed ? "checkmark.circle" : order.canAct ? "bell" : "clock"}
+              />
+            </View>
+            <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+              <IconSymbol name="clock" size={15} color={colors.textTertiary} />
+              <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+                {durationLabel(order.durationMinutes)}
+              </Text>
+            </View>
+            <View
+              style={{
+                flexDirection: "row-reverse",
+                alignItems: "center",
+                gap: spacing.sm,
+                padding: spacing.md,
+                borderRadius: radius.md,
+                backgroundColor: order.canAct ? colors.warningSoft : colors.surfaceSunken,
+              }}
+            >
+              <IconSymbol
+                name={order.canAct ? "exclamationmark.circle" : "hourglass"}
+                size={16}
+                color={order.canAct ? colors.onWarningSoft : colors.textTertiary}
+              />
+              <Text
+                numberOfLines={2}
+                style={{
+                  flex: 1,
+                  ...type.footnote,
+                  color: order.canAct ? colors.onWarningSoft : colors.textSecondary,
+                  ...rtlText,
+                }}
+              >
+                {order.nextActionLabel ?? "تم إنهاء الطلب"}
+              </Text>
+              <IconSymbol name="chevron.left" size={15} color={colors.textTertiary} />
+            </View>
+          </Card>
+        )}
+      </Pressable>
+    </Link>
+  );
+}
+
+export default function FieldOrdersScreen() {
+  const { colors } = useTheme();
+  const bootstrap = useBootstrap();
+  const orders = useFieldOrders();
+  const name = bootstrap.data?.session.displayName ?? "";
+  if (orders.isLoading) return <LoadingScreen label="جارٍ تحميل الطلبات…" />;
+  if (orders.isError) {
+    return (
+      <ErrorState
+        title="تعذر تحميل الطلبات"
+        message={orders.error.message}
+        onRetry={() => void orders.refetch()}
+      />
+    );
+  }
+  return (
+    <>
+      <Stack.Screen
+        options={{
+          headerRight: () => (
+            <Link href="/field/account" asChild>
+              <Pressable accessibilityRole="button" accessibilityLabel="الحساب" hitSlop={spacing.md}>
+                <IconSymbol name="person.crop.circle" color={colors.brand} size={24} />
+              </Pressable>
+            </Link>
+          ),
+        }}
+      />
+      <FlatList
+        data={orders.data?.orders ?? []}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => <OrderCard order={item} />}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, flexGrow: 1, paddingBottom: spacing["4xl"] }}
+        ListHeaderComponent={
+          <View style={{ gap: spacing.xs }}>
+            <Text style={{ ...type.title2, color: colors.text, ...rtlText }}>أهلًا {name}</Text>
+            <Text style={{ ...type.callout, color: colors.textSecondary, ...rtlText }}>
+              افتحي الطلب واتّبعي الخطوة الظاهرة فقط.
+            </Text>
+          </View>
+        }
+        ListEmptyComponent={
+          <EmptyState icon="calendar" title="لا توجد طلبات" detail="ستصل الطلبات الجديدة هنا مع إشعار." />
+        }
+        refreshControl={
+          <RefreshControl refreshing={orders.isRefetching} onRefresh={() => void orders.refetch()} tintColor={colors.brand} />
+        }
+      />
+    </>
+  );
+}

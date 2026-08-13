@@ -3,6 +3,7 @@ import Constants from "expo-constants";
 import { Alert, ScrollView, Text, View } from "react-native";
 
 import { PrimaryButton } from "@/components/primary-button";
+import { LegalLinks } from "@/components/legal-links";
 import { ErrorState, LoadingScreen } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -11,12 +12,15 @@ import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { Segmented } from "@/components/ui/segmented";
 import { rtlText, spacing, type } from "@/constants/theme";
 import { useBootstrap } from "@/lib/queries";
+import { unregisterInboxNotifications } from "@/lib/notifications";
 import { useAuth } from "@/providers/auth-provider";
 import { type AppearancePreference, useTheme } from "@/providers/theme-provider";
 
 const roleLabels = {
   admin: "الإدارة",
   agent: "خدمة العملاء",
+  specialist: "أخصائية",
+  driver: "سائق",
 } as const;
 
 const capabilityLabels = {
@@ -52,9 +56,10 @@ export default function AccountScreen() {
       {
         text: "تسجيل الخروج",
         style: "destructive",
-        onPress: () => {
+        onPress: async () => {
+          await unregisterInboxNotifications().catch(() => undefined);
           queryClient.clear();
-          void signOut();
+          await signOut();
         },
       },
     ]);
@@ -151,6 +156,11 @@ export default function AccountScreen() {
             onPress={() => void queryClient.invalidateQueries()}
           />
         </Card>
+      </View>
+
+      <View style={{ gap: spacing.sm }}>
+        <SectionHeader title="القانونية والدعم" />
+        <LegalLinks />
       </View>
 
       <PrimaryButton

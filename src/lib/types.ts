@@ -143,6 +143,18 @@ export interface DriverOrder {
   updated_at?: string | null;
   /** The team member who last edited the order — null for untouched rows. */
   updated_by?: string | null;
+  /** Compare-and-swap version used by every operational mutation. */
+  version: number;
+  /** Separate from transport status so an in-flight dispatch is visible. */
+  dispatch_state: "idle" | "processing" | "sent" | "failed" | "uncertain";
+  active_dispatch_command_id?: string | null;
+  dispatch_started_at?: string | null;
+  /**
+   * The Rekaz reservation this order serves, when it was raised from the
+   * calendar. Null for orders created from a conversation. Merging the two
+   * sides on this id replaces the old phone-plus-day guess.
+   */
+  rekaz_source_id?: string | null;
 }
 
 /**

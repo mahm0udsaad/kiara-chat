@@ -1,0 +1,38 @@
+{
+  "cli": {
+    "version": ">= 21.7.1",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "environment": "development"
+    },
+    "preview": {
+      "distribution": "internal",
+      "environment": "preview",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "environment": "production",
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleTeamId": "U99WN825X0",
+        "ascAppId": "6800355271",
+        "ascApiKeyPath": "/Users/mahmoudmac/.appstoreconnect/private_keys/AuthKey_33XX82KFTX.p8",
+        "ascApiKeyId": "33XX82KFTX",
+        "ascApiKeyIssuerId": "ed84a5c3-e454-40e6-92f1-516a6914af40"
+      }
+    }
+  }
+}

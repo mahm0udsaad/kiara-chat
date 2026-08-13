@@ -7,7 +7,7 @@
 import { after } from "next/server";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import { KIARA_RESTAURANT_ID, type KiaraSession } from "@/lib/tenant";
 import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
 import {
   uploadBase64Media,
@@ -99,6 +99,108 @@ export async function takeConversation(conversationId: string, teamMemberId: str
   });
   if (error) throw new Error(error.message);
   return data;
+}
+
+export class TakeoverError extends Error {
+  constructor(
+    public readonly code:
+      | "TAKEOVER_ADMIN_ONLY"
+      | "TAKEOVER_REASON_REQUIRED"
+      | "TAKEOVER_NOT_NEEDED"
+      | "TAKEOVER_AUDIT_FAILED",
+  ) {
+    super(code);
+    this.name = "TakeoverError";
+  }
+}
+
+const TAKEOVER_REASON_MIN = 3;
+const TAKEOVER_REASON_MAX = 500;
+
+/**
+ * Admin takeover of a conversation another employee holds.
+ *
+ * Replying into someone else's thread used to be an unrecorded admin
+ * privilege: the reply routes simply skipped the assignment check for admins,
+ * so an intervention left no trace beyond the message itself. The operations
+ * plan requires the opposite — an explicit takeover carrying a reason, and an
+ * event that survives whatever happens to the roster afterwards.
+ *
+ * `claim_conversation(p_force => true)` does the reassignment. It is reused
+ * rather than reimplemented because it is SECURITY DEFINER, re-checks
+ * `is_restaurant_admin` in the database (so this is not enforced in TypeScript
+ * alone), and writes the `conversation_claim_events` row the web history
+ * already reads.
+ */
+export async function takeOverConversation(input: {
+  conversationId: string;
+  session: KiaraSession;
+  reason: string;
+}): Promise<{ previousAssignee: string | null }> {
+  const { conversationId, session } = input;
+  const reason = input.reason.trim();
+
+  if (session.role !== "admin" || !session.teamMemberId) {
+    throw new TakeoverError("TAKEOVER_ADMIN_ONLY");
+  }
+  if (
+    reason.length < TAKEOVER_REASON_MIN ||
+    reason.length > TAKEOVER_REASON_MAX
+  ) {
+    throw new TakeoverError("TAKEOVER_REASON_REQUIRED");
+  }
+
+  const admin = getAdminSupabaseClient();
+  const { data: before, error: beforeError } = await admin
+    .from("conversations")
+    .select("id, assigned_to")
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (beforeError) throw new Error(beforeError.message);
+  if (!before) throw new Error("conversation_not_found");
+
+  const previousAssignee = (before.assigned_to as string | null) ?? null;
+  // Taking a thread nobody holds is an ordinary claim, not an override, and
+  // must not be dressed up as one in the audit trail.
+  if (!previousAssignee || previousAssignee === session.teamMemberId) {
+    throw new TakeoverError("TAKEOVER_NOT_NEEDED");
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("claim_conversation", {
+    p_conversation_id: conversationId,
+    p_mode: "human",
+    p_team_member_id: session.teamMemberId,
+    p_force: true,
+    p_assign_to_team_member_id: session.teamMemberId,
+  });
+  if (error) throw new Error(error.message);
+
+  const { error: eventError } = await admin.from("operation_events").insert({
+    restaurant_id: KIARA_RESTAURANT_ID,
+    aggregate_type: "conversation",
+    aggregate_id: conversationId,
+    event_type: "conversation.taken_over",
+    actor_type: "team_member",
+    actor_role: session.role,
+    actor_user_id: session.userId,
+    actor_team_member_id: session.teamMemberId,
+    payload: {
+      reason,
+      previousAssignee,
+    },
+  });
+  if (eventError) {
+    // The reassignment already happened and `conversation_claim_events` holds
+    // a 'reassign' row for it, so the override itself is not lost — but the
+    // reason is, and that is the part the owner report is built on. Surface it
+    // rather than letting a silent partial look like a clean takeover.
+    console.error("[takeover] reassigned but the reason was not recorded", eventError);
+    throw new TakeoverError("TAKEOVER_AUDIT_FAILED");
+  }
+
+  return { previousAssignee };
 }
 
 /** Transfer = force-reassign to another agent (authed, same reason as Take). */

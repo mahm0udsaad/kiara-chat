@@ -134,6 +134,7 @@ function EditForm({
         tripType,
         specialistId,
         driverId,
+        expectedVersion: order.version,
       },
       {
         onSuccess: () => {

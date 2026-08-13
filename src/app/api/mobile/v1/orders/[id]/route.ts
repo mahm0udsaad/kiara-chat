@@ -15,11 +15,13 @@ import {
   getVisibleOrderConversationId,
   orderForMobileSession,
 } from "@/lib/mobile/orders";
+import { OperationalCommandError } from "@/lib/operational-commands";
 import type { TripType } from "@/lib/types";
 
 const TRIP_TYPES: TripType[] = ["one_way", "round_trip"];
 const MIN_DURATION_MINUTES = 5;
 const MAX_DURATION_MINUTES = 8 * 60;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function bodyRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -75,6 +77,23 @@ export async function PATCH(
   }
 
   const patch: OrderPatch = {};
+  const expectedVersion = Number(body.expectedVersion);
+  const idempotencyKey =
+    typeof body.idempotencyKey === "string" ? body.idempotencyKey.trim() : "";
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+    return mobileError(
+      400,
+      "EXPECTED_VERSION_REQUIRED",
+      "expectedVersion must be a positive integer",
+    );
+  }
+  if (!UUID.test(idempotencyKey)) {
+    return mobileError(
+      400,
+      "IDEMPOTENCY_KEY_REQUIRED",
+      "idempotencyKey must be a UUID",
+    );
+  }
 
   if (body.arrivalAt !== undefined) {
     if (typeof body.arrivalAt !== "string") {
@@ -188,12 +207,27 @@ export async function PATCH(
     const order = await updateDriverOrder(
       id,
       patch,
-      auth.session.teamMemberId
+      {
+        expectedVersion,
+        idempotencyKey,
+        actor: {
+          userId: auth.session.userId,
+          teamMemberId: auth.session.teamMemberId,
+          role: auth.session.role,
+        },
+      },
     );
     return mobileData({
       order: orderForMobileSession(order, auth.session),
     });
   } catch (error) {
+    if (error instanceof OperationalCommandError && error.isConflict) {
+      return mobileError(
+        409,
+        error.code,
+        "The order changed while you were editing. Refresh and review the latest details.",
+      );
+    }
     return mobileServerError(
       error,
       "ORDER_UPDATE_FAILED",

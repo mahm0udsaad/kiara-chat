@@ -8,6 +8,7 @@ import { useTheme } from "@/providers/theme-provider";
 type Props = {
   label: string;
   onPress: () => void;
+  testID?: string;
   loading?: boolean;
   disabled?: boolean;
   /** Exactly one filled button per view section. */
@@ -21,6 +22,7 @@ type Props = {
 export function PrimaryButton({
   label,
   onPress,
+  testID,
   loading = false,
   disabled = false,
   variant = "filled",
@@ -55,6 +57,7 @@ export function PrimaryButton({
 
   return (
     <Pressable
+      testID={testID}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: blocked, busy: loading }}

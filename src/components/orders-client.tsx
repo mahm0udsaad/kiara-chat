@@ -861,6 +861,8 @@ function OrderDetailsSheet({
           tripType,
           specialistId: specialistId || null,
           driverId: driverId || null,
+          expectedVersion: order.version,
+          idempotencyKey: crypto.randomUUID(),
           ...(isAdmin ? { price: price === "" ? null : Number(price) } : {}),
         }),
       });
@@ -883,6 +885,7 @@ function OrderDetailsSheet({
     price,
     isAdmin,
     order.id,
+    order.version,
     onUpdated,
   ]);
 

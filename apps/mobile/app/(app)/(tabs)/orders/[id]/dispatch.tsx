@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, KeyboardAvoidingView, Pressable, ScrollView, Text, View } from "react-native";
+import { KeyboardAvoidingView, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
@@ -17,7 +17,12 @@ import {
   tripTypeLabel,
 } from "@/lib/format";
 import { successFeedback, tapFeedback, warningFeedback } from "@/lib/haptics";
-import { useDispatchOptions, useDispatchOrder, useOrder } from "@/lib/queries";
+import {
+  useDispatchOptions,
+  useDispatchOrder,
+  useDispatchPreview,
+  useOrder,
+} from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 
 const noteMaxLength = 500;
@@ -48,11 +53,17 @@ function DispatchForm({ id }: { id: string }) {
   const order = useOrder(id);
   const options = useDispatchOptions();
   const dispatch = useDispatchOrder(id);
+  const preparePreview = useDispatchPreview(id);
 
   const [specialistId, setSpecialistId] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [validation, setValidation] = useState<string | null>(null);
+  const [driverMessage, setDriverMessage] = useState("");
+  const [specialistMessage, setSpecialistMessage] = useState("");
+  const [specialistLanguage, setSpecialistLanguage] = useState("العربية");
+  const [automaticAdditions, setAutomaticAdditions] = useState<string[]>([]);
+  const [reviewing, setReviewing] = useState(false);
   const initializedAssignments = useRef(false);
 
   useEffect(() => {
@@ -82,33 +93,50 @@ function DispatchForm({ id }: { id: string }) {
   const driverName =
     options.data.drivers.find((person) => person.id === driverId)?.full_name ?? null;
 
-  const confirm = () => {
+  const review = () => {
     if (!specialistId) return setValidation("اختاري الأخصائية.");
     if (!driverId) return setValidation("اختاري السائق.");
     if (!note.trim()) return setValidation("اكتبي رسالة للأخصائية.");
     setValidation(null);
     warningFeedback();
-
-    Alert.alert(
-      "تأكيد الإرسال",
-      `سيتم إرسال تفاصيل الحجز الآن إلى ${specialistName} و${driverName}. لا يمكن التراجع عن الإرسال.`,
-      [
-        { text: "رجوع", style: "cancel" },
-        {
-          text: "تأكيد وإرسال",
-          style: "default",
-          onPress: () =>
-            dispatch.mutate(
-              { specialistId, driverId, specialistNote: note.trim() },
-              {
-                onSuccess: () => {
-                  successFeedback();
-                  router.back();
-                },
-              },
-            ),
+    preparePreview.mutate(
+      {
+        specialistId,
+        driverId,
+        specialistNote: note.trim(),
+        tripType: current.trip_type,
+      },
+      {
+        onSuccess: ({ preview }) => {
+          setDriverMessage(preview.driverMessage);
+          setSpecialistMessage(preview.specialistMessage);
+          setSpecialistLanguage(preview.specialistLanguage);
+          setAutomaticAdditions(preview.automaticAdditions);
+          setReviewing(true);
         },
-      ],
+      },
+    );
+  };
+
+  const send = () => {
+    if (!specialistId || !driverId) return;
+    if (!driverMessage.trim() || !specialistMessage.trim()) {
+      return setValidation("راجعي نص الرسالتين قبل الإرسال.");
+    }
+    dispatch.mutate(
+      {
+        specialistId,
+        driverId,
+        driverMessage: driverMessage.trim(),
+        specialistMessage: specialistMessage.trim(),
+        expectedVersion: current.version,
+      },
+      {
+        onSuccess: () => {
+          successFeedback();
+          router.back();
+        },
+      },
     );
   };
 
@@ -146,81 +174,141 @@ function DispatchForm({ id }: { id: string }) {
           <SummaryLine icon="mappin.and.ellipse" text={current.customer_location} />
         </Card>
 
-        <InlineAlert
-          tone="info"
-          message="تُترجم رسالة الأخصائية تلقائيًا حسب جنسيتها قبل الإرسال."
-        />
+        {!reviewing ? (
+          <>
+            <InlineAlert
+              tone="info"
+              message="سننشئ الرسالة النهائية ونترجمها حسب جنسية الأخصائية، ثم ستراجعين النصين وتعدّلينهما قبل الإرسال."
+            />
 
-        <RosterPicker
-          label="الأخصائية"
-          options={options.data.specialists}
-          value={specialistId}
-          onChange={setSpecialistId}
-          error={validation && !specialistId ? validation : null}
-        />
-        <RosterPicker
-          label="السائق"
-          options={options.data.drivers}
-          value={driverId}
-          onChange={setDriverId}
-          error={validation && specialistId && !driverId ? validation : null}
-        />
+            <RosterPicker
+              label="الأخصائية"
+              options={options.data.specialists}
+              value={specialistId}
+              onChange={setSpecialistId}
+              error={validation && !specialistId ? validation : null}
+            />
+            <RosterPicker
+              label="السائق"
+              options={options.data.drivers}
+              value={driverId}
+              onChange={setDriverId}
+              error={validation && specialistId && !driverId ? validation : null}
+            />
 
-        <View style={{ gap: spacing.sm }}>
-          <TextAreaField
-            label="رسالة الأخصائية"
-            value={note}
-            onChangeText={setNote}
-            maxLength={noteMaxLength}
-            placeholder="مثال: الجلسة تنظيف بشرة، يرجى الوصول قبل الموعد بعشر دقائق…"
-            error={validation && specialistId && driverId && !note.trim() ? validation : null}
-          />
+            <View style={{ gap: spacing.sm }}>
+              <TextAreaField
+                label="تعليمات الأخصائية بالعربية"
+                value={note}
+                onChangeText={setNote}
+                maxLength={noteMaxLength}
+                placeholder="مثال: الجلسة تنظيف بشرة، يرجى الوصول قبل الموعد بعشر دقائق…"
+                error={validation && specialistId && driverId && !note.trim() ? validation : null}
+              />
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: spacing.sm, paddingVertical: spacing.xs }}
-          >
-            {noteTemplates.map((template) => (
-              <Pressable
-                key={template}
-                accessibilityRole="button"
-                accessibilityLabel={`إضافة: ${template}`}
-                onPress={() => {
-                  tapFeedback();
-                  setNote((current) => {
-                    const next = current.trim() ? `${current.trim()} ${template}` : template;
-                    return next.slice(0, noteMaxLength);
-                  });
-                }}
-                style={({ pressed }) => ({
-                  minHeight: hitSize.min,
-                  justifyContent: "center",
-                  paddingHorizontal: spacing.md + 2,
-                  borderRadius: radius.full,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  backgroundColor: pressed ? colors.surfaceSunken : colors.surface,
-                })}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: spacing.sm, paddingVertical: spacing.xs }}
               >
-                <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
-                  {template}
+                {noteTemplates.map((template) => (
+                  <Pressable
+                    key={template}
+                    accessibilityRole="button"
+                    accessibilityLabel={`إضافة: ${template}`}
+                    onPress={() => {
+                      tapFeedback();
+                      setNote((current) => {
+                        const next = current.trim() ? `${current.trim()} ${template}` : template;
+                        return next.slice(0, noteMaxLength);
+                      });
+                    }}
+                    style={({ pressed }) => ({
+                      minHeight: hitSize.min,
+                      justifyContent: "center",
+                      paddingHorizontal: spacing.md + 2,
+                      borderRadius: radius.full,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      backgroundColor: pressed ? colors.surfaceSunken : colors.surface,
+                    })}
+                  >
+                    <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+                      {template}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          </>
+        ) : (
+          <View style={{ gap: spacing.lg }}>
+            <InlineAlert
+              tone="warning"
+              message={`هذه هي الرسائل النهائية إلى ${specialistName} و${driverName}. عدّلي أي نص الآن؛ سيُرسل الظاهر هنا حرفيًا.`}
+            />
+            <TextAreaField
+              label="رسالة السائق النهائية"
+              value={driverMessage}
+              onChangeText={setDriverMessage}
+              maxLength={3_000}
+              minHeight={180}
+            />
+            <TextAreaField
+              label={`رسالة الأخصائية النهائية · ${specialistLanguage}`}
+              value={specialistMessage}
+              onChangeText={setSpecialistMessage}
+              maxLength={3_000}
+              minHeight={220}
+            />
+            <Card>
+              <Text selectable style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>
+                إضافات التطبيق الظاهرة قبل التأكيد
+              </Text>
+              {automaticAdditions.map((addition) => (
+                <Text
+                  selectable
+                  key={addition}
+                  style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}
+                >
+                  {addition}
                 </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
+              ))}
+            </Card>
+          </View>
+        )}
 
+        {preparePreview.error ? <InlineAlert message={preparePreview.error.message} /> : null}
         {dispatch.error ? <InlineAlert message={dispatch.error.message} /> : null}
       </ScrollView>
 
       <ActionBar bottomInset={insets.bottom}>
-        <PrimaryButton
-          label="مراجعة وتأكيد الإرسال"
-          icon="paperplane.fill"
-          loading={dispatch.isPending}
-          onPress={confirm}
-        />
+        {reviewing ? (
+          <>
+            <PrimaryButton
+              label="تأكيد وإرسال الرسالتين"
+              icon="paperplane.fill"
+              loading={dispatch.isPending}
+              onPress={send}
+              testID="dispatch-confirm-send"
+            />
+            <PrimaryButton
+              label="رجوع للتعديل"
+              icon="chevron.right"
+              variant="plain"
+              disabled={dispatch.isPending}
+              onPress={() => setReviewing(false)}
+            />
+          </>
+        ) : (
+          <PrimaryButton
+            label="إنشاء الرسائل ومراجعتها"
+            icon="sparkles"
+            loading={preparePreview.isPending}
+            onPress={review}
+            testID="dispatch-generate-preview"
+          />
+        )}
       </ActionBar>
     </KeyboardAvoidingView>
   );

@@ -174,14 +174,38 @@ async function fetchPage(
   return body.items ?? [];
 }
 
+/** The bounds a fetch actually covered, as real +03:00 instants. */
+export interface RekazFetchWindow {
+  start: string;
+  end: string;
+}
+
+export interface RekazFetchResult {
+  reservations: RekazReservation[];
+  window: RekazFetchWindow;
+}
+
+/** A cancelled booking still exists in Rekaz; it has not disappeared. */
+export const isCancelledReservation = (reservation: RekazReservation): boolean =>
+  reservation.status === "Cancelled";
+
 /**
- * Every reservation in the working window, oldest first.
+ * Every reservation in the working window, oldest first, together with the
+ * window that produced it.
  *
- * Cancelled rows are dropped rather than shown greyed out: the tab groups a
- * customer's services into one visit, and a cancelled service would inflate
- * that visit's total and its time span.
+ * The window travels with the rows because absence only means something
+ * relative to it: this is a ROLLING range, so a reservation from last week is
+ * missing for a wholly innocent reason. A sync that judged absence without the
+ * window would retire the previous day's bookings on every run.
+ *
+ * Cancelled rows are KEPT here. They are a status the delta sync must be able
+ * to record — a cancellation is not a removal — and dropping them at the
+ * adapter is what made a cancelled booking indistinguishable from one deleted
+ * out of Rekaz entirely. Display surfaces filter them instead: the web tab
+ * groups a customer's services into one visit, where a cancelled service would
+ * inflate the visit total and its time span.
  */
-export async function fetchRekazReservations(): Promise<RekazReservation[]> {
+export async function fetchRekazReservations(): Promise<RekazFetchResult> {
   const windowStart = `${riyadhDayKey(-DAYS_BACK)}T00:00:00Z`;
   const windowEnd = `${riyadhDayKey(DAYS_AHEAD)}T23:59:59Z`;
 
@@ -193,7 +217,6 @@ export async function fetchRekazReservations(): Promise<RekazReservation[]> {
     for (const item of items) {
       if (item.date > windowEnd) continue; // further out than we care about
       if (item.date < windowStart) continue;
-      if (item.statusString === "Cancelled") continue;
       collected.push(toReservation(item));
     }
 
@@ -203,7 +226,10 @@ export async function fetchRekazReservations(): Promise<RekazReservation[]> {
     if (items.length < PAGE_SIZE) break;
   }
 
-  return collected.sort((a, b) => a.arrivalAt.localeCompare(b.arrivalAt));
+  return {
+    reservations: collected.sort((a, b) => a.arrivalAt.localeCompare(b.arrivalAt)),
+    window: { start: riyadhIso(windowStart), end: riyadhIso(windowEnd) },
+  };
 }
 
 export interface CustomerRevenue {

@@ -127,6 +127,12 @@ export function DispatchDialog({
   const [tripType, setTripType] = useState<TripType>(order.trip_type);
   const [specialistNote, setSpecialistNote] = useState("");
   const [driverMessage, setDriverMessage] = useState("");
+  const [finalDriverMessage, setFinalDriverMessage] = useState("");
+  const [specialistMessage, setSpecialistMessage] = useState("");
+  const [previewLanguage, setPreviewLanguage] = useState("العربية");
+  const [automaticAdditions, setAutomaticAdditions] = useState<string[]>([]);
+  const [reviewing, setReviewing] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [noteMode, setNoteMode] = useState<NoteMode>("text");
   const [voiceNote, setVoiceNote] = useState<VoiceNote | null>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -164,6 +170,7 @@ export function DispatchDialog({
           initialDriverMessage(order, nextSpecialist?.full_name ?? null, order.trip_type)
         );
         setConfirmed(false);
+        setReviewing(false);
       })
       .catch(() => {
         if (!cancelled) setError("تعذّر تحميل الأخصائيات والسائقين");
@@ -192,6 +199,12 @@ export function DispatchDialog({
     setTripType(order.trip_type);
     setSpecialistNote("");
     setDriverMessage("");
+    setFinalDriverMessage("");
+    setSpecialistMessage("");
+    setPreviewLanguage("العربية");
+    setAutomaticAdditions([]);
+    setReviewing(false);
+    setPreviewing(false);
     setNoteMode("text");
     setVoiceNote((current) => {
       if (current) URL.revokeObjectURL(current.url);
@@ -216,7 +229,9 @@ export function DispatchDialog({
     setError(null);
     if (!specialistId) return setError("اختاري الأخصائية");
     if (!driverId) return setError("اختاري السائق");
-    if (!driverMessage.trim()) return setError(DRIVER_MESSAGE_REQUIRED);
+    if (!finalDriverMessage.trim()) return setError(DRIVER_MESSAGE_REQUIRED);
+    if (!specialistMessage.trim()) return setError("راجعي رسالة الأخصائية النهائية");
+    if (!reviewing) return setError("أنشئي الرسائل النهائية وراجعيها أولًا");
     if (!confirmed) return setError("أكدي مراجعة رسالة السائق قبل الإرسال");
 
     setSubmitting(true);
@@ -229,7 +244,10 @@ export function DispatchDialog({
         form.append("specialistId", specialistId);
         form.append("driverId", driverId);
         form.append("tripType", tripType);
-        form.append("driverMessage", driverMessage.trim());
+        form.append("driverMessage", finalDriverMessage.trim());
+        form.append("specialistMessage", specialistMessage.trim());
+        form.append("expectedVersion", String(order.version));
+        form.append("idempotencyKey", crypto.randomUUID());
         form.append("specialistVoice", voiceFile, voiceFile.name);
         body = form;
       } else {
@@ -239,7 +257,10 @@ export function DispatchDialog({
           driverId,
           tripType,
           specialistNote: noteMode === "text" ? specialistNote : "",
-          driverMessage: driverMessage.trim(),
+          driverMessage: finalDriverMessage.trim(),
+          specialistMessage: specialistMessage.trim(),
+          expectedVersion: order.version,
+          idempotencyKey: crypto.randomUUID(),
         });
       }
       const response = await fetch(`/api/orders/${order.id}/dispatch`, {
@@ -266,14 +287,63 @@ export function DispatchDialog({
   }, [
     confirmed,
     driverId,
-    driverMessage,
+    finalDriverMessage,
     noteMode,
     onUpdated,
     order.id,
+    order.version,
+    reviewing,
+    specialistMessage,
     specialistId,
     specialistNote,
     tripType,
     voiceNote,
+  ]);
+
+  const review = useCallback(async () => {
+    setError(null);
+    if (!specialistId) return setError("اختاري الأخصائية");
+    if (!driverId) return setError("اختاري السائق");
+    if (!driverMessage.trim()) return setError(DRIVER_MESSAGE_REQUIRED);
+
+    setPreviewing(true);
+    try {
+      const response = await fetch(`/api/orders/${order.id}/dispatch/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          specialistId,
+          driverId,
+          tripType,
+          specialistNote: noteMode === "text" ? specialistNote : "",
+          driverMessage: driverMessage.trim(),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(data?.error ?? "تعذّر تجهيز الرسائل النهائية");
+        return;
+      }
+      setFinalDriverMessage(data.preview.driverMessage);
+      setSpecialistMessage(data.preview.specialistMessage);
+      setPreviewLanguage(data.preview.specialistLanguage ?? language);
+      setAutomaticAdditions(data.preview.automaticAdditions ?? []);
+      setConfirmed(false);
+      setReviewing(true);
+    } catch {
+      setError("تعذّر تجهيز الرسائل النهائية");
+    } finally {
+      setPreviewing(false);
+    }
+  }, [
+    driverId,
+    driverMessage,
+    language,
+    noteMode,
+    order.id,
+    specialistId,
+    specialistNote,
+    tripType,
   ]);
 
   return (
@@ -353,6 +423,7 @@ export function DispatchDialog({
                       )
                     );
                     setConfirmed(false);
+                    setReviewing(false);
                   }}
                 >
                   <SelectTrigger
@@ -419,7 +490,11 @@ export function DispatchDialog({
                     <Textarea
                       id={`specialist-message-${order.id}`}
                       value={specialistNote}
-                      onChange={(event) => setSpecialistNote(event.target.value)}
+                      onChange={(event) => {
+                        setSpecialistNote(event.target.value);
+                        setReviewing(false);
+                        setConfirmed(false);
+                      }}
                       maxLength={500}
                       placeholder="تعليمات إضافية فقط…"
                       className="min-h-20"
@@ -455,6 +530,7 @@ export function DispatchDialog({
                       )
                     );
                     setConfirmed(false);
+                    setReviewing(false);
                   }}
                   variant="outline"
                   spacing={1}
@@ -475,7 +551,14 @@ export function DispatchDialog({
 
               <Field data-invalid={!driverId && Boolean(error)}>
                 <FieldLabel htmlFor={`dispatch-driver-${order.id}`}>السائق</FieldLabel>
-                <Select value={driverId} onValueChange={setDriverId}>
+                <Select
+                  value={driverId}
+                  onValueChange={(value) => {
+                    setDriverId(value);
+                    setReviewing(false);
+                    setConfirmed(false);
+                  }}
+                >
                   <SelectTrigger
                     id={`dispatch-driver-${order.id}`}
                     className="min-h-11 w-full"
@@ -505,6 +588,7 @@ export function DispatchDialog({
                   onChange={(event) => {
                     setDriverMessage(event.target.value);
                     setConfirmed(false);
+                    setReviewing(false);
                   }}
                   maxLength={3000}
                   className="min-h-52 leading-7"
@@ -517,27 +601,86 @@ export function DispatchDialog({
                 </FieldDescription>
               </Field>
 
-              <Field
-                orientation="horizontal"
-                data-invalid={!confirmed && Boolean(error)}
-              >
-                <Checkbox
-                  id={`confirm-driver-message-${order.id}`}
-                  checked={confirmed}
-                  onCheckedChange={(checked) => setConfirmed(checked === true)}
-                  aria-invalid={!confirmed && Boolean(error)}
-                />
-                <FieldContent>
-                  <FieldTitle>
-                    <FieldLabel htmlFor={`confirm-driver-message-${order.id}`}>
-                      راجعت الحجز وأؤكد إرسال التفاصيل للسائق
+              {reviewing ? (
+                <>
+                  <Alert>
+                    <MessageSquareText />
+                    <AlertTitle>الرسائل النهائية قبل الإرسال</AlertTitle>
+                    <AlertDescription>
+                      عدّلي النصين هنا. سيرسل النظام النص الظاهر حرفيًا، بما في ذلك
+                      إضافات التطبيق الموضحة أدناه.
+                    </AlertDescription>
+                  </Alert>
+
+                  <Field data-invalid={!finalDriverMessage.trim() && Boolean(error)}>
+                    <FieldLabel htmlFor={`final-driver-message-${order.id}`}>
+                      رسالة السائق النهائية
                     </FieldLabel>
-                  </FieldTitle>
-                  <FieldDescription>
-                    سيُحفظ اختيار الأخصائية والسائق حتى لو تعذّر إرسال واتساب.
-                  </FieldDescription>
-                </FieldContent>
-              </Field>
+                    <Textarea
+                      id={`final-driver-message-${order.id}`}
+                      value={finalDriverMessage}
+                      onChange={(event) => {
+                        setFinalDriverMessage(event.target.value);
+                        setConfirmed(false);
+                      }}
+                      maxLength={3000}
+                      className="min-h-52 leading-7"
+                    />
+                  </Field>
+
+                  <Field data-invalid={!specialistMessage.trim() && Boolean(error)}>
+                    <FieldLabel htmlFor={`final-specialist-message-${order.id}`}>
+                      رسالة الأخصائية النهائية · {previewLanguage}
+                    </FieldLabel>
+                    <Textarea
+                      id={`final-specialist-message-${order.id}`}
+                      value={specialistMessage}
+                      onChange={(event) => {
+                        setSpecialistMessage(event.target.value);
+                        setConfirmed(false);
+                      }}
+                      maxLength={3000}
+                      className="min-h-52 leading-7"
+                    />
+                    <FieldDescription>
+                      الإضافات التلقائية الظاهرة: {automaticAdditions.join(" · ")}
+                    </FieldDescription>
+                  </Field>
+
+                  {noteMode === "voice" && voiceNote ? (
+                    <VoiceNoteRecorder
+                      value={voiceNote}
+                      onChange={setVoiceNote}
+                      disabled={submitting}
+                      description="شغّلي التسجيل وراجعيه؛ سيُرسل بعد رسالة الأخصائية المكتوبة."
+                    />
+                  ) : null}
+                </>
+              ) : null}
+
+              {reviewing ? (
+                <Field
+                  orientation="horizontal"
+                  data-invalid={!confirmed && Boolean(error)}
+                >
+                  <Checkbox
+                    id={`confirm-driver-message-${order.id}`}
+                    checked={confirmed}
+                    onCheckedChange={(checked) => setConfirmed(checked === true)}
+                    aria-invalid={!confirmed && Boolean(error)}
+                  />
+                  <FieldContent>
+                    <FieldTitle>
+                      <FieldLabel htmlFor={`confirm-driver-message-${order.id}`}>
+                        راجعت النص النهائي للسائق والأخصائية
+                      </FieldLabel>
+                    </FieldTitle>
+                    <FieldDescription>
+                      أؤكد إرسال النصين والتسجيل الصوتي كما هي ظاهرة أعلاه.
+                    </FieldDescription>
+                  </FieldContent>
+                </Field>
+              ) : null}
               {error ? <FieldError>{error}</FieldError> : null}
             </FieldGroup>
 
@@ -545,13 +688,22 @@ export function DispatchDialog({
               <Button variant="outline" onClick={() => changeOpen(false)}>
                 إلغاء
               </Button>
-              <Button onClick={send} disabled={submitting || !confirmed}>
-                {submitting ? (
+              <Button
+                onClick={reviewing ? send : review}
+                disabled={submitting || previewing || (reviewing && !confirmed)}
+              >
+                {submitting || previewing ? (
                   <Spinner data-icon="inline-start" />
                 ) : (
                   <Send data-icon="inline-start" />
                 )}
-                {submitting ? "جارٍ الإرسال…" : "تأكيد وإرسال"}
+                {submitting
+                  ? "جارٍ الإرسال…"
+                  : previewing
+                    ? "جارٍ تجهيز الرسائل…"
+                    : reviewing
+                      ? "تأكيد وإرسال"
+                      : "إنشاء الرسائل ومراجعتها"}
               </Button>
             </DialogFooter>
           </>

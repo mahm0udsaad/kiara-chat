@@ -44,7 +44,8 @@ export type IconName =
   | "eye.slash"
   | "info.circle"
   | "arrow.triangle.2.circlepath"
-  | "figure.walk";
+  | "figure.walk"
+  | "banknote";
 
 const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcons>["name"]> = {
   message: "chat-bubble-outline",
@@ -83,6 +84,7 @@ const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcon
   "info.circle": "info-outline",
   "arrow.triangle.2.circlepath": "sync",
   "figure.walk": "directions-walk",
+  banknote: "payments",
 };
 
 type Props = {
@@ -96,6 +98,7 @@ export function IconSymbol({ name, color, size = 20 }: Props) {
     return (
       <Image
         source={`sf:${name}`}
+        alt=""
         tintColor={color}
         style={{ width: size, height: size }}
         // Icons are always paired with a text label or an accessibilityLabel on

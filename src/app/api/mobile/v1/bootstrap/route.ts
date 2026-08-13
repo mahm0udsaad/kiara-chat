@@ -6,9 +6,10 @@ import {
   MOBILE_CONVERSATION_VIEWS,
   MOBILE_DANGER_AFTER_SECONDS,
   toMobileSession,
+  fieldStaffToMobileSession,
 } from "@/lib/mobile/contracts";
 import {
-  authorizeMobileRequest,
+  authorizeAnyMobileRequest,
   mobileData,
   mobileServerError,
 } from "@/lib/mobile/http";
@@ -18,15 +19,32 @@ export const dynamic = "force-dynamic";
 
 const VIEW_LABELS = {
   new: "جديد",
+  mine: "محادثاتي",
   unassigned: "غير مستلمة",
   danger: "خطر",
 } as const;
 
 export async function GET(request: Request) {
-  const auth = await authorizeMobileRequest(request);
+  const auth = await authorizeAnyMobileRequest(request);
   if (auth.response) return auth.response;
 
   try {
+    if ("kind" in auth.session) {
+      return mobileData({
+        apiVersion: MOBILE_API_VERSION,
+        session: fieldStaffToMobileSession(auth.session),
+        capabilities: {
+          canTakeConversations: false,
+          canManageTeam: false,
+          canViewOrderPrices: false,
+        },
+        inbox: { dangerAfterSeconds: MOBILE_DANGER_AFTER_SECONDS, views: [] },
+        bookingStages: [],
+        agents: [],
+        labels: [],
+        savedReplies: [],
+      });
+    }
     const [agents, labels, savedReplies] = await Promise.all([
       listAgents(),
       listLabels(),

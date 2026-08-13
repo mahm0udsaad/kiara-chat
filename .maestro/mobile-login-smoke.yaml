@@ -1,0 +1,25 @@
+appId: host.exp.Exponent
+name: Kiara mobile login smoke test
+---
+- launchApp:
+    clearState: false
+- tapOn: "Kiara Operations"
+- extendedWaitUntil:
+    visible: "كيارا"
+    timeout: 30000
+- assertVisible: "كيارا"
+- assertVisible: "رقم الجوال أو البريد الإلكتروني"
+- assertVisible: "كلمة المرور"
+- tapOn:
+    id: "login-identifier-input"
+- eraseText
+- inputText: "invalid-test@kiara.example"
+- tapOn:
+    id: "login-password-input"
+- eraseText
+- inputText: "invalid-test-password"
+- tapOn:
+    id: "login-submit-button"
+- extendedWaitUntil:
+    visible: "تعذر تسجيل الدخول. تحققي من رقم الجوال أو البريد وكلمة المرور."
+    timeout: 15000

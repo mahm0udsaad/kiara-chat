@@ -1,3 +1,4 @@
+import { replyDenialFor } from "@/lib/conversation-reply-access";
 import { getConversationById } from "@/lib/inbox";
 import { sendReply } from "@/lib/interactions";
 import {
@@ -44,19 +45,14 @@ export async function POST(
     if (!conversation) {
       return mobileError(404, "CONVERSATION_NOT_FOUND", "Conversation not found");
     }
-    if (
-      auth.session.role !== "admin" &&
-      conversation.assigned_to !== auth.session.teamMemberId
-    ) {
-      return mobileError(
-        conversation.assigned_to ? 403 : 409,
-        conversation.assigned_to
-          ? "CONVERSATION_ASSIGNED_TO_ANOTHER_EMPLOYEE"
-          : "CONVERSATION_NOT_TAKEN",
-        conversation.assigned_to
-          ? "Only the assigned employee can reply"
-          : "Take the conversation before replying"
-      );
+    // Admins are not exempt. An admin replying into another employee's thread
+    // gets TAKEOVER_REQUIRED and must take it over with a reason first.
+    const denial = replyDenialFor(conversation, {
+      role: auth.session.role,
+      teamMemberId: auth.session.teamMemberId,
+    });
+    if (denial) {
+      return mobileError(denial.status, denial.code, denial.message);
     }
 
     const result = await sendReply(

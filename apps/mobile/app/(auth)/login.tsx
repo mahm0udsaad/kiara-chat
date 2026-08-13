@@ -17,31 +17,33 @@ import { useTheme } from "@/providers/theme-provider";
 export default function LoginScreen() {
   const { colors } = useTheme();
   const { session } = useAuth();
-  const [email, setEmail] = useState("");
+  const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (session) return <Redirect href="/inbox" />;
+  if (session) return <Redirect href="/" />;
 
   const signIn = async () => {
     if (!isSupabaseConfigured) {
       setError("بيانات Supabase غير موجودة. انسخي .env.example إلى .env.");
       return;
     }
-    if (!email.trim() || !password) {
-      setError("أدخلي البريد الإلكتروني وكلمة المرور.");
+    if (!login.trim() || !password) {
+      setError("أدخلي رقم الجوال أو البريد الإلكتروني وكلمة المرور.");
       return;
     }
     setLoading(true);
     setError(null);
-    const result = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+    const identifier = login.trim();
+    const result = await supabase.auth.signInWithPassword(
+      identifier.includes("@")
+        ? { email: identifier.toLowerCase(), password }
+        : { phone: identifier.replace(/[^+\d]/g, ""), password },
+    );
     if (result.error) {
       errorFeedback();
-      setError("تعذر تسجيل الدخول. تحققي من البريد الإلكتروني وكلمة المرور.");
+      setError("تعذر تسجيل الدخول. تحققي من رقم الجوال أو البريد وكلمة المرور.");
     }
     setLoading(false);
   };
@@ -89,18 +91,20 @@ export default function LoginScreen() {
         <Animated.View entering={FadeInDown.delay(120).duration(420)}>
           <Card variant="raised" style={{ gap: spacing.lg, padding: spacing.xl }}>
             <Field
-              label="البريد الإلكتروني"
-              icon="envelope"
+              testID="login-identifier-input"
+              label="رقم الجوال أو البريد الإلكتروني"
+              icon="person.crop.circle"
               autoCapitalize="none"
-              autoComplete="email"
+              autoComplete="username"
               autoCorrect={false}
-              keyboardType="email-address"
+              keyboardType="default"
               returnKeyType="next"
-              placeholder="name@kiara.sa"
-              value={email}
-              onChangeText={setEmail}
+              placeholder="+9665… أو name@kiara.sa"
+              value={login}
+              onChangeText={setLogin}
             />
             <Field
+              testID="login-password-input"
               label="كلمة المرور"
               icon="lock"
               secure
@@ -114,6 +118,7 @@ export default function LoginScreen() {
             />
             {error ? <InlineAlert message={error} /> : null}
             <PrimaryButton
+              testID="login-submit-button"
               label="تسجيل الدخول"
               icon="arrow.up.circle.fill"
               loading={loading}
@@ -129,7 +134,7 @@ export default function LoginScreen() {
             textAlign: "center",
           }}
         >
-          الدخول مخصص لفريق خدمة العملاء والإدارة
+          الدخول لفريق خدمة العملاء والأخصائيات والسائقين
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>

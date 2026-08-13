@@ -5,6 +5,8 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider } from "@/providers/auth-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
+import { NotificationProvider } from "@/providers/notification-provider";
+import { InboxLiveProvider } from "@/providers/inbox-live-provider";
 
 export function AppProviders({ children }: PropsWithChildren) {
   const [queryClient] = useState(
@@ -37,7 +39,11 @@ export function AppProviders({ children }: PropsWithChildren) {
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            <InboxLiveProvider>
+              <NotificationProvider>{children}</NotificationProvider>
+            </InboxLiveProvider>
+          </AuthProvider>
         </ThemeProvider>
       </QueryClientProvider>
     </SafeAreaProvider>

@@ -11,6 +11,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { PrimaryButton } from "@/components/primary-button";
+import { ReminderConfirmationStrip } from "@/components/reminder-confirmation-strip";
+import { TypingIndicator } from "@/components/typing-indicator";
 import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-state";
 import { Badge } from "@/components/ui/badge";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -29,8 +31,11 @@ import {
   useMarkConversationRead,
   useReply,
   useTakeConversation,
+  useTakeOverConversation,
+  useUpdateReminderConfirmation,
 } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
+import { useInboxLive } from "@/providers/inbox-live-provider";
 import type { ConversationMessage } from "@/types/api";
 
 /** A message, or the date chip that introduces the messages below it. */
@@ -174,6 +179,7 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
 
 export default function ConversationScreen() {
   const { colors } = useTheme();
+  const { isTyping } = useInboxLive();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ id: string | string[] }>();
   const id = useMemo(
@@ -185,8 +191,11 @@ export default function ConversationScreen() {
   const bootstrap = useBootstrap();
   const { mutate: markRead } = useMarkConversationRead(id);
   const take = useTakeConversation(id);
+  const takeover = useTakeOverConversation(id);
   const reply = useReply(id);
+  const reminderConfirmation = useUpdateReminderConfirmation(id);
   const [draft, setDraft] = useState("");
+  const [takeoverReason, setTakeoverReason] = useState("");
 
   const messages = conversation.data?.messages;
   const chatItems = useMemo(() => buildChatItems(messages ?? []), [messages]);
@@ -211,6 +220,15 @@ export default function ConversationScreen() {
     bootstrap.data?.session.teamMemberId &&
       current.assigned_to === bootstrap.data.session.teamMemberId,
   );
+  const isAdmin = bootstrap.data?.session.role === "admin";
+  const canUpdateReminder = isAdmin || isAssignedToMe;
+  // Being an admin is not itself permission to reply into someone else's
+  // thread. The server returns TAKEOVER_REQUIRED for that, and the composer
+  // below offers the takeover instead of a text box.
+  const canReply = isAssignedToMe;
+  const assignedName =
+    bootstrap.data?.agents.find((agent) => agent.id === current.assigned_to)
+      ?.fullName ?? "موظفة أخرى";
   const canSend = Boolean(draft.trim()) && !reply.isPending;
 
   const send = () => {
@@ -228,15 +246,17 @@ export default function ConversationScreen() {
     >
       <Stack.Screen options={{ title: current.customer_name || current.customer_phone }} />
 
-      {/* Pinned context strip — status must stay visible while scrolling back. */}
+      {/* Pinned context strip — status must stay visible while scrolling back.
+          Kept to a single line: `nowrap` plus a shrinking phone means a long
+          booking-stage label truncates the number instead of wrapping the whole
+          strip onto a second row and pushing the conversation down. */}
       <View
         style={{
           flexDirection: "row-reverse",
           alignItems: "center",
-          flexWrap: "wrap",
           gap: spacing.sm,
           paddingHorizontal: spacing.lg,
-          paddingVertical: spacing.md,
+          paddingVertical: spacing.sm,
           borderBottomWidth: 1,
           borderBottomColor: colors.border,
           backgroundColor: colors.surface,
@@ -248,16 +268,40 @@ export default function ConversationScreen() {
         ) : null}
         <Text
           selectable
+          numberOfLines={1}
           style={{
+            flexShrink: 1,
             ...type.caption,
             color: colors.textTertiary,
             fontVariant: ["tabular-nums"],
-            ...rtlText,
+            // A phone number is an LTR run; without this the leading "+" is
+            // reordered to the end and the digit groups read backwards.
+            writingDirection: "ltr",
+            textAlign: "left",
           }}
         >
           {current.customer_phone}
         </Text>
       </View>
+
+      {current.reminderConfirmation ? (
+        <ReminderConfirmationStrip
+          reminder={current.reminderConfirmation}
+          canEdit={canUpdateReminder}
+          pendingStatus={
+            reminderConfirmation.isPending
+              ? reminderConfirmation.variables.status
+              : null
+          }
+          error={reminderConfirmation.error?.message ?? null}
+          onChange={(status) =>
+            reminderConfirmation.mutate({
+              dayKey: current.reminderConfirmation!.dayKey,
+              status,
+            })
+          }
+        />
+      ) : null}
 
       <FlatList
         // Inverted so new messages land at the bottom without manual scrolling.
@@ -280,6 +324,25 @@ export default function ConversationScreen() {
         keyboardDismissMode="interactive"
       />
 
+      {isTyping(id) ? (
+        <View
+          style={{
+            alignSelf: "flex-end",
+            marginHorizontal: spacing.lg,
+            marginBottom: spacing.sm,
+            paddingHorizontal: spacing.md,
+            paddingVertical: spacing.sm,
+            borderRadius: radius.lg,
+            borderCurve: "continuous",
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.surface,
+          }}
+        >
+          <TypingIndicator label={false} />
+        </View>
+      ) : null}
+
       <View
         style={{
           gap: spacing.sm,
@@ -291,20 +354,61 @@ export default function ConversationScreen() {
           backgroundColor: colors.surface,
         }}
       >
-        {!isAssignedToMe ? (
+        {!canReply ? (
           <>
             {take.error ? <InlineAlert message={take.error.message} /> : null}
-            {current.assigned_to ? (
-              <InlineAlert
-                tone="warning"
-                message="هذه المحادثة مستلمة من موظف آخر. لا يمكنك الرد عليها الآن."
-              />
-            ) : (
+            {takeover.error ? <InlineAlert message={takeover.error.message} /> : null}
+            {!current.assigned_to ? (
               <PrimaryButton
                 label="استلام المحادثة"
                 icon="checkmark.circle"
                 loading={take.isPending}
                 onPress={() => take.mutate()}
+              />
+            ) : isAdmin ? (
+              // An admin may override a colleague, but not silently: the reason
+              // is required here because it is what the owner report shows
+              // alongside the override.
+              <View style={{ gap: spacing.sm }}>
+                <InlineAlert
+                  tone="warning"
+                  message={`هذه المحادثة مستلمة من ${assignedName}. لاستلامها اكتبي السبب.`}
+                />
+                <TextInput
+                  accessibilityLabel="سبب استلام المحادثة من موظفة أخرى"
+                  placeholder="سبب الاستلام…"
+                  placeholderTextColor={colors.textTertiary}
+                  value={takeoverReason}
+                  onChangeText={setTakeoverReason}
+                  style={{
+                    minHeight: hitSize.comfortable,
+                    paddingHorizontal: spacing.lg,
+                    paddingVertical: spacing.md,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    borderRadius: radius.lg,
+                    backgroundColor: colors.surfaceSunken,
+                    color: colors.text,
+                    ...type.body,
+                    ...rtlText,
+                  }}
+                />
+                <PrimaryButton
+                  label="استلام مع تسجيل السبب"
+                  icon="checkmark.circle"
+                  loading={takeover.isPending}
+                  disabled={takeoverReason.trim().length < 3}
+                  onPress={() =>
+                    takeover.mutate(takeoverReason.trim(), {
+                      onSuccess: () => setTakeoverReason(""),
+                    })
+                  }
+                />
+              </View>
+            ) : (
+              <InlineAlert
+                tone="warning"
+                message="هذه المحادثة مستلمة من موظف آخر. لا يمكنك الرد عليها الآن."
               />
             )}
           </>

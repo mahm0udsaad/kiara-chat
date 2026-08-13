@@ -35,6 +35,13 @@ export default function TabsLayout() {
     );
   }
 
+  if (
+    bootstrap.data?.session.role === "specialist" ||
+    bootstrap.data?.session.role === "driver"
+  ) {
+    return <Redirect href="/field/orders" />;
+  }
+
   if (!bootstrap.data || !customerServiceRoles.has(bootstrap.data.session.role)) {
     return (
       <View style={{ flex: 1, justifyContent: "center", backgroundColor: colors.background }}>

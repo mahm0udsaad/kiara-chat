@@ -6,8 +6,18 @@
  */
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { formatDuration, TRIP_TYPE_LABEL } from "@/lib/format";
-import { fieldSessionLink, fieldSessionStateOf } from "@/lib/field-session";
+import { fieldSessionStateOf } from "@/lib/field-session";
+import { ensureFieldOrderProgress } from "@/lib/field-staff";
+import { notifyFieldOrderAssigned } from "@/lib/field-push";
 import { nationalityOf } from "@/lib/nationalities";
+import { normalizePhone } from "@/lib/phone";
+import {
+  claimOutboxEvent,
+  finishOrderDispatchCommand,
+  prepareOrderDispatchCommand,
+  updateOrderCommand,
+  type OperationsActor,
+} from "@/lib/operational-commands";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { translateMessage } from "@/lib/translate";
@@ -32,12 +42,50 @@ const missingNationality = (err: { message: string } | null) =>
 const NATIONALITY_SCHEMA_ERROR =
   "تحديث الجنسيات غير مطبّق على قاعدة البيانات. تواصلي مع مسؤول النظام ثم أعيدي المحاولة.";
 const DRIVER_COLS = "id, full_name, phone, is_active";
-const ORDER_COLS =
+/**
+ * The columns that existed before the operational command migration. Kept as
+ * the floor of the fallback ladder so a deploy that lands ahead of its
+ * migration degrades instead of blanking the orders screen — which is exactly
+ * what happened: every mobile calendar request died on `driver_orders.version
+ * does not exist`, and the employee saw only "تعذر تحميل البيانات".
+ */
+const ORDER_COLS_LEGACY =
   "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type, price, status, sent_at, created_at, updated_at";
+const ORDER_COLS = `${ORDER_COLS_LEGACY}, version, dispatch_state, active_dispatch_command_id, dispatch_started_at`;
 /** Adds the editor. Falls back to ORDER_COLS until that migration runs. */
 const ORDER_COLS_WITH_EDITOR = `${ORDER_COLS}, updated_by`;
+/** Adds the Rekaz link. Falls back again until 20260811194500 runs. */
+const ORDER_COLS_WITH_REKAZ = `${ORDER_COLS_WITH_EDITOR}, rekaz_source_id`;
 const missingUpdatedBy = (err: { message: string } | null) =>
   Boolean(err?.message.includes("updated_by"));
+const missingRekazLink = (err: { message: string } | null) =>
+  Boolean(err?.message.includes("rekaz_source_id"));
+const missingOperationalColumns = (err: { message: string } | null) =>
+  Boolean(
+    err?.message.includes("version") ||
+      err?.message.includes("dispatch_state") ||
+      err?.message.includes("active_dispatch_command_id") ||
+      err?.message.includes("dispatch_started_at"),
+  );
+
+/**
+ * Fill in what the un-migrated database cannot answer.
+ *
+ * `version` is deliberately 0 rather than 1: every command compares against a
+ * real stored version, so a synthesized value must never look like one an
+ * employee could successfully submit. Reads render; writes still fail loudly
+ * until the migration lands.
+ */
+function withLegacyOperationalDefaults(rows: DriverOrder[]): DriverOrder[] {
+  return rows.map((row) => ({
+    ...row,
+    version: 0,
+    dispatch_state:
+      row.status === "sent" ? "sent" : row.status === "failed" ? "failed" : "idle",
+    active_dispatch_command_id: null,
+    dispatch_started_at: null,
+  }));
+}
 
 // -------------------------------------------------------------- pricing
 
@@ -324,11 +372,120 @@ export async function createBooking(
   return created as DriverOrder;
 }
 
+export class RekazBookingError extends Error {
+  constructor(public readonly code:
+    | "RESERVATION_NOT_FOUND"
+    | "RESERVATION_CANCELLED"
+    | "CONVERSATION_NOT_FOUND"
+    | "ORDER_ALREADY_LINKED"
+    | "REKAZ_LINK_UNAVAILABLE") {
+    super(code);
+    this.name = "RekazBookingError";
+  }
+}
+
+/**
+ * Raise the operational order for a Rekaz visit that has none yet.
+ *
+ * The reservation is read from the normalized `rekaz_reservations` rows rather
+ * than from the client, so arrival time, duration and address are the synced
+ * values and not something a phone could invent. The order carries the Rekaz
+ * source id, which is what later lets the calendar merge the two sides exactly.
+ *
+ * Creation is deliberately separate from dispatch: this only produces the
+ * pending visit. Choosing a specialist and driver still goes through the
+ * dispatch preview, where the employee sees and edits the exact messages.
+ */
+export async function createBookingFromReservation(
+  userId: string,
+  sourceId: string
+): Promise<DriverOrder> {
+  const admin = getAdminSupabaseClient();
+
+  const { data: reservation, error: resErr } = await admin
+    .from("rekaz_reservations")
+    .select("source_id, arrival_at, customer_phone, status, payload, removed_at")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("source_id", sourceId)
+    .maybeSingle();
+  if (resErr) throw new Error(resErr.message);
+  if (!reservation || reservation.removed_at) {
+    throw new RekazBookingError("RESERVATION_NOT_FOUND");
+  }
+  if (reservation.status === "Cancelled") {
+    throw new RekazBookingError("RESERVATION_CANCELLED");
+  }
+
+  const payload = (reservation.payload ?? {}) as {
+    durationMinutes?: number;
+    location?: { label?: string } | null;
+    service?: string;
+  };
+  const phone = String(reservation.customer_phone ?? "");
+
+  // The conversation is the customer's identity in Kiara and the order's
+  // required parent. A Rekaz booking from someone who has never messaged the
+  // salon has nothing to hang off yet, so the employee is told that plainly
+  // rather than having a placeholder thread invented for them.
+  const { data: conversation, error: convErr } = await admin
+    .from("conversations")
+    .select("id, customer_phone")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("customer_phone", normalizePhone(phone))
+    .order("last_message_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (convErr) throw new Error(convErr.message);
+  if (!conversation) throw new RekazBookingError("CONVERSATION_NOT_FOUND");
+
+  const location =
+    payload.location?.label?.trim() || payload.service?.trim() || "—";
+  const durationMinutes =
+    Number.isFinite(payload.durationMinutes) && Number(payload.durationMinutes) > 0
+      ? Math.min(Math.max(Number(payload.durationMinutes), 5), 480)
+      : 60;
+
+  const { data: created, error: insErr } = await admin
+    .from("driver_orders")
+    .insert({
+      restaurant_id: KIARA_RESTAURANT_ID,
+      conversation_id: conversation.id,
+      specialist_id: null,
+      driver_id: null,
+      arrival_at: reservation.arrival_at,
+      customer_location: location,
+      customer_phone: conversation.customer_phone as string,
+      duration_minutes: durationMinutes,
+      trip_type: "one_way",
+      price: null,
+      status: "pending",
+      created_by: userId,
+      rekaz_source_id: sourceId,
+    })
+    .select(ORDER_COLS_WITH_REKAZ)
+    .single();
+
+  if (insErr) {
+    // The partial unique index is the race barrier: two employees tapping
+    // "طلب سائق" on the same visit produce one order, not two.
+    if (insErr.code === "23505") throw new RekazBookingError("ORDER_ALREADY_LINKED");
+    if (missingRekazLink(insErr)) throw new RekazBookingError("REKAZ_LINK_UNAVAILABLE");
+    throw new Error(insErr.message);
+  }
+
+  await clearBookingRequest(conversation.id).catch(() => {});
+  return created as unknown as DriverOrder;
+}
+
 export interface DispatchBookingInput {
   specialistId: string;
   driverId: string;
-  /** Staff-editable WhatsApp body; the signed session link is appended server-side. */
-  driverMessage?: string;
+  /** Exact final WhatsApp bodies confirmed by the employee. */
+  driverMessage: string;
+  specialistMessage: string;
+  expectedVersion: number;
+  idempotencyKey: string;
+  actor: OperationsActor;
   /** Rekaz does not carry this dispatch-only choice. */
   tripType?: TripType;
   /** Optional staff note included in the translated specialist message. */
@@ -343,6 +500,21 @@ export interface DispatchBookingInput {
     contentType: string;
     filename?: string | null;
   };
+}
+
+export interface DispatchPreviewInput {
+  specialistId: string;
+  driverId: string;
+  tripType?: TripType;
+  specialistNote?: string;
+  driverMessage?: string;
+}
+
+export interface DispatchPreview {
+  driverMessage: string;
+  specialistMessage: string;
+  specialistLanguage: string;
+  automaticAdditions: string[];
 }
 
 /** Resolve the conversation before an order mutation so the route can apply
@@ -364,14 +536,24 @@ export async function getOrderConversationId(id: string): Promise<string | null>
  * WhatsApp messages. The specialist receives the booking copy translated to
  * her mother language when configured; the driver receives the dispatch copy.
  */
-export async function dispatchBooking(
+type DispatchContext = {
+  order: DriverOrder;
+  tripType: TripType;
+  price: number | null;
+  specialist: {
+    id: string;
+    full_name: string;
+    phone: string | null;
+    nationality?: string | null;
+  };
+  driver: { id: string; full_name: string; phone: string };
+  customerName: string | null;
+};
+
+async function loadDispatchContext(
   id: string,
-  input: DispatchBookingInput
-): Promise<{
-  order: DriverOrderRow;
-  sent: boolean;
-  specialistSent: boolean | null;
-}> {
+  input: Pick<DispatchPreviewInput, "specialistId" | "driverId" | "tripType">,
+): Promise<DispatchContext> {
   const supabase = await createServerSupabaseClient();
   const { data: saved, error: orderErr } = await supabase
     .from("driver_orders")
@@ -383,7 +565,7 @@ export async function dispatchBooking(
   if (!saved) throw new Error("الطلب غير موجود");
 
   const order = saved as DriverOrder;
-  if (order.status === "sent") {
+  if (order.status === "sent" || order.dispatch_state === "sent") {
     throw new Error("تم إرسال هذا الطلب بالفعل");
   }
   const tripType = input.tripType ?? order.trip_type;
@@ -427,115 +609,187 @@ export async function dispatchBooking(
     priceForTrip(tripType),
   ]);
   if (!specialist) throw new Error("Specialist not found");
-  if (!driver) throw new Error("Driver not found");
+  if (!driver?.phone) throw new Error("Driver not found");
   if (!conv) throw new Error("Conversation not found");
 
-  // Persist the choices before external sends so a transport failure never
-  // loses the dispatch work the employee just completed.
-  const { data: assigned, error: assignErr } = await supabase
-    .from("driver_orders")
-    .update({
-      specialist_id: input.specialistId,
-      driver_id: input.driverId,
-      trip_type: tripType,
-      price,
-      status: "pending",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", order.id)
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .select(ORDER_COLS)
-    .single();
-  if (assignErr) throw new Error(assignErr.message);
-
-  const orderDetails = {
-    specialistName: specialist.full_name as string,
-    arrivalAt: order.arrival_at,
-    durationMinutes: order.duration_minutes,
-    customerLocation: order.customer_location,
-    customerName: (conv.customer_name as string | null) ?? null,
-    customerPhone: order.customer_phone,
+  return {
+    order,
     tripType,
+    price,
+    specialist,
+    driver: driver as { id: string; full_name: string; phone: string },
+    customerName: (conv.customer_name as string | null) ?? null,
   };
-  const driverSessionLink = fieldSessionLink("driver", input.driverId);
+}
+
+const DRIVER_APP_ADDITION =
+  "📲 افتح تطبيق كيارا لتأكيد الرحلة ومتابعة خطوات الطلب.";
+const SPECIALIST_APP_ADDITION =
+  "📲 افتحي تطبيق كيارا لمتابعة خطوات الطلب.";
+
+export async function previewBookingDispatch(
+  id: string,
+  input: DispatchPreviewInput,
+): Promise<DispatchPreview> {
+  const context = await loadDispatchContext(id, input);
+  const orderDetails = {
+    specialistName: context.specialist.full_name,
+    arrivalAt: context.order.arrival_at,
+    durationMinutes: context.order.duration_minutes,
+    customerLocation: context.order.customer_location,
+    customerName: context.customerName,
+    customerPhone: context.order.customer_phone,
+    tripType: context.tripType,
+  };
   const driverBody =
     input.driverMessage?.trim().slice(0, 3000) ||
     formatDriverOrderMessage(orderDetails);
-  const driverMessage = driverSessionLink
-    ? [
-        driverBody,
-        "",
-        "📲 جلساتك وتأكيد البداية والنهاية:",
-        driverSessionLink,
-      ].join("\n")
-    : driverBody;
-  const specialistPhone = (specialist.phone as string | null)?.trim();
-  const arabicSpecialistMessage = formatSpecialistOrderMessage({
-    ...orderDetails,
-    driverName: driver.full_name as string,
-    note: input.specialistNote?.trim() || null,
-    sessionLink: fieldSessionLink("specialist", input.specialistId),
+  const driverMessage = [driverBody, "", DRIVER_APP_ADDITION].join("\n");
+  const arabicSpecialistMessage = [
+    formatSpecialistOrderMessage({
+      ...orderDetails,
+      driverName: context.driver.full_name,
+      note: input.specialistNote?.trim() || null,
+      sessionLink: null,
+    }),
+    "",
+    SPECIALIST_APP_ADDITION,
+  ].join("\n");
+  const nationality = nationalityOf(context.specialist.nationality);
+  const specialistMessage = nationality?.targetLanguage
+    ? (await translateMessage(
+        arabicSpecialistMessage,
+        nationality.targetLanguage,
+      )) || arabicSpecialistMessage
+    : arabicSpecialistMessage;
+
+  return {
+    driverMessage,
+    specialistMessage,
+    specialistLanguage: nationality?.languageLabel ?? "العربية",
+    automaticAdditions: [DRIVER_APP_ADDITION, SPECIALIST_APP_ADDITION],
+  };
+}
+
+async function deliverOutboxText(input: {
+  commandId: string;
+  eventId: string | null;
+}): Promise<{ sent: boolean; error: string | null }> {
+  if (!input.eventId) return { sent: false, error: "OUTBOX_EVENT_MISSING" };
+  const claimed = await claimOutboxEvent({
+    restaurantId: KIARA_RESTAURANT_ID,
+    commandId: input.commandId,
+    eventId: input.eventId,
   });
+  if (!claimed.claimed) {
+    return {
+      sent: claimed.status === "sent",
+      error: claimed.status === "sent" ? null : `OUTBOX_${claimed.status ?? "NOT_CLAIMED"}`,
+    };
+  }
+  if (!isOpenWaConfigured()) {
+    return { sent: false, error: "OPENWA_NOT_CONFIGURED" };
+  }
+  try {
+    await openWaTransport.sendText(
+      claimed.event.payload.recipient,
+      claimed.event.payload.body,
+    );
+    return { sent: true, error: null };
+  } catch (error) {
+    return {
+      sent: false,
+      error: error instanceof Error ? error.message.slice(0, 500) : "OPENWA_SEND_FAILED",
+    };
+  }
+}
 
-  const configured = isOpenWaConfigured();
-  const driverSend = configured
-    ? openWaTransport
-        .sendText(driver.phone as string, driverMessage)
-        .then(() => true)
-        .catch(() => false)
-    : Promise.resolve(false);
+/**
+ * Atomically reserve a dispatch, persist its exact confirmed messages in the
+ * outbox, deliver each claimed event at most once, then close the command.
+ * A process crash after provider acceptance remains `processing` for explicit
+ * review instead of automatically retrying and risking a duplicate message.
+ */
+export async function dispatchBooking(
+  id: string,
+  input: DispatchBookingInput
+): Promise<{
+  order: DriverOrderRow;
+  sent: boolean;
+  specialistSent: boolean | null;
+}> {
+  const context = await loadDispatchContext(id, input);
+  const prepared = await prepareOrderDispatchCommand({
+    restaurantId: KIARA_RESTAURANT_ID,
+    orderId: id,
+    expectedVersion: input.expectedVersion,
+    idempotencyKey: input.idempotencyKey,
+    actor: input.actor,
+    specialistId: input.specialistId,
+    driverId: input.driverId,
+    tripType: context.tripType,
+    price: context.price,
+    driverPhone: context.driver.phone,
+    driverMessage: input.driverMessage.trim(),
+    specialistPhone: context.specialist.phone,
+    specialistMessage: input.specialistMessage.trim(),
+  });
+  const commandId = String(prepared.commandId);
+  const driverOutboxId =
+    typeof prepared.driverOutboxId === "string" ? prepared.driverOutboxId : null;
+  const specialistOutboxId =
+    typeof prepared.specialistOutboxId === "string"
+      ? prepared.specialistOutboxId
+      : null;
 
-  const specialistSend: Promise<boolean | null> =
-    configured && specialistPhone
-      ? (async () => {
-          const target = nationalityOf(
-            (specialist as { nationality?: string | null }).nationality
-          )?.targetLanguage;
-          const translated = target
-            ? await translateMessage(arabicSpecialistMessage, target)
-            : null;
-          const sentText = await openWaTransport
-            .sendText(specialistPhone, translated ?? arabicSpecialistMessage)
-            .then(() => true)
-            .catch(() => false);
-          // The recording follows the booking copy rather than replacing it —
-          // she still needs the address and time in writing.
-          if (input.specialistVoice) {
-            await openWaTransport
-              .sendMedia(specialistPhone, {
-                base64: input.specialistVoice.base64,
-                contentType: input.specialistVoice.contentType,
-                filename: input.specialistVoice.filename ?? undefined,
-                ptt: true,
-              })
-              .catch(() => {
-                // A failed recording must not fail the dispatch: the booking
-                // itself already reached her.
-              });
-          }
-          return sentText;
-        })()
-      : Promise.resolve(null);
+  await ensureFieldOrderProgress(id).catch(() => undefined);
 
-  const [sent, specialistSent] = await Promise.all([driverSend, specialistSend]);
-
-  const status: DriverOrderStatus = sent ? "sent" : "failed";
-  const { data: updated } = await supabase
-    .from("driver_orders")
-    .update({
-      status,
-      sent_at: sent ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", order.id)
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .select(ORDER_COLS)
-    .single();
-
-  const [enriched] = await withNames(supabase, [
-    (updated ?? assigned) as DriverOrder,
+  const [driverDelivery, specialistDelivery] = await Promise.all([
+    deliverOutboxText({ commandId, eventId: driverOutboxId }),
+    specialistOutboxId
+      ? deliverOutboxText({ commandId, eventId: specialistOutboxId })
+      : Promise.resolve({ sent: false, error: null }),
   ]);
-  return { order: enriched, sent, specialistSent };
+
+  if (specialistDelivery.sent && input.specialistVoice && context.specialist.phone) {
+    await openWaTransport
+      .sendMedia(context.specialist.phone, {
+        base64: input.specialistVoice.base64,
+        contentType: input.specialistVoice.contentType,
+        filename: input.specialistVoice.filename ?? undefined,
+        ptt: true,
+      })
+      .catch(() => undefined);
+  }
+
+  await notifyFieldOrderAssigned({
+    orderId: id,
+    customerName: context.customerName,
+    specialistId: input.specialistId,
+    driverId: input.driverId,
+  }).catch(() => undefined);
+
+  const finished = await finishOrderDispatchCommand({
+    restaurantId: KIARA_RESTAURANT_ID,
+    orderId: id,
+    commandId,
+    driverSent: driverDelivery.sent,
+    specialistSent: specialistDelivery.sent,
+    driverError: driverDelivery.error,
+    specialistError: specialistDelivery.error,
+  });
+  const raw = finished.order;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("تعذّر قراءة الطلب بعد الإرسال");
+  }
+  const [enriched] = await withNames(await createServerSupabaseClient(), [
+    raw as unknown as DriverOrder,
+  ]);
+  return {
+    order: enriched,
+    sent: driverDelivery.sent,
+    specialistSent: specialistOutboxId ? specialistDelivery.sent : null,
+  };
 }
 
 /** Drop the bot-collected booking_request flag from a conversation, if any. */
@@ -584,8 +838,19 @@ export async function listDriverOrders(limit = 200): Promise<DriverOrderRow[]> {
       .order("arrival_at", { ascending: false })
       .limit(limit);
 
-  let { data, error } = await query(ORDER_COLS_WITH_EDITOR);
+  let { data, error } = await query(ORDER_COLS_WITH_REKAZ);
+  if (error && missingRekazLink(error)) {
+    ({ data, error } = await query(ORDER_COLS_WITH_EDITOR));
+  }
   if (error && missingUpdatedBy(error)) ({ data, error } = await query(ORDER_COLS));
+  if (error && missingOperationalColumns(error)) {
+    ({ data, error } = await query(ORDER_COLS_LEGACY));
+    if (error) throw new Error(error.message);
+    return withNames(
+      supabase,
+      withLegacyOperationalDefaults((data ?? []) as unknown as DriverOrder[]),
+    );
+  }
   if (error) throw new Error(error.message);
   return withNames(supabase, (data ?? []) as unknown as DriverOrder[]);
 }
@@ -612,45 +877,27 @@ export interface OrderPatch {
 export async function updateDriverOrder(
   id: string,
   patch: OrderPatch,
-  editorTeamMemberId: string | null
+  command: {
+    expectedVersion: number;
+    idempotencyKey: string;
+    actor: OperationsActor;
+  },
 ): Promise<DriverOrderRow> {
   const supabase = await createServerSupabaseClient();
-
-  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  if (patch.arrivalAt !== undefined) update.arrival_at = patch.arrivalAt;
-  if (patch.customerLocation !== undefined)
-    update.customer_location = patch.customerLocation.trim();
-  if (patch.durationMinutes !== undefined) update.duration_minutes = patch.durationMinutes;
-  if (patch.tripType !== undefined) update.trip_type = patch.tripType;
-  if (patch.specialistId !== undefined) update.specialist_id = patch.specialistId;
-  if (patch.driverId !== undefined) update.driver_id = patch.driverId;
-  if (patch.price !== undefined) update.price = patch.price;
-
-  const run = (withEditor: boolean) =>
-    supabase
-      .from("driver_orders")
-      .update(withEditor ? { ...update, updated_by: editorTeamMemberId } : update)
-      .eq("id", id)
-      .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .select(ORDER_COLS_WITH_EDITOR)
-      .single();
-
-  let { data, error } = await run(Boolean(editorTeamMemberId));
-  // Until the updated_by migration runs, save the edit without the author
-  // rather than failing it outright.
-  if (error && missingUpdatedBy(error)) {
-    ({ data, error } = await supabase
-      .from("driver_orders")
-      .update(update)
-      .eq("id", id)
-      .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .select(ORDER_COLS)
-      .single());
+  const result = await updateOrderCommand({
+    restaurantId: KIARA_RESTAURANT_ID,
+    orderId: id,
+    expectedVersion: command.expectedVersion,
+    idempotencyKey: command.idempotencyKey,
+    actor: command.actor,
+    patch: { ...patch },
+  });
+  const data = result.order;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("تعذّر قراءة الطلب بعد التحديث");
   }
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("الطلب غير موجود");
 
-  const [row] = await withNames(supabase, [data as DriverOrder]);
+  const [row] = await withNames(supabase, [data as unknown as DriverOrder]);
   return row;
 }
 
@@ -696,17 +943,21 @@ export async function resendDriverOrder(
   ]);
   if (!driver?.phone) throw new Error("رقم السائق غير متوفر");
 
-  const message = formatDriverOrderMessage({
-    specialistName:
-      (row.specialist_id && specialists.get(row.specialist_id)?.fullName) || "—",
-    arrivalAt: row.arrival_at,
-    durationMinutes: row.duration_minutes,
-    customerLocation: row.customer_location,
-    customerName: (conv?.customer_name as string | null) ?? null,
-    customerPhone: row.customer_phone,
-    tripType: row.trip_type,
-    sessionLink: fieldSessionLink("driver", driverId),
-  });
+  const message = [
+    formatDriverOrderMessage({
+      specialistName:
+        (row.specialist_id && specialists.get(row.specialist_id)?.fullName) || "—",
+      arrivalAt: row.arrival_at,
+      durationMinutes: row.duration_minutes,
+      customerLocation: row.customer_location,
+      customerName: (conv?.customer_name as string | null) ?? null,
+      customerPhone: row.customer_phone,
+      tripType: row.trip_type,
+      sessionLink: null,
+    }),
+    "",
+    "📲 افتح تطبيق كيارا لتأكيد الرحلة ومتابعة خطوات الطلب.",
+  ].join("\n");
 
   let sent = false;
   try {

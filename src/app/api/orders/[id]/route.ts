@@ -6,11 +6,13 @@ import {
   type OrderPatch,
 } from "@/lib/dispatch";
 import { getKiaraSession } from "@/lib/tenant";
+import { OperationalCommandError } from "@/lib/operational-commands";
 import type { TripType } from "@/lib/types";
 
 const TRIP_TYPES: TripType[] = ["one_way", "round_trip"];
 const MIN_MINUTES = 5;
 const MAX_MINUTES = 8 * 60;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * PATCH /api/orders/[id] — edit a saved order from the details sheet.
@@ -30,6 +32,20 @@ export async function PATCH(
   const { id } = await params;
   const body = await request.json().catch(() => ({}));
   const patch: OrderPatch = {};
+  const expectedVersion = Number(body?.expectedVersion);
+  const idempotencyKey = String(body?.idempotencyKey ?? "").trim();
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+    return NextResponse.json(
+      { error: "حدّثي الطلب ثم أعيدي المحاولة" },
+      { status: 400 },
+    );
+  }
+  if (!UUID.test(idempotencyKey)) {
+    return NextResponse.json(
+      { error: "معرّف العملية غير صحيح" },
+      { status: 400 },
+    );
+  }
 
   if (body?.arrivalAt !== undefined) {
     const arrival = new Date(String(body.arrivalAt));
@@ -87,12 +103,29 @@ export async function PATCH(
     const denied = await denyIfRouted(conversationId, session);
     if (denied) return denied;
 
-    const order = await updateDriverOrder(id, patch, session.teamMemberId);
+    const order = await updateDriverOrder(id, patch, {
+      expectedVersion,
+      idempotencyKey,
+      actor: {
+        userId: session.userId,
+        teamMemberId: session.teamMemberId,
+        role: session.role,
+      },
+    });
     return NextResponse.json({
       ok: true,
       order: session.role === "admin" ? order : { ...order, price: null },
     });
   } catch (error) {
+    if (error instanceof OperationalCommandError && error.isConflict) {
+      return NextResponse.json(
+        {
+          error: "عدّلت موظفة أخرى الطلب. تم إيقاف الحفظ لحماية بياناتها؛ حدّثي الطلب وراجعي التغيير.",
+          code: error.code,
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "تعذّر حفظ التعديل" },
       { status: 500 }

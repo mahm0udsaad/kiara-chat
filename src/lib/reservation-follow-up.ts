@@ -12,6 +12,10 @@ export interface ReservationFollowUp {
   updated_by: string | null;
 }
 
+export interface ReservationFollowUpTarget extends ReservationFollowUp {
+  dayKey: string;
+}
+
 export type ReservationFollowUpMap = Record<string, ReservationFollowUp>;
 
 export const RESERVATION_FOLLOW_UP_LABEL: Record<
@@ -101,4 +105,19 @@ export function reservationFollowUpsOf(
     };
   }
   return parsed;
+}
+
+/** Most recently updated appointment follow-up stored on a conversation. */
+export function latestReservationFollowUpOf(
+  metadata: Record<string, unknown> | null | undefined
+): ReservationFollowUpTarget | null {
+  const entries = Object.entries(reservationFollowUpsOf(metadata));
+  if (!entries.length) return null;
+  entries.sort(([dayA, followUpA], [dayB, followUpB]) => {
+    const updatedA = Date.parse(followUpA.updated_at) || Date.parse(`${dayA}T00:00:00Z`);
+    const updatedB = Date.parse(followUpB.updated_at) || Date.parse(`${dayB}T00:00:00Z`);
+    return updatedB - updatedA;
+  });
+  const [dayKey, followUp] = entries[0]!;
+  return { dayKey, ...followUp };
 }

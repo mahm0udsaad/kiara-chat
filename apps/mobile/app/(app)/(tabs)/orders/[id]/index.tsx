@@ -25,8 +25,41 @@ import {
   whatsappUrl,
 } from "@/lib/format";
 import { tapFeedback } from "@/lib/haptics";
-import { useOrder } from "@/lib/queries";
+import { useBootstrap, useOrder } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
+import type { FieldSessionState } from "@/types/api";
+
+const priceFormatter = new Intl.NumberFormat("ar-SA", {
+  style: "currency",
+  currency: "SAR",
+  maximumFractionDigits: 2,
+});
+
+function executionLabel(state: FieldSessionState | undefined, noun: string) {
+  if (state?.completed_at) {
+    return `اكتملت ${noun} · ${formatters.dateTime.format(new Date(state.completed_at))}`;
+  }
+  if (state?.started_at) {
+    return `${noun} جارية · بدأت ${formatters.dateTime.format(new Date(state.started_at))}`;
+  }
+  return `لم تبدأ ${noun} بعد`;
+}
+
+function wasEdited(createdAt: string, updatedAt?: string | null) {
+  if (!updatedAt) return false;
+  return new Date(updatedAt).getTime() - new Date(createdAt).getTime() > 1_000;
+}
+
+function isDriverLate(
+  arrivalAt: string,
+  driverId: string | null,
+  driverSession?: FieldSessionState,
+) {
+  if (!driverId || driverSession?.started_at) return false;
+  const arrival = new Date(arrivalAt).getTime();
+  const now = Date.now();
+  return now > arrival + 15 * 60_000 && now < arrival + 6 * 60 * 60_000;
+}
 
 /** Compact circular icon action used in the customer hero. */
 function QuickAction({
@@ -132,6 +165,7 @@ export default function OrderDetailScreen() {
     [params.id],
   );
   const detail = useOrder(id);
+  const bootstrap = useBootstrap();
 
   if (detail.isLoading) return <LoadingScreen label="جارٍ تحميل الطلب…" />;
   if (detail.isError || !detail.data) {
@@ -147,6 +181,9 @@ export default function OrderDetailScreen() {
   const order = detail.data.order;
   const arrival = new Date(order.arrival_at);
   const ready = Boolean(order.specialist_id && order.driver_id);
+  const driverLate = isDriverLate(order.arrival_at, order.driver_id, order.driver_session);
+  const edited = wasEdited(order.created_at, order.updated_at);
+  const canViewPrice = bootstrap.data?.capabilities.canViewOrderPrices === true;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -216,6 +253,42 @@ export default function OrderDetailScreen() {
           </View>
         </Card>
 
+        {/* On-demand AI read of the same customer conversation used on web. */}
+        <Card
+          variant="raised"
+          style={{ backgroundColor: colors.brandSoft, borderColor: colors.brandSoft }}
+        >
+          <View style={{ flexDirection: "row-reverse", alignItems: "flex-start", gap: spacing.md }}>
+            <View
+              style={{
+                width: hitSize.min,
+                height: hitSize.min,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: radius.full,
+                backgroundColor: colors.surface,
+              }}
+            >
+              <IconSymbol name="sparkles" color={colors.brand} size={20} />
+            </View>
+            <View style={{ flex: 1, gap: spacing.xs }}>
+              <Text selectable style={{ ...type.headline, color: colors.onBrandSoft, ...rtlText }}>
+                تحليل AI لرضا العميلة
+              </Text>
+              <Text selectable style={{ ...type.footnote, color: colors.onBrandSoft, ...rtlText }}>
+                يحلل المحادثة والحجوزات السابقة ويعرض مستوى الرضا، جودة التواصل، والتنبيهات والتوصيات.
+              </Text>
+            </View>
+          </View>
+          <PrimaryButton
+            label="تشغيل التحليل الذكي"
+            icon="sparkles"
+            variant="outline"
+            silent
+            onPress={() => router.push({ pathname: "/orders/[id]/analysis", params: { id } })}
+          />
+        </Card>
+
         {/* Appointment */}
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title="تفاصيل الموعد" />
@@ -274,6 +347,103 @@ export default function OrderDetailScreen() {
               </Text>
             </View>
           ) : null}
+          {order.driver_phone ? (
+            <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
+              <DetailRow
+                icon="phone"
+                label="رقم السائق"
+                value={formatPhone(order.driver_phone)}
+                monospacedValue
+                actionIcon="phone"
+                actionLabel={`اتصال بالسائق على ${order.driver_phone}`}
+                onPress={() => void Linking.openURL(telUrl(order.driver_phone!))}
+              />
+            </Card>
+          ) : null}
+        </View>
+
+        {/* Field progress mirrors the execution badges shown on the web card. */}
+        <View style={{ gap: spacing.sm }}>
+          <SectionHeader title="حالة التنفيذ" />
+          {driverLate ? (
+            <View
+              style={{
+                flexDirection: "row-reverse",
+                alignItems: "center",
+                gap: spacing.sm,
+                padding: spacing.md,
+                borderRadius: radius.md,
+                backgroundColor: colors.dangerSoft,
+              }}
+            >
+              <IconSymbol name="exclamationmark.triangle" color={colors.onDangerSoft} size={16} />
+              <Text selectable style={{ flex: 1, ...type.footnote, color: colors.onDangerSoft, ...rtlText }}>
+                السائق متأخر أكثر من ١٥ دقيقة ولم يؤكد بدء الرحلة.
+              </Text>
+            </View>
+          ) : null}
+          <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
+            <DetailRow
+              icon="car"
+              label="رحلة السائق"
+              value={executionLabel(order.driver_session, "الرحلة")}
+              tone={order.driver_session?.started_at ? "default" : "muted"}
+            />
+            <Divider inset={46} />
+            <DetailRow
+              icon="sparkles"
+              label="جلسة الأخصائية"
+              value={executionLabel(order.specialist_session, "الجلسة")}
+              tone={order.specialist_session?.started_at ? "default" : "muted"}
+            />
+          </Card>
+        </View>
+
+        {/* Commercial and audit fields returned by the web order enrichment. */}
+        <View style={{ gap: spacing.sm }}>
+          <SectionHeader title="بيانات الطلب" />
+          <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
+            {canViewPrice ? (
+              <>
+                <DetailRow
+                  icon="banknote"
+                  label="أجرة السائق"
+                  value={order.price == null ? "غير محددة" : priceFormatter.format(order.price)}
+                  monospacedValue
+                />
+                <Divider inset={46} />
+              </>
+            ) : null}
+            <DetailRow
+              icon="calendar"
+              label="تاريخ إنشاء الطلب"
+              value={formatters.dateTime.format(new Date(order.created_at))}
+              monospacedValue
+            />
+            <Divider inset={46} />
+            <DetailRow
+              icon="paperplane.fill"
+              label="تاريخ الإرسال"
+              value={
+                order.sent_at
+                  ? formatters.dateTime.format(new Date(order.sent_at))
+                  : "لم يُرسل بعد"
+              }
+              monospacedValue={Boolean(order.sent_at)}
+              tone={order.sent_at ? "default" : "muted"}
+            />
+            {edited ? (
+              <>
+                <Divider inset={46} />
+                <DetailRow
+                  icon="pencil"
+                  label={order.updated_by_name ? `آخر تعديل بواسطة ${order.updated_by_name}` : "آخر تعديل"}
+                  value={formatters.dateTime.format(new Date(order.updated_at!))}
+                  monospacedValue
+                />
+              </>
+            ) : null}
+          </Card>
         </View>
       </ScrollView>
 

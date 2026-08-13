@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { View, type ViewStyle } from "react-native";
 import Animated, {
+  cancelAnimation,
   Easing,
   useAnimatedStyle,
   useSharedValue,
@@ -31,11 +32,12 @@ export function Skeleton({
   const pulse = useSharedValue(0.55);
 
   useEffect(() => {
-    pulse.value = withRepeat(
+    pulse.set(withRepeat(
       withTiming(1, { duration: 850, easing: Easing.inOut(Easing.quad) }),
       -1,
       true,
-    );
+    ));
+    return () => cancelAnimation(pulse);
   }, [pulse]);
 
   const animatedStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));

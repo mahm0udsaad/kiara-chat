@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession, type KiaraSession } from "@/lib/tenant";
+import { getFieldStaffSession, type FieldStaffSession } from "@/lib/field-staff";
 import {
   MOBILE_API_VERSION,
   type MobileApiError,
@@ -33,6 +34,11 @@ export type MobileAuthorization =
   | { session: KiaraSession; response?: never }
   | { session?: never; response: NextResponse<MobileApiError> };
 
+export type AnyMobileSession = KiaraSession | FieldStaffSession;
+export type AnyMobileAuthorization =
+  | { session: AnyMobileSession; response?: never }
+  | { session?: never; response: NextResponse<MobileApiError> };
+
 /**
  * Mobile endpoints intentionally accept only an explicit Supabase access
  * token. Cookie sessions belong to the web dashboard and are not a fallback
@@ -64,6 +70,42 @@ export async function authorizeMobileRequest(
   }
 
   return { session };
+}
+
+export async function authorizeAnyMobileRequest(
+  request: Request
+): Promise<AnyMobileAuthorization> {
+  const authorization = request.headers.get("authorization")?.trim();
+  if (!authorization?.startsWith("Bearer ") || authorization.length <= 7) {
+    return {
+      response: mobileError(401, "MISSING_ACCESS_TOKEN", "A Bearer access token is required"),
+    };
+  }
+  const operations = await getKiaraSession();
+  if (operations) return { session: operations };
+  const field = await getFieldStaffSession();
+  if (field) return { session: field };
+  return {
+    response: mobileError(
+      401,
+      "INVALID_ACCESS_TOKEN",
+      "The access token is invalid or the account cannot access Kiara"
+    ),
+  };
+}
+
+export async function authorizeFieldStaffRequest(
+  request: Request
+): Promise<
+  | { session: FieldStaffSession; response?: never }
+  | { session?: never; response: NextResponse<MobileApiError> }
+> {
+  const auth = await authorizeAnyMobileRequest(request);
+  if (auth.response) return auth;
+  if (!("kind" in auth.session) || auth.session.kind !== "field") {
+    return { response: mobileError(403, "FIELD_STAFF_REQUIRED", "Field staff access is required") };
+  }
+  return { session: auth.session };
 }
 
 export function mobileServerError(

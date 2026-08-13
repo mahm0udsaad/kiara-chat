@@ -10,11 +10,16 @@ import {
   Ban,
   RotateCcw,
   X,
+  KeyRound,
+  Wand2,
+  Copy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NATIONALITIES, nationalityOf } from "@/lib/nationalities";
 import type { Specialist, Driver } from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Modal } from "@/components/ui/modal";
+import type { FieldStaffAccountSummary } from "@/lib/field-staff";
 
 type Row = Specialist | Driver;
 type Kind = "specialist" | "driver";
@@ -63,12 +68,15 @@ const ENDPOINT: Record<Kind, string> = {
 export function RosterManager({
   initialSpecialists,
   initialDrivers,
+  initialAccounts,
 }: {
   initialSpecialists: Specialist[];
   initialDrivers: Driver[];
+  initialAccounts: FieldStaffAccountSummary[];
 }) {
   const [specialists, setSpecialists] = useState(initialSpecialists);
   const [drivers, setDrivers] = useState(initialDrivers);
+  const [accounts, setAccounts] = useState(initialAccounts);
 
   return (
     <div className="dashboard-page max-w-3xl pt-0!">
@@ -87,6 +95,13 @@ export function RosterManager({
           withNationality
           items={specialists}
           onItems={setSpecialists}
+          accounts={accounts}
+          onAccount={(account) =>
+            setAccounts((current) => [
+              ...current.filter((item) => item.rosterId !== account.rosterId),
+              account,
+            ])
+          }
         />
         <RosterSection
           title="السائقون"
@@ -94,6 +109,13 @@ export function RosterManager({
           phoneRequired
           items={drivers}
           onItems={setDrivers}
+          accounts={accounts}
+          onAccount={(account) =>
+            setAccounts((current) => [
+              ...current.filter((item) => item.rosterId !== account.rosterId),
+              account,
+            ])
+          }
         />
       </div>
     </div>
@@ -107,6 +129,8 @@ function RosterSection<T extends Row>({
   withNationality = false,
   items,
   onItems,
+  accounts,
+  onAccount,
 }: {
   title: string;
   kind: Kind;
@@ -115,6 +139,8 @@ function RosterSection<T extends Row>({
   withNationality?: boolean;
   items: T[];
   onItems: (updater: (prev: T[]) => T[]) => void;
+  accounts: FieldStaffAccountSummary[];
+  onAccount: (account: FieldStaffAccountSummary) => void;
 }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -231,6 +257,9 @@ function RosterSection<T extends Row>({
               row={it}
               busy={busyId === it.id}
               withNationality={withNationality}
+              kind={kind}
+              account={accounts.find((account) => account.rosterId === it.id) ?? null}
+              onAccount={onAccount}
               onSave={(fullName, phoneVal, nat) =>
                 patch(it.id, {
                   fullName,
@@ -255,12 +284,18 @@ function RosterRow({
   withNationality,
   onSave,
   onToggleActive,
+  kind,
+  account,
+  onAccount,
 }: {
   row: Row;
   busy: boolean;
   withNationality: boolean;
   onSave: (fullName: string, phone: string, nationality: string) => Promise<boolean>;
   onToggleActive: () => void;
+  kind: Kind;
+  account: FieldStaffAccountSummary | null;
+  onAccount: (account: FieldStaffAccountSummary) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(row.full_name);
@@ -268,6 +303,50 @@ function RosterRow({
   const rowNationality = (row as Specialist).nationality ?? "";
   const [nationality, setNationality] = useState(rowNationality);
   const natInfo = nationalityOf(rowNationality);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [accountPassword, setAccountPassword] = useState("");
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [savedPassword, setSavedPassword] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const generatePassword = () => {
+    const alphabet = "abcdefghijkmnpqrstuvwxyz23456789";
+    const bytes = new Uint32Array(8);
+    crypto.getRandomValues(bytes);
+    return `kiara-${[...bytes].map((byte) => alphabet[byte % alphabet.length]).join("")}`;
+  };
+
+  const openAccount = () => {
+    setAccountPassword(generatePassword());
+    setAccountError(null);
+    setSavedPassword(null);
+    setCopied(false);
+    setAccountOpen(true);
+  };
+
+  const saveAccount = async () => {
+    setAccountBusy(true);
+    setAccountError(null);
+    try {
+      const response = await fetch(`/api/field-staff/${kind}/${row.id}/account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: accountPassword }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setAccountError(data?.error ?? "تعذّر إنشاء الدخول");
+        return;
+      }
+      onAccount(data.account as FieldStaffAccountSummary);
+      setSavedPassword(accountPassword);
+    } catch {
+      setAccountError("تعذّر إنشاء الدخول");
+    } finally {
+      setAccountBusy(false);
+    }
+  };
 
   const save = async () => {
     const ok = await onSave(name, phone, nationality);
@@ -337,6 +416,11 @@ function RosterRow({
               {natInfo.label}
             </span>
           ) : null}
+          {account ? (
+            <span className="mr-2 rounded-full bg-[var(--brand-soft)] px-1.5 py-0.5 text-[10px] text-[var(--brand)]">
+              دخول التطبيق مفعّل
+            </span>
+          ) : null}
           {!row.is_active ? (
             <span className="mr-2 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600">
               موقوف
@@ -350,6 +434,15 @@ function RosterRow({
         ) : null}
       </div>
       <div className="flex shrink-0 gap-1">
+        <button
+          type="button"
+          onClick={openAccount}
+          aria-label={account ? "تغيير كلمة مرور التطبيق" : "إنشاء دخول التطبيق"}
+          title={account ? "تغيير كلمة مرور التطبيق" : "إنشاء دخول التطبيق"}
+          className="flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-black/5"
+        >
+          <KeyRound size={15} />
+        </button>
         <button
           type="button"
           onClick={() => setEditing(true)}
@@ -377,6 +470,108 @@ function RosterRow({
           )}
         </button>
       </div>
+      <Modal
+        open={accountOpen}
+        onClose={() => setAccountOpen(false)}
+        title={`${account ? "تغيير دخول" : "إنشاء دخول"} ${row.full_name}`}
+      >
+        {savedPassword ? (
+          <div className="flex flex-col gap-3">
+            <Alert>
+              <Check />
+              <AlertDescription>
+                تم الحفظ. انسخي الرقم وكلمة المرور الآن؛ كلمة المرور لن تظهر مرة أخرى.
+              </AlertDescription>
+            </Alert>
+            <div className="rounded-lg border p-3 text-sm">
+              <p className="text-muted-foreground">رقم الدخول</p>
+              <code dir="ltr" className="block select-all text-base font-semibold">
+                {row.phone}
+              </code>
+            </div>
+            <div className="flex items-center gap-2">
+              <code
+                dir="ltr"
+                className="flex-1 select-all rounded-lg border bg-[var(--brand-soft)] px-3 py-2.5 font-semibold"
+              >
+                {savedPassword}
+              </code>
+              <button
+                type="button"
+                aria-label="نسخ كلمة المرور"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(savedPassword);
+                  setCopied(true);
+                }}
+                className="flex size-11 items-center justify-center rounded-lg border"
+              >
+                {copied ? <Check size={16} /> : <Copy size={16} />}
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAccountOpen(false)}
+              className="min-h-11 rounded-lg bg-[var(--brand)] px-4 text-sm font-medium text-white"
+            >
+              تم
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <Alert>
+              <KeyRound />
+              <AlertDescription>
+                سيدخل {kind === "specialist" ? "الأخصائية" : "السائق"} مباشرة برقم
+                الهاتف وكلمة المرور، من دون بريد أو رمز تحقق.
+              </AlertDescription>
+            </Alert>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-muted-foreground">رقم الدخول</span>
+              <input
+                value={row.phone ?? ""}
+                readOnly
+                dir="ltr"
+                className="min-h-11 rounded-lg border bg-muted px-3"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-muted-foreground">كلمة المرور — يمكنك تعديلها قبل الحفظ</span>
+              <div className="flex items-center gap-2">
+                <input
+                  value={accountPassword}
+                  onChange={(event) => setAccountPassword(event.target.value)}
+                  dir="ltr"
+                  minLength={8}
+                  className="min-h-11 flex-1 rounded-lg border px-3"
+                />
+                <button
+                  type="button"
+                  onClick={() => setAccountPassword(generatePassword())}
+                  aria-label="توليد كلمة مرور جديدة"
+                  className="flex size-11 items-center justify-center rounded-lg border"
+                >
+                  <Wand2 size={16} />
+                </button>
+              </div>
+            </label>
+            {accountError ? (
+              <Alert variant="destructive">
+                <AlertTriangle />
+                <AlertDescription>{accountError}</AlertDescription>
+              </Alert>
+            ) : null}
+            <button
+              type="button"
+              onClick={saveAccount}
+              disabled={accountBusy || accountPassword.length < 8 || !row.phone}
+              className="flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--brand)] px-4 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {accountBusy ? <Loader2 className="animate-spin" /> : <KeyRound />}
+              {account ? "حفظ كلمة المرور الجديدة" : "إنشاء دخول التطبيق"}
+            </button>
+          </div>
+        )}
+      </Modal>
     </li>
   );
 }

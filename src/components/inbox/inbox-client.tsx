@@ -41,6 +41,7 @@ import {
   Inbox,
   Lock,
   Pencil,
+  Bell,
   Check,
   X,
 } from "lucide-react";
@@ -93,6 +94,11 @@ import type { SavedReply } from "@/lib/saved-replies";
 import { formatRelativeTime, agentDisplayName, dayKey } from "@/lib/format";
 import { findSharedLocation } from "@/lib/location";
 import { normalizePhone, phoneMatches } from "@/lib/phone";
+import {
+  latestReservationFollowUpOf,
+  reservationFollowUpsOf,
+  type ReservationFollowUpStatus,
+} from "@/lib/reservation-follow-up";
 import type { CatalogItem } from "@/lib/catalog";
 import { catalogImageFile } from "./catalog-image";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
@@ -119,6 +125,13 @@ const CS_STATUS_LABEL: Record<CsStatus, string> = {
   resolved: "تم الطلب",
 };
 const CS_STATUS_ORDER: CsStatus[] = ["open", "waiting", "resolved"];
+
+const REMINDER_DAY_FMT = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  timeZone: "Asia/Riyadh",
+});
 
 const BOOKING_STAGE_ICON = {
   collecting_details: ClipboardList,
@@ -150,7 +163,7 @@ const NEW_LABEL_COLORS: LabelColor[] = [
   "rose",
 ];
 
-type View = "new" | "unassigned" | "danger";
+type View = "new" | "mine" | "unassigned" | "danger";
 
 /** Messages an opened thread starts with — older ones page in on scroll up. */
 const MESSAGE_PAGE_SIZE = 8;
@@ -451,8 +464,14 @@ export function InboxClient({
   // the badge instantly; the server-side metadata clear catches up on refresh.
   const [clearedBookings, setClearedBookings] = useState<Set<string>>(new Set());
   const [optionsOpen, setOptionsOpen] = useState(false);
+  /** Reason an admin gives before overriding the current assignee. */
+  const [takeoverReason, setTakeoverReason] = useState("");
   const [orderOpen, setOrderOpen] = useState(false);
   const [orderSheetMounted, setOrderSheetMounted] = useState(false);
+  const [reminderStatusBusy, setReminderStatusBusy] = useState<
+    "awaiting_reply" | "confirmed" | null
+  >(null);
+  const [reminderStatusError, setReminderStatusError] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -604,6 +623,7 @@ export function InboxClient({
         if (!hay.includes(q) && !phoneMatches(c.customer_phone, q)) return false;
       }
       if (view === "new" && !unreadOf(c)) return false;
+      if (view === "mine" && c.assigned_to !== myTeamMemberId) return false;
       if (view === "unassigned" && c.assigned_to) return false;
       if (
         view === "danger" &&
@@ -628,6 +648,7 @@ export function InboxClient({
     now,
     unreadOf,
     dangerExcludedPhoneSet,
+    myTeamMemberId,
   ]);
 
   /**
@@ -656,6 +677,7 @@ export function InboxClient({
       setOptionsOpen(false);
       setNoteDraft("");
       setMediaError(null);
+      setReminderStatusError(null);
       setLoading(true);
       setMessages([]);
       setNotes([]);
@@ -929,7 +951,7 @@ export function InboxClient({
         // the row chip, the header chip, and the options modal all read
         // selected.assigned_to.
         const ownerPatch =
-          path === "take"
+          path === "take" || path === "takeover"
             ? { assigned_to: myTeamMemberId }
             : path === "release"
               ? { assigned_to: null }
@@ -1359,8 +1381,19 @@ export function InboxClient({
 
   const selectedLabelIds = selected ? assignments[selected.id] ?? [] : [];
   const selectedBookingStage = selected ? bookingStageOf(selected) : null;
+  const selectedReminder = selected
+    ? latestReservationFollowUpOf(selected.metadata)
+    : null;
+  // Admin is deliberately NOT a blanket reply permission. Overriding another
+  // employee goes through takeover, which records a reason on the event.
   const canReply = Boolean(
-    selected && (isAdmin || (myTeamMemberId && selected.assigned_to === myTeamMemberId))
+    selected && myTeamMemberId && selected.assigned_to === myTeamMemberId
+  );
+  const canTakeOver = Boolean(
+    isAdmin &&
+      selected?.assigned_to &&
+      myTeamMemberId &&
+      selected.assigned_to !== myTeamMemberId
   );
   const canTake = Boolean(selected && !selected.assigned_to && myTeamMemberId);
   const selectedReplyOverdue = selected
@@ -1370,6 +1403,67 @@ export function InboxClient({
   // Feeds the order's location field: a pin or a maps link she shared fills it
   // outright, a typed line is only offered as a suggestion.
   const sharedLocation = findSharedLocation(messages);
+
+  const updateReminderStatus = async (
+    status: "awaiting_reply" | "confirmed"
+  ) => {
+    const conversation = selectedRef.current;
+    const reminder = conversation
+      ? latestReservationFollowUpOf(conversation.metadata)
+      : null;
+    if (!conversation || !reminder || reminderStatusBusy) return;
+    setReminderStatusBusy(status);
+    setReminderStatusError(null);
+    try {
+      const response = await fetch(
+        `/api/conversations/${conversation.id}/reservation-follow-up`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dayKey: reminder.dayKey, status }),
+        }
+      );
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        followUp?: {
+          status: ReservationFollowUpStatus;
+          reminded_at: string | null;
+          updated_at: string;
+          updated_by: string | null;
+        };
+      };
+      if (!response.ok || !data.followUp) {
+        throw new Error(data.error ?? "تعذّر تحديث تأكيد العميلة");
+      }
+
+      const patch = (current: Conversation): Conversation => {
+        const metadata = current.metadata ?? {};
+        const followUps = reservationFollowUpsOf(metadata);
+        return {
+          ...current,
+          metadata: {
+            ...metadata,
+            reservation_follow_ups: {
+              ...followUps,
+              [reminder.dayKey]: data.followUp,
+            },
+            booking_stage:
+              status === "confirmed" ? "booking_confirmed" : "awaiting_confirmation",
+          },
+        };
+      };
+      setSelected((current) => (current?.id === conversation.id ? patch(current) : current));
+      setConversations((current) =>
+        current.map((item) => (item.id === conversation.id ? patch(item) : item))
+      );
+    } catch (error) {
+      setReminderStatusError(
+        error instanceof Error ? error.message : "تعذّر تحديث تأكيد العميلة"
+      );
+    } finally {
+      setReminderStatusBusy(null);
+    }
+  };
 
   return (
     <div className="flex h-full">
@@ -1416,13 +1510,15 @@ export function InboxClient({
               aria-label="تصفية المحادثات"
               className="w-auto"
             >
-              {(["new", "unassigned", "danger"] as View[]).map((v) => (
+              {(["new", "mine", "unassigned", "danger"] as View[]).map((v) => (
                 <ToggleGroupItem
                   key={v}
                   value={v}
                   aria-label={
                     v === "new"
                       ? "المحادثات الجديدة"
+                      : v === "mine"
+                        ? "المحادثات المستلمة بواسطتي"
                       : v === "unassigned"
                         ? "المحادثات غير المستلمة"
                         : "المحادثات التي تأخر الرد عليها"
@@ -1433,7 +1529,13 @@ export function InboxClient({
                       "text-destructive data-[state=on]:border-destructive data-[state=on]:bg-destructive data-[state=on]:text-white"
                   )}
                 >
-                  {v === "new" ? "جديد" : v === "unassigned" ? "غير مستلمة" : "خطر"}
+                  {v === "new"
+                    ? "جديد"
+                    : v === "mine"
+                      ? "محادثاتي"
+                      : v === "unassigned"
+                        ? "غير مستلمة"
+                        : "خطر"}
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
@@ -1698,6 +1800,51 @@ export function InboxClient({
               </Alert>
             ) : null}
 
+            {selectedReminder ? (
+              <div className="flex flex-wrap items-center gap-2 border-b bg-[var(--surface)] px-3 py-2 sm:px-5">
+                <Bell size={16} className="shrink-0 text-[var(--brand)]" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">هل أكدت العميلة التذكير؟</p>
+                  <p className="text-xs text-muted-foreground">
+                    موعد {REMINDER_DAY_FMT.format(new Date(`${selectedReminder.dayKey}T12:00:00+03:00`))}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={selectedReminder.status === "confirmed" ? "default" : "outline"}
+                  disabled={Boolean(reminderStatusBusy) || !canReply}
+                  onClick={() => void updateReminderStatus("confirmed")}
+                >
+                  {reminderStatusBusy === "confirmed" ? (
+                    <Loader2 data-icon="inline-start" className="animate-spin" />
+                  ) : (
+                    <Check data-icon="inline-start" />
+                  )}
+                  أكدت الحضور
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={selectedReminder.status === "awaiting_reply" ? "secondary" : "outline"}
+                  disabled={Boolean(reminderStatusBusy) || !canReply}
+                  onClick={() => void updateReminderStatus("awaiting_reply")}
+                >
+                  {reminderStatusBusy === "awaiting_reply" ? (
+                    <Loader2 data-icon="inline-start" className="animate-spin" />
+                  ) : (
+                    <CalendarClock data-icon="inline-start" />
+                  )}
+                  لم تؤكد بعد
+                </Button>
+                {reminderStatusError ? (
+                  <p role="alert" className="w-full text-xs text-destructive">
+                    {reminderStatusError}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             {/* Status strip only — anything actionable lives in the modal. */}
             {selectedLabelIds.length ? (
               <div className="flex flex-wrap items-center gap-1.5 border-b bg-[var(--surface)] px-4 py-1.5">
@@ -1871,6 +2018,41 @@ export function InboxClient({
                     )}
                     استلام المحادثة والبدء بالرد
                   </Button>
+                ) : canTakeOver ? (
+                  // The reason is required, not optional: it is what the owner
+                  // report shows next to the override.
+                  <div className="flex flex-col gap-2">
+                    <p className="text-sm text-[var(--muted-foreground)]">
+                      {`المحادثة مستلمة من ${ownerLabel(selected)}. لاستلامها اكتبي السبب.`}
+                    </p>
+                    <div className="flex items-end gap-2">
+                      <input
+                        type="text"
+                        value={takeoverReason}
+                        onChange={(event) => setTakeoverReason(event.target.value)}
+                        placeholder="سبب الاستلام…"
+                        aria-label="سبب استلام المحادثة من موظفة أخرى"
+                        className="min-h-11 flex-1 rounded-md border bg-[var(--background)] px-3 text-sm"
+                      />
+                      <Button
+                        type="button"
+                        size="lg"
+                        className="min-h-11 shrink-0"
+                        disabled={busy || takeoverReason.trim().length < 3}
+                        onClick={async () => {
+                          await act("takeover", { reason: takeoverReason.trim() });
+                          setTakeoverReason("");
+                        }}
+                      >
+                        {busy ? (
+                          <Loader2 data-icon="inline-start" className="animate-spin" />
+                        ) : (
+                          <UserCheck data-icon="inline-start" />
+                        )}
+                        استلام مع تسجيل السبب
+                      </Button>
+                    </div>
+                  </div>
                 ) : (
                   <Button
                     type="button"

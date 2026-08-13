@@ -1,204 +1,504 @@
-import { Link, Stack } from "expo-router";
-import { useDeferredValue, useMemo, useState } from "react";
-import { Pressable, RefreshControl, SectionList, Text, View } from "react-native";
+import { Link, Stack, useRouter } from "expo-router";
+import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  Text,
+  View,
+} from "react-native";
 
 import { EmptyState, ErrorState } from "@/components/screen-state";
 import { Badge } from "@/components/ui/badge";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { SkeletonList } from "@/components/ui/skeleton";
-import { radius, rtlText, spacing, type } from "@/constants/theme";
+import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
-  dayOffset,
+  addDays,
+  dayKeyFromToday,
+  dayKeyOf,
+  mergeVisits,
+  visitMatchesFilter,
+  type CalendarVisit,
+  type VisitFilter,
+} from "@/lib/calendar";
+import {
   durationLabel,
   formatters,
   orderStatusIcon,
   orderStatusLabel,
   orderStatusTone,
-  relativeDayLabel,
-  tripTypeLabel,
 } from "@/lib/format";
-import { useOrders } from "@/lib/queries";
+import {
+  useCreateOrderFromReservation,
+  useOrdersCalendar,
+  useRekazCheck,
+  useRekazPull,
+} from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
-import type { OrderStatus, OrderSummary } from "@/types/api";
 
-type StatusFilter = "all" | OrderStatus;
+/** How far the day strip scrolls in each direction. */
+const STRIP_BACK = 7;
+const STRIP_AHEAD = 30;
+const DAY_CHIP_WIDTH = 62;
 
-const statusFilters: SegmentOption<StatusFilter>[] = [
+const filters: SegmentOption<VisitFilter>[] = [
   { value: "all", label: "الكل" },
-  { value: "pending", label: "بانتظار الإرسال" },
-  { value: "sent", label: "تم الإرسال" },
-  { value: "failed", label: "فشل" },
+  { value: "today", label: "اليوم" },
+  { value: "needs_driver", label: "بحاجة إلى تعيين" },
+  { value: "exception", label: "استثناءات" },
 ];
 
-/** Buckets orders into chronological day sections, soonest first. */
-function groupByDay(orders: OrderSummary[]) {
-  const buckets = new Map<string, OrderSummary[]>();
-  const sorted = [...orders].sort(
-    (a, b) => new Date(a.arrival_at).getTime() - new Date(b.arrival_at).getTime(),
-  );
+const weekdayFormatter = new Intl.DateTimeFormat("ar-EG", { weekday: "short" });
+const dayNumberFormatter = new Intl.DateTimeFormat("ar-EG", { day: "numeric" });
 
-  for (const order of sorted) {
-    const key = new Date(order.arrival_at).toDateString();
-    const bucket = buckets.get(key);
-    if (bucket) bucket.push(order);
-    else buckets.set(key, [order]);
-  }
-
-  return [...buckets.entries()].map(([key, data]) => {
-    const first = data[0]!;
-    return {
-      key,
-      title: relativeDayLabel(first.arrival_at),
-      offset: dayOffset(first.arrival_at),
-      data,
-    };
-  });
+function dayChipDate(dayKey: string) {
+  return new Date(`${dayKey}T12:00:00Z`);
 }
 
-function AssignmentChip({
-  icon,
-  name,
+/**
+ * Horizontal day strip. The selected day is the screen's single piece of
+ * navigation state, and it survives a refetch so an employee reading Thursday
+ * is never thrown back to today by a background poll.
+ */
+function DayStrip({
+  days,
+  selected,
+  onSelect,
+  countsByDay,
 }: {
-  icon: "sparkles" | "car";
-  name: string | null;
+  days: string[];
+  selected: string;
+  onSelect: (day: string) => void;
+  countsByDay: Map<string, number>;
 }) {
   const { colors } = useTheme();
-  const assigned = Boolean(name);
+  const listRef = useRef<FlatList<string>>(null);
+  const todayKey = dayKeyFromToday(0);
+
+  return (
+    <FlatList
+      ref={listRef}
+      horizontal
+      inverted
+      data={days}
+      keyExtractor={(day) => day}
+      showsHorizontalScrollIndicator={false}
+      initialScrollIndex={Math.max(days.indexOf(selected), 0)}
+      getItemLayout={(_, index) => ({
+        length: DAY_CHIP_WIDTH + spacing.sm,
+        offset: (DAY_CHIP_WIDTH + spacing.sm) * index,
+        index,
+      })}
+      contentContainerStyle={{ gap: spacing.sm, paddingHorizontal: spacing.lg }}
+      renderItem={({ item: day }) => {
+        const active = day === selected;
+        const isToday = day === todayKey;
+        const count = countsByDay.get(day) ?? 0;
+        const date = dayChipDate(day);
+        return (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            accessibilityLabel={`${formatters.weekdayDate.format(date)}، ${
+              count ? `${count} زيارة` : "لا زيارات"
+            }`}
+            onPress={() => onSelect(day)}
+            style={{
+              width: DAY_CHIP_WIDTH,
+              minHeight: hitSize.comfortable + 12,
+              paddingVertical: spacing.sm,
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 2,
+              borderRadius: radius.lg,
+              borderCurve: "continuous",
+              borderWidth: 1,
+              borderColor: active
+                ? colors.brand
+                : isToday
+                  ? colors.borderStrong
+                  : colors.border,
+              backgroundColor: active ? colors.brand : colors.surface,
+            }}
+          >
+            <Text
+              style={{
+                ...type.caption,
+                color: active ? colors.onBrand : colors.textTertiary,
+              }}
+            >
+              {weekdayFormatter.format(date)}
+            </Text>
+            <Text
+              style={{
+                ...type.headline,
+                color: active ? colors.onBrand : colors.text,
+                fontVariant: ["tabular-nums"],
+              }}
+            >
+              {dayNumberFormatter.format(date)}
+            </Text>
+            {/* Load is shown as a dot, not a number: the strip is for choosing
+                a day, and a count here competes with the agenda itself. */}
+            <View
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: radius.full,
+                backgroundColor: count
+                  ? active
+                    ? colors.onBrand
+                    : colors.brand
+                  : "transparent",
+              }}
+            />
+          </Pressable>
+        );
+      }}
+    />
+  );
+}
+
+/**
+ * The Rekaz pending-change banner.
+ *
+ * `سحب الآن` applies the delta under the tenant lock and reports what actually
+ * landed, so the count on screen is never a promise the pull does not keep.
+ */
+function RekazBanner({ selectedDayVisible }: { selectedDayVisible: boolean }) {
+  const { colors } = useTheme();
+  const check = useRekazCheck({ enabled: selectedDayVisible });
+  const pull = useRekazPull();
+
+  const pending = check.data?.preview.pending ?? 0;
+  const failed = check.isError;
+
+  if (!failed && pending === 0 && !pull.isPending) return null;
+
+  const detail = check.data
+    ? `${check.data.preview.added} جديدة · ${check.data.preview.updated} معدّلة · ${check.data.preview.removed} ملغاة`
+    : "";
+
   return (
     <View
       style={{
-        flexDirection: "row-reverse",
-        alignItems: "center",
-        gap: spacing.xs + 2,
-        paddingHorizontal: spacing.sm + 2,
-        paddingVertical: spacing.xs + 1,
-        borderRadius: radius.full,
+        gap: spacing.sm,
+        padding: spacing.md,
+        borderRadius: radius.lg,
+        borderCurve: "continuous",
         borderWidth: 1,
-        borderStyle: assigned ? "solid" : "dashed",
-        borderColor: assigned ? colors.border : colors.borderStrong,
-        backgroundColor: assigned ? colors.surfaceSunken : "transparent",
+        borderColor: failed ? colors.danger : colors.borderStrong,
+        backgroundColor: failed ? colors.dangerSoft : colors.warningSoft,
       }}
     >
-      <IconSymbol
-        name={icon}
-        size={13}
-        color={assigned ? colors.textSecondary : colors.textTertiary}
-      />
-      <Text
-        numberOfLines={1}
-        style={{
-          ...type.caption,
-          fontWeight: assigned ? "600" : "400",
-          color: assigned ? colors.textSecondary : colors.textTertiary,
-          ...rtlText,
-        }}
+      <View
+        style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}
       >
-        {name ?? (icon === "car" ? "بدون سائق" : "بدون أخصائية")}
-      </Text>
+        <IconSymbol
+          name={failed ? "exclamationmark.triangle" : "arrow.triangle.2.circlepath"}
+          size={16}
+          color={failed ? colors.onDangerSoft : colors.onWarningSoft}
+        />
+        <Text
+          style={{
+            flex: 1,
+            ...type.subheadStrong,
+            color: failed ? colors.onDangerSoft : colors.onWarningSoft,
+            ...rtlText,
+          }}
+        >
+          {failed
+            ? "تعذّر فحص تحديثات ركاز"
+            : `${pending} تغييرات جديدة من ركاز لم يتم سحبها`}
+        </Text>
+      </View>
+
+      {!failed && detail ? (
+        <Text
+          style={{ ...type.footnote, color: colors.onWarningSoft, ...rtlText }}
+        >
+          {detail}
+        </Text>
+      ) : null}
+
+      {check.data?.lastSync?.completedAt ? (
+        <Text style={{ ...type.caption, color: colors.textSecondary, ...rtlText }}>
+          {`آخر سحب ناجح: ${formatters.dateTime.format(
+            new Date(check.data.lastSync.completedAt),
+          )}`}
+        </Text>
+      ) : null}
+
+      {pull.isError ? (
+        <Text style={{ ...type.footnote, color: colors.onDangerSoft, ...rtlText }}>
+          {pull.error.message}
+        </Text>
+      ) : null}
+      {pull.isSuccess && !pull.isPending ? (
+        <Text style={{ ...type.footnote, color: colors.onSuccessSoft, ...rtlText }}>
+          {`تم السحب: ${pull.data.changes.added} جديدة · ${pull.data.changes.updated} معدّلة · ${pull.data.changes.removed} ملغاة`}
+        </Text>
+      ) : null}
+
+      <View style={{ flexDirection: "row-reverse", gap: spacing.sm }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="سحب تغييرات ركاز الآن"
+          disabled={pull.isPending || failed}
+          onPress={() => pull.mutate()}
+          style={{
+            minHeight: hitSize.min,
+            paddingHorizontal: spacing.lg,
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: radius.md,
+            backgroundColor: colors.brand,
+            opacity: pull.isPending || failed ? 0.6 : 1,
+          }}
+        >
+          {pull.isPending ? (
+            <ActivityIndicator color={colors.onBrand} />
+          ) : (
+            <Text style={{ ...type.calloutStrong, color: colors.onBrand }}>
+              سحب الآن
+            </Text>
+          )}
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="إعادة فحص تحديثات ركاز"
+          onPress={() => void check.refetch()}
+          style={{
+            minHeight: hitSize.min,
+            paddingHorizontal: spacing.lg,
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: radius.md,
+            borderWidth: 1,
+            borderColor: colors.borderStrong,
+          }}
+        >
+          <Text style={{ ...type.callout, color: colors.text }}>مراجعة</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
 
-function OrderCard({ order }: { order: OrderSummary }) {
+function VisitCard({ visit }: { visit: CalendarVisit }) {
   const { colors } = useTheme();
-  const arrival = new Date(order.arrival_at);
-  const needsAttention = order.status === "failed";
+  const router = useRouter();
+  const createOrder = useCreateOrderFromReservation();
+  const arrival = new Date(visit.arrivalAt);
+  const order = visit.order;
 
-  return (
-    // `asChild` keeps the card a real View tree. A plain <Link> renders its
-    // children inside a <Text>, which drops the card's background and flex row.
-    <Link href={{ pathname: "/orders/[id]", params: { id: order.id } }} asChild>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`طلب ${order.customer_name || order.customer_phone}، ${
-          orderStatusLabel[order.status]
-        }، ${formatters.time.format(arrival)}`}
-      >
-        {({ pressed }) => (
+  const needsAttention =
+    order?.status === "failed" || order?.dispatch_state === "uncertain";
+
+  const requestDriver = useCallback(() => {
+    if (!visit.reservation) return;
+    createOrder.mutate(visit.reservation.id, {
+      // Creating the visit is not the commit that matters. The employee lands
+      // on the dispatch confirmation, where the exact driver and specialist
+      // messages are shown and editable before anything is sent.
+      onSuccess: (result) =>
+        router.push({
+          pathname: "/orders/[id]/dispatch",
+          params: { id: result.order.id },
+        }),
+      onError: (error) =>
+        Alert.alert("تعذّر إنشاء الطلب", error.message),
+    });
+  }, [createOrder, router, visit.reservation]);
+
+  const body = (
+    <View
+      style={{
+        gap: spacing.sm,
+        padding: spacing.lg,
+        borderRadius: radius.xl,
+        borderCurve: "continuous",
+        borderWidth: 1,
+        borderColor: needsAttention ? colors.danger : colors.border,
+        backgroundColor: colors.surface,
+        boxShadow: "0 1px 2px rgba(24, 33, 77, 0.05)",
+      }}
+    >
+      <View style={{ flexDirection: "row-reverse", gap: spacing.md }}>
+        <View style={{ alignItems: "center", gap: 2, minWidth: 62 }}>
+          <Text
+            style={{
+              ...type.title3,
+              color: colors.text,
+              fontVariant: ["tabular-nums"],
+            }}
+          >
+            {formatters.time.format(arrival)}
+          </Text>
+          <Text
+            style={{ ...type.caption, fontWeight: "400", color: colors.textTertiary }}
+          >
+            {durationLabel(visit.durationMinutes || 0)}
+          </Text>
+        </View>
+
+        <View style={{ width: 1, backgroundColor: colors.border }} />
+
+        <View style={{ flex: 1, gap: spacing.sm }}>
           <View
             style={{
               flexDirection: "row-reverse",
-              gap: spacing.md,
-              padding: spacing.lg,
-              borderRadius: radius.xl,
-              borderCurve: "continuous",
-              borderWidth: 1,
-              borderColor: needsAttention ? colors.danger : colors.border,
-              backgroundColor: pressed ? colors.surfaceSunken : colors.surface,
-              boxShadow: "0 1px 2px rgba(24, 33, 77, 0.05)",
+              alignItems: "center",
+              gap: spacing.sm,
             }}
           >
-            {/* Time rail — the one value an operator scans a schedule for. */}
-            <View style={{ alignItems: "center", gap: 2, minWidth: 62 }}>
-              <Text
-                style={{
-                  ...type.title3,
-                  color: colors.text,
-                  fontVariant: ["tabular-nums"],
-                }}
-              >
-                {formatters.time.format(arrival)}
-              </Text>
-              <Text style={{ ...type.caption, fontWeight: "400", color: colors.textTertiary }}>
-                {durationLabel(order.duration_minutes)}
-              </Text>
-            </View>
-
-            <View
-              style={{ width: 1, backgroundColor: colors.border, marginVertical: spacing.xs }}
-            />
-
-            <View style={{ flex: 1, gap: spacing.sm }}>
-              <View
-                style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}
+            {/* The customer's name is a button, not a label — it opens her
+                record. Nested inside the card's own Pressable, so it stops the
+                tap from also opening the order. */}
+            <Link
+              href={{
+                pathname: "/orders/customer/[phone]",
+                params: { phone: visit.customerPhone, name: visit.customerName },
+              }}
+              asChild
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`ملف العميلة ${visit.customerName || visit.customerPhone}`}
+                hitSlop={spacing.sm}
+                style={{ flex: 1, minHeight: hitSize.min, justifyContent: "center" }}
+                onPress={(event) => event.stopPropagation()}
               >
                 <Text
                   numberOfLines={1}
-                  style={{ flex: 1, ...type.headline, color: colors.text, ...rtlText }}
+                  style={{ ...type.headline, color: colors.text, ...rtlText }}
                 >
-                  {order.customer_name || order.customer_phone}
+                  {visit.customerName || visit.customerPhone}
                 </Text>
-                <Badge
-                  label={orderStatusLabel[order.status]}
-                  tone={orderStatusTone[order.status]}
-                  icon={orderStatusIcon[order.status] as "clock"}
-                />
-              </View>
-
-              <View
-                style={{
-                  flexDirection: "row-reverse",
-                  alignItems: "flex-start",
-                  gap: spacing.xs + 2,
-                }}
-              >
-                <IconSymbol name="mappin.and.ellipse" color={colors.textTertiary} size={14} />
-                <Text
-                  numberOfLines={2}
-                  style={{ flex: 1, ...type.footnote, color: colors.textSecondary, ...rtlText }}
-                >
-                  {order.customer_location}
-                </Text>
-              </View>
-
-              <View
-                style={{
-                  flexDirection: "row-reverse",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                  gap: spacing.xs + 2,
-                }}
-              >
-                <AssignmentChip icon="sparkles" name={order.specialist_name} />
-                <AssignmentChip icon="car" name={order.driver_name} />
-                <Text style={{ ...type.caption, fontWeight: "400", color: colors.textTertiary }}>
-                  {tripTypeLabel[order.trip_type]}
-                </Text>
-              </View>
-            </View>
+              </Pressable>
+            </Link>
+            {order ? (
+              <Badge
+                label={orderStatusLabel[order.status]}
+                tone={orderStatusTone[order.status]}
+                icon={orderStatusIcon[order.status] as "clock"}
+              />
+            ) : (
+              <Badge label="بدون طلب" tone="warning" icon="clock" />
+            )}
           </View>
-        )}
+
+          {visit.services.length ? (
+            <Text
+              numberOfLines={2}
+              style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}
+            >
+              {visit.services.join(" · ")}
+            </Text>
+          ) : null}
+
+          {visit.location ? (
+            <View
+              style={{
+                flexDirection: "row-reverse",
+                alignItems: "flex-start",
+                gap: spacing.xs + 2,
+              }}
+            >
+              <IconSymbol
+                name="mappin.and.ellipse"
+                color={colors.textTertiary}
+                size={14}
+              />
+              <Text
+                numberOfLines={2}
+                style={{
+                  flex: 1,
+                  ...type.footnote,
+                  color: colors.textSecondary,
+                  ...rtlText,
+                }}
+              >
+                {visit.location}
+              </Text>
+            </View>
+          ) : null}
+
+          <View
+            style={{
+              flexDirection: "row-reverse",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: spacing.xs + 2,
+            }}
+          >
+            {visit.reservation ? (
+              <Badge
+                label={visit.reservation.status || "ركاز"}
+                tone={visit.reservation.status === "Confirmed" ? "success" : "neutral"}
+              />
+            ) : (
+              <Badge label="بدون حجز ركاز" tone="neutral" />
+            )}
+            {order?.specialist_name ? (
+              <Badge label={order.specialist_name} tone="brand" icon="sparkles" />
+            ) : null}
+            {order?.driver_name ? (
+              <Badge label={order.driver_name} tone="brand" icon="car" />
+            ) : null}
+            {order?.dispatch_state === "processing" ? (
+              <Badge label="جاري الإرسال" tone="info" icon="clock" />
+            ) : null}
+            {order?.dispatch_state === "uncertain" ? (
+              <Badge label="يحتاج مراجعة" tone="danger" icon="exclamationmark.triangle" />
+            ) : null}
+          </View>
+        </View>
+      </View>
+
+      {/* An unlinked Rekaz visit gets its action in place — no detour through
+          another calendar step, per the operations plan. */}
+      {!order && visit.reservation ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`طلب سائق لزيارة ${visit.customerName || visit.customerPhone}`}
+          disabled={createOrder.isPending}
+          onPress={requestDriver}
+          style={{
+            minHeight: hitSize.comfortable,
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: radius.md,
+            backgroundColor: colors.brandSoft,
+            opacity: createOrder.isPending ? 0.6 : 1,
+          }}
+        >
+          {createOrder.isPending ? (
+            <ActivityIndicator color={colors.onBrandSoft} />
+          ) : (
+            <Text style={{ ...type.calloutStrong, color: colors.onBrandSoft }}>
+              طلب سائق
+            </Text>
+          )}
+        </Pressable>
+      ) : null}
+    </View>
+  );
+
+  if (!order) return body;
+  return (
+    <Link href={{ pathname: "/orders/[id]", params: { id: order.id } }} asChild>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`طلب ${visit.customerName || visit.customerPhone}، ${
+          orderStatusLabel[order.status]
+        }، ${formatters.time.format(arrival)}`}
+      >
+        {body}
       </Pressable>
     </Link>
   );
@@ -206,127 +506,166 @@ function OrderCard({ order }: { order: OrderSummary }) {
 
 export default function OrdersScreen() {
   const { colors } = useTheme();
-  const [status, setStatus] = useState<StatusFilter>("all");
-  const [search, setSearch] = useState("");
-  const deferredSearch = useDeferredValue(search);
-  const orders = useOrders(deferredSearch.trim());
+  const todayKey = dayKeyFromToday(0);
+  const [selectedDay, setSelectedDay] = useState(todayKey);
+  const [filter, setFilter] = useState<VisitFilter>("all");
 
-  const all = useMemo(() => orders.data?.orders.items ?? [], [orders.data]);
-
-  const counts = useMemo(
-    () => ({
-      all: all.length,
-      pending: all.filter((order) => order.status === "pending").length,
-      sent: all.filter((order) => order.status === "sent").length,
-      failed: all.filter((order) => order.status === "failed").length,
-    }),
-    [all],
+  const days = useMemo(
+    () =>
+      Array.from(
+        { length: STRIP_BACK + STRIP_AHEAD + 1 },
+        (_, index) => dayKeyFromToday(index - STRIP_BACK),
+      ),
+    [todayKey], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
-  const sections = useMemo(() => {
-    const visible = status === "all" ? all : all.filter((order) => order.status === status);
-    return groupByDay(visible);
-  }, [all, status]);
+  // One bounded range around the selected day. Fetching the neighbours in the
+  // same request is what makes moving a day forward feel instant instead of
+  // showing a spinner on every tap.
+  const from = useMemo(() => addDays(selectedDay, -3), [selectedDay]);
+  const to = useMemo(() => addDays(selectedDay, 7), [selectedDay]);
+  const calendar = useOrdersCalendar(from, to);
 
-  const showSkeleton = orders.isLoading && all.length === 0;
+  const visits = useMemo(
+    () =>
+      mergeVisits(
+        calendar.data?.reservations ?? [],
+        calendar.data?.orders ?? [],
+      ),
+    [calendar.data],
+  );
+
+  const countsByDay = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const visit of visits) {
+      const key = dayKeyOf(visit.arrivalAt);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [visits]);
+
+  const dayVisits = useMemo(
+    () =>
+      visits
+        .filter((visit) => dayKeyOf(visit.arrivalAt) === selectedDay)
+        .filter((visit) => visitMatchesFilter(visit, filter, todayKey)),
+    [visits, selectedDay, filter, todayKey],
+  );
+
+  const counts = useMemo(() => {
+    const inDay = visits.filter(
+      (visit) => dayKeyOf(visit.arrivalAt) === selectedDay,
+    );
+    return {
+      all: inDay.length,
+      today: inDay.filter((visit) => visitMatchesFilter(visit, "today", todayKey))
+        .length,
+      needs_driver: inDay.filter((visit) =>
+        visitMatchesFilter(visit, "needs_driver", todayKey),
+      ).length,
+      exception: inDay.filter((visit) =>
+        visitMatchesFilter(visit, "exception", todayKey),
+      ).length,
+    } satisfies Record<VisitFilter, number>;
+  }, [visits, selectedDay, todayKey]);
+
+  const showSkeleton = calendar.isLoading && visits.length === 0;
+  const selectedDate = dayChipDate(selectedDay);
 
   return (
     <>
       <Stack.Screen
         options={{
-          headerSearchBarOptions: {
-            placeholder: "بحث بالاسم أو الموقع",
-            onChangeText: (event) => setSearch(event.nativeEvent.text),
-            onClose: () => setSearch(""),
-            hideWhenScrolling: false,
-          },
+          headerRight: () =>
+            selectedDay === todayKey ? null : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="العودة إلى اليوم"
+                onPress={() => setSelectedDay(todayKey)}
+                style={{ minHeight: hitSize.min, justifyContent: "center" }}
+              >
+                <Text style={{ ...type.callout, color: colors.brand }}>اليوم</Text>
+              </Pressable>
+            ),
         }}
       />
 
-      <SectionList
-        contentInsetAdjustmentBehavior="automatic"
-        sections={sections}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <OrderCard order={item} />}
-        stickySectionHeadersEnabled
-        renderSectionHeader={({ section }) => (
-          <View
+      <View style={{ flex: 1 }}>
+        <View style={{ paddingVertical: spacing.md, gap: spacing.md }}>
+          <DayStrip
+            days={days}
+            selected={selectedDay}
+            onSelect={setSelectedDay}
+            countsByDay={countsByDay}
+          />
+          <Text
             style={{
-              flexDirection: "row-reverse",
-              alignItems: "center",
-              gap: spacing.sm,
-              paddingVertical: spacing.sm,
-              backgroundColor: colors.background,
+              ...type.subheadStrong,
+              color: colors.textSecondary,
+              paddingHorizontal: spacing.lg,
+              ...rtlText,
             }}
           >
-            <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>
-              {section.title}
-            </Text>
-            {section.offset < 0 ? <Badge label="فات موعده" tone="danger" icon="clock" /> : null}
-            <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
-            <Text
-              style={{
-                ...type.caption,
-                fontWeight: "400",
-                color: colors.textTertiary,
-                fontVariant: ["tabular-nums"],
-              }}
-            >
-              {section.data.length}
-            </Text>
-          </View>
-        )}
-        contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"], flexGrow: 1 }}
-        SectionSeparatorComponent={() => <View style={{ height: spacing.xs }} />}
-        ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
-        keyboardDismissMode="on-drag"
-        ListHeaderComponent={
-          <View style={{ gap: spacing.md, paddingBottom: spacing.sm }}>
-            <Segmented
-              layout="scroll"
-              accessibilityLabel="تصفية الطلبات بالحالة"
-              options={statusFilters.map((filter) => ({
-                ...filter,
-                count: counts[filter.value],
-              }))}
-              value={status}
-              onChange={setStatus}
+            {formatters.weekdayDate.format(selectedDate)}
+          </Text>
+        </View>
+
+        <FlatList
+          data={dayVisits}
+          keyExtractor={(visit) => visit.key}
+          renderItem={({ item }) => <VisitCard visit={item} />}
+          contentContainerStyle={{
+            paddingHorizontal: spacing.lg,
+            paddingBottom: spacing["3xl"],
+            flexGrow: 1,
+          }}
+          ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+          ListHeaderComponent={
+            <View style={{ gap: spacing.md, paddingBottom: spacing.md }}>
+              <RekazBanner selectedDayVisible />
+              <Segmented
+                layout="scroll"
+                accessibilityLabel="تصفية زيارات اليوم"
+                options={filters.map((option) => ({
+                  ...option,
+                  count: counts[option.value],
+                }))}
+                value={filter}
+                onChange={setFilter}
+              />
+              {showSkeleton ? <SkeletonList count={4} /> : null}
+            </View>
+          }
+          ListEmptyComponent={
+            showSkeleton ? null : calendar.isError ? (
+              <ErrorState
+                message={calendar.error.message}
+                onRetry={() => void calendar.refetch()}
+              />
+            ) : filter !== "all" ? (
+              <EmptyState
+                icon="calendar"
+                title="لا توجد زيارات بهذا الفلتر"
+                detail="جرّبي عرض كل زيارات اليوم."
+                action={{ label: "عرض الكل", onPress: () => setFilter("all") }}
+              />
+            ) : (
+              <EmptyState
+                icon="calendar"
+                title="لا توجد زيارات في هذا اليوم"
+                detail="اختاري يومًا آخر من الشريط، أو اسحبي تحديثات ركاز."
+              />
+            )
+          }
+          refreshControl={
+            <RefreshControl
+              refreshing={calendar.isRefetching}
+              onRefresh={() => void calendar.refetch()}
+              tintColor={colors.brand}
             />
-            {showSkeleton ? <SkeletonList count={4} /> : null}
-          </View>
-        }
-        ListEmptyComponent={
-          showSkeleton ? null : orders.isError ? (
-            <ErrorState message={orders.error.message} onRetry={() => void orders.refetch()} />
-          ) : deferredSearch.trim() ? (
-            <EmptyState
-              icon="magnifyingglass"
-              title="لا توجد نتائج"
-              detail={`لم نعثر على طلب يطابق «${deferredSearch.trim()}».`}
-            />
-          ) : status !== "all" ? (
-            <EmptyState
-              icon="calendar"
-              title="لا توجد طلبات بهذه الحالة"
-              detail="جرّبي تغيير الفلتر لعرض بقية الطلبات."
-              action={{ label: "عرض كل الطلبات", onPress: () => setStatus("all") }}
-            />
-          ) : (
-            <EmptyState
-              icon="calendar"
-              title="لا توجد طلبات"
-              detail="افتحي أي طلب لتعديل بيانات الحجز أو تأكيد الإرسال إلى الأخصائية والسائق."
-            />
-          )
-        }
-        refreshControl={
-          <RefreshControl
-            refreshing={orders.isRefetching}
-            onRefresh={() => void orders.refetch()}
-            tintColor={colors.brand}
-          />
-        }
-      />
+          }
+        />
+      </View>
     </>
   );
 }

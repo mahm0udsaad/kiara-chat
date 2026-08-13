@@ -4,6 +4,7 @@ import {
   MESSAGE_PAGE_SIZE,
 } from "@/lib/inbox";
 import { toMobileConversation } from "@/lib/mobile/conversations";
+import { mobileReminderConfirmationFor } from "@/lib/mobile/reminders";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -42,12 +43,19 @@ export async function GET(
       );
     }
 
-    const page = await getConversationMessages(id, {
-      limit: MESSAGE_PAGE_SIZE,
-    });
+    const [page, reminderConfirmation] = await Promise.all([
+      getConversationMessages(id, { limit: MESSAGE_PAGE_SIZE }),
+      mobileReminderConfirmationFor({
+        customerPhone: conversation.customer_phone,
+        metadata: conversation.metadata,
+      }),
+    ]);
 
     return mobileData({
-      conversation: toMobileConversation(conversation),
+      conversation: {
+        ...toMobileConversation(conversation),
+        reminderConfirmation,
+      },
       messages: page.messages,
       hasMore: page.hasMore,
       nextBefore: page.hasMore ? page.messages[0]?.created_at ?? null : null,

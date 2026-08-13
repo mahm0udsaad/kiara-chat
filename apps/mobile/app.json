@@ -8,8 +8,12 @@
     "scheme": "kiara",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.kiara.operations"
+      "supportsTablet": false,
+      "bundleIdentifier": "com.kiara.operations",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +23,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.kiara.operations"
+      "package": "com.kiara.operations",
+      "versionCode": 1
     },
     "web": {
       "bundler": "metro",
@@ -41,10 +46,26 @@
       ],
       "expo-secure-store",
       "expo-image",
-      "@react-native-community/datetimepicker"
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#2B3FB0",
+          "defaultChannel": "default"
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "6391b327-1f70-45aa-b57e-57ca947f939b"
+      }
+    },
+    "owner": "mahm0udsaad"
   }
 }

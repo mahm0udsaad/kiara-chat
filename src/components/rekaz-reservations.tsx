@@ -1,6 +1,14 @@
 "use client";
 
-import { Fragment, lazy, Suspense, useCallback, useMemo, useState } from "react";
+import {
+  Fragment,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -270,7 +278,7 @@ export function RekazReservations({
   initialFollowUps: ReservationFollowUpMap;
 }) {
   const router = useRouter();
-  const [view, setView] = useState<"table" | "calendar">("table");
+  const [view, setView] = useState<"table" | "calendar">("calendar");
   const [statusFilter, setStatusFilter] = useState<StatusKey>("all");
   const [query, setQuery] = useState("");
   const [dateFrom, setDateFrom] = useState(todayKey);
@@ -298,6 +306,36 @@ export function RekazReservations({
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncNote, setSyncNote] = useState<string | null>(null);
+  const [syncPreview, setSyncPreview] = useState<{
+    pending: number;
+    added: number;
+    updated: number;
+    removed: number;
+    checkedAt: string;
+  } | null>(null);
+  const [checkingSync, setCheckingSync] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/reservations/sync", { method: "GET", cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || cancelled) return;
+        setSyncPreview({
+          pending: Number(data.preview?.pending ?? 0),
+          added: Number(data.preview?.added ?? 0),
+          updated: Number(data.preview?.updated ?? 0),
+          removed: Number(data.preview?.removed ?? 0),
+          checkedAt: String(data.checkedAt ?? new Date().toISOString()),
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingSync(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const reservations = useMemo(
     () =>
@@ -626,8 +664,19 @@ export function RekazReservations({
         return;
       }
       const named = Number(data.namesFilled) || 0;
+      const changes = data.changes ?? {};
+      setSyncPreview({
+        pending: 0,
+        added: 0,
+        updated: 0,
+        removed: 0,
+        checkedAt: String(data.syncedAt ?? new Date().toISOString()),
+      });
       setSyncNote(
         `تم تحديث ${Number(data.reservations ?? 0).toLocaleString("ar-SA")} حجز` +
+          ` · ${Number(changes.added ?? 0).toLocaleString("ar-SA")} جديد` +
+          ` · ${Number(changes.updated ?? 0).toLocaleString("ar-SA")} تعديل` +
+          ` · ${Number(changes.removed ?? 0).toLocaleString("ar-SA")} ملغي/محذوف` +
           (named ? ` · تمّت تسمية ${named.toLocaleString("ar-SA")} محادثة` : "")
       );
       router.refresh();
@@ -675,6 +724,29 @@ export function RekazReservations({
 
   return (
     <div className="space-y-3">
+      {checkingSync ? (
+        <div className="flex min-h-12 items-center gap-2 rounded-xl border bg-muted/30 px-4 text-sm text-muted-foreground">
+          <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+          جارٍ فحص تغييرات ركاز…
+        </div>
+      ) : syncPreview && syncPreview.pending > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950">
+          <div className="space-y-1">
+            <p className="font-semibold">
+              {syncPreview.pending.toLocaleString("ar-SA")} تغييرات من ركاز لم يتم سحبها
+            </p>
+            <p className="text-xs text-amber-800">
+              {syncPreview.added.toLocaleString("ar-SA")} جديد · {syncPreview.updated.toLocaleString("ar-SA")} تعديل · {syncPreview.removed.toLocaleString("ar-SA")} ملغي أو محذوف
+            </p>
+          </div>
+          {syncButton}
+        </div>
+      ) : syncPreview ? (
+        <div className="flex min-h-11 items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-sm text-emerald-800">
+          <CheckCircle2 size={16} aria-hidden="true" />
+          بيانات ركاز محدثة · آخر فحص {formatRelativeTime(syncPreview.checkedAt)}
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-1.5">
           {(
@@ -922,7 +994,6 @@ export function RekazReservations({
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>إجراءات</TableHead>
-                <TableHead>متابعة العميلة</TableHead>
                 <TableHead>العميلة</TableHead>
                 <TableHead>الموعد</TableHead>
                 <TableHead>الخدمات</TableHead>
@@ -1044,20 +1115,6 @@ export function RekazReservations({
                         </div>
                       </TableCell>
 
-                      <TableCell>
-                        <CustomerFollowUpControls
-                          followUp={followUp}
-                          reminding={reminding === visit.key}
-                          busy={
-                            followUpBusy?.startsWith(`${visit.key}:`) ?? false
-                          }
-                          onRemind={() => openReminder(visit)}
-                          onConfirm={() => updateFollowUp(visit, "confirmed")}
-                          onCancel={() => updateFollowUp(visit, "cancelled")}
-                          compact
-                        />
-                      </TableCell>
-
                       <TableCell className="max-w-[180px]">
                         <button
                           type="button"
@@ -1171,7 +1228,7 @@ export function RekazReservations({
 
                     {isOpen ? (
                       <TableRow className="hover:bg-transparent">
-                        <TableCell colSpan={10} className="bg-muted/40 p-4">
+                        <TableCell colSpan={9} className="bg-muted/40 p-4">
                           <div className="flex flex-col gap-4">
                             <div className="flex items-center gap-2">
                               <p className="text-sm font-medium">الخدمات في هذه الزيارة</p>

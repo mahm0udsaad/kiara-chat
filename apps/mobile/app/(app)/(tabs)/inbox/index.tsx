@@ -1,7 +1,11 @@
 import { Link, Stack } from "expo-router";
 import { useDeferredValue, useState } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
-import Animated, { FadeIn } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeOut,
+  LinearTransition,
+} from "react-native-reanimated";
 
 import { EmptyState, ErrorState } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
@@ -9,19 +13,28 @@ import { Badge, CountBadge } from "@/components/ui/badge";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { TypingIndicator } from "@/components/typing-indicator";
 import { radius, rtlText, spacing, type } from "@/constants/theme";
 import { bookingStageLabel, relativeTimeLabel } from "@/lib/format";
 import { useConversations } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
+import { useInboxLive } from "@/providers/inbox-live-provider";
 import type { ConversationSummary, InboxView } from "@/types/api";
 
 const filters: SegmentOption<InboxView>[] = [
   { value: "new", label: "جديد" },
+  { value: "mine", label: "محادثاتي" },
   { value: "unassigned", label: "غير مستلمة" },
   { value: "danger", label: "خطر" },
 ];
 
-function ConversationRow({ conversation }: { conversation: ConversationSummary }) {
+function ConversationRow({
+  conversation,
+  typing,
+}: {
+  conversation: ConversationSummary;
+  typing: boolean;
+}) {
   const { colors } = useTheme();
 
   const overdue = conversation.dangerMinutes !== null && conversation.dangerMinutes >= 6;
@@ -84,17 +97,21 @@ function ConversationRow({ conversation }: { conversation: ConversationSummary }
                 </Text>
               </View>
 
-              <Text
-                numberOfLines={1}
-                style={{
-                  ...type.footnote,
-                  color: colors.textSecondary,
-                  fontVariant: ["tabular-nums"],
-                  ...rtlText,
-                }}
-              >
-                {conversation.customer_phone}
-              </Text>
+              {typing ? (
+                <TypingIndicator />
+              ) : (
+                <Text
+                  numberOfLines={1}
+                  style={{
+                    ...type.footnote,
+                    color: colors.textSecondary,
+                    fontVariant: ["tabular-nums"],
+                    ...rtlText,
+                  }}
+                >
+                  {conversation.customer_phone}
+                </Text>
+              )}
 
               <View
                 style={{
@@ -123,6 +140,7 @@ function ConversationRow({ conversation }: { conversation: ConversationSummary }
 
 export default function InboxScreen() {
   const { colors } = useTheme();
+  const { isTyping } = useInboxLive();
   const [view, setView] = useState<InboxView>("new");
   const [search, setSearch] = useState("");
   // Keeps typing responsive — the request tracks a frame behind the keystroke.
@@ -151,8 +169,12 @@ export default function InboxScreen() {
         data={items}
         keyExtractor={(item) => item.id}
         renderItem={({ item, index }) => (
-          <Animated.View entering={FadeIn.delay(Math.min(index, 8) * 24).duration(200)}>
-            <ConversationRow conversation={item} />
+          <Animated.View
+            entering={FadeIn.delay(Math.min(index, 8) * 24).duration(200)}
+            exiting={FadeOut.duration(140)}
+            layout={LinearTransition.duration(220)}
+          >
+            <ConversationRow conversation={item} typing={isTyping(item.id)} />
           </Animated.View>
         )}
         contentContainerStyle={{
@@ -171,6 +193,7 @@ export default function InboxScreen() {
               }))}
               value={view}
               onChange={setView}
+              layout="scroll"
             />
             {showSkeleton ? <SkeletonList count={6} /> : null}
           </View>

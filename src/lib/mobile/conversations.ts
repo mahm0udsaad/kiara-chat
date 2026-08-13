@@ -86,7 +86,6 @@ export function toMobileConversation(
     handler_mode: conversation.handler_mode,
     assigned_to: conversation.assigned_to ?? null,
     unread_count: conversation.unread_count ?? 0,
-    metadata: conversation.metadata ?? null,
     csStatus: conversationCsStatus(conversation),
     bookingStage: bookingStageOf(conversation),
     dangerMinutes: conversationDangerMinutes(
@@ -111,9 +110,15 @@ function matchesView(
   conversation: Conversation,
   view: MobileConversationView,
   now: number,
-  dangerExcludedPhoneSet: ReadonlySet<string>
+  dangerExcludedPhoneSet: ReadonlySet<string>,
+  teamMemberId: string | null
 ): boolean {
   if (view === "new") return (conversation.unread_count ?? 0) > 0;
+  if (view === "mine") {
+    return Boolean(
+      teamMemberId && conversation.assigned_to === teamMemberId
+    );
+  }
   if (view === "unassigned") return !conversation.assigned_to;
   return (
     conversationDangerMinutes(conversation, now, dangerExcludedPhoneSet) !== null
@@ -147,17 +152,50 @@ export async function listMobileConversations(options: {
   );
   const counts = {
     new: searched.filter((conversation) =>
-      matchesView(conversation, "new", now, dangerExcludedPhoneSet)
+      matchesView(
+        conversation,
+        "new",
+        now,
+        dangerExcludedPhoneSet,
+        options.teamMemberId
+      )
+    ).length,
+    mine: searched.filter((conversation) =>
+      matchesView(
+        conversation,
+        "mine",
+        now,
+        dangerExcludedPhoneSet,
+        options.teamMemberId
+      )
     ).length,
     unassigned: searched.filter((conversation) =>
-      matchesView(conversation, "unassigned", now, dangerExcludedPhoneSet)
+      matchesView(
+        conversation,
+        "unassigned",
+        now,
+        dangerExcludedPhoneSet,
+        options.teamMemberId
+      )
     ).length,
     danger: searched.filter((conversation) =>
-      matchesView(conversation, "danger", now, dangerExcludedPhoneSet)
+      matchesView(
+        conversation,
+        "danger",
+        now,
+        dangerExcludedPhoneSet,
+        options.teamMemberId
+      )
     ).length,
   };
   const matching = searched.filter((conversation) =>
-    matchesView(conversation, options.view, now, dangerExcludedPhoneSet)
+    matchesView(
+      conversation,
+      options.view,
+      now,
+      dangerExcludedPhoneSet,
+      options.teamMemberId
+    )
   );
   const items = matching
     .slice(options.offset, options.offset + options.limit)

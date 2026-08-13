@@ -6,12 +6,14 @@ import {
   type DispatchBookingInput,
 } from "@/lib/dispatch";
 import { getKiaraSession } from "@/lib/tenant";
+import { OperationalCommandError } from "@/lib/operational-commands";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /** A recording longer than this is a phone call, not a note. */
 const MAX_VOICE_BYTES = 8 * 1024 * 1024;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** Assign the booking and send the specialist + driver WhatsApp copies. */
 export async function POST(
@@ -31,6 +33,9 @@ export async function POST(
   let driverId: string | undefined;
   let specialistNote: string | undefined;
   let driverMessage: string | undefined;
+  let specialistMessage: string | undefined;
+  let expectedVersion: number | undefined;
+  let idempotencyKey: string | undefined;
   let tripType: DispatchBookingInput["tripType"];
   let specialistVoice: DispatchBookingInput["specialistVoice"];
 
@@ -45,6 +50,9 @@ export async function POST(
     driverId = (form.get("driverId") as string | null)?.trim();
     specialistNote = (form.get("specialistNote") as string | null)?.trim().slice(0, 500);
     driverMessage = (form.get("driverMessage") as string | null)?.trim().slice(0, 3000);
+    specialistMessage = (form.get("specialistMessage") as string | null)?.trim().slice(0, 3000);
+    expectedVersion = Number(form.get("expectedVersion"));
+    idempotencyKey = (form.get("idempotencyKey") as string | null)?.trim();
     const formTripType = form.get("tripType");
     tripType =
       formTripType === "round_trip" || formTripType === "one_way"
@@ -70,6 +78,9 @@ export async function POST(
     driverId = (body?.driverId as string | undefined)?.trim();
     specialistNote = (body?.specialistNote as string | undefined)?.trim().slice(0, 500);
     driverMessage = (body?.driverMessage as string | undefined)?.trim().slice(0, 3000);
+    specialistMessage = (body?.specialistMessage as string | undefined)?.trim().slice(0, 3000);
+    expectedVersion = Number(body?.expectedVersion);
+    idempotencyKey = (body?.idempotencyKey as string | undefined)?.trim();
     tripType =
       body?.tripType === "round_trip" || body?.tripType === "one_way"
         ? body.tripType
@@ -84,6 +95,15 @@ export async function POST(
   }
   if (!driverMessage) {
     return NextResponse.json({ error: "رسالة السائق مطلوبة" }, { status: 400 });
+  }
+  if (!specialistMessage) {
+    return NextResponse.json({ error: "رسالة الأخصائية النهائية مطلوبة" }, { status: 400 });
+  }
+  if (!Number.isSafeInteger(expectedVersion) || Number(expectedVersion) < 1) {
+    return NextResponse.json({ error: "حدّثي الطلب ثم أعيدي المحاولة" }, { status: 400 });
+  }
+  if (!idempotencyKey || !UUID.test(idempotencyKey)) {
+    return NextResponse.json({ error: "معرّف العملية غير صحيح" }, { status: 400 });
   }
 
   try {
@@ -100,6 +120,14 @@ export async function POST(
       specialistNote: specialistNote || undefined,
       specialistVoice,
       driverMessage,
+      specialistMessage,
+      expectedVersion: Number(expectedVersion),
+      idempotencyKey,
+      actor: {
+        userId: session.userId,
+        teamMemberId: session.teamMemberId,
+        role: session.role,
+      },
       tripType,
     });
     return NextResponse.json({
@@ -111,6 +139,15 @@ export async function POST(
           : { ...result.order, price: null },
     });
   } catch (error) {
+    if (error instanceof OperationalCommandError && error.isConflict) {
+      return NextResponse.json(
+        {
+          error: "عدّلت موظفة أخرى الطلب أو بدأت إرساله. حدّثي الطلب قبل المتابعة.",
+          code: error.code,
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
       {
         error:

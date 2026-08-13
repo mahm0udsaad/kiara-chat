@@ -134,22 +134,26 @@ interface MsgRow {
  * the caller turns that into a clear "not available" rather than an error.
  */
 export async function analyzeCustomer(
-  phone: string
+  phone: string,
+  options: { conversationId?: string } = {}
 ): Promise<CustomerAnalysisResult | null> {
   if (!isBotConfigured()) return null;
 
   const admin = getAdminSupabaseClient();
   const national = normalizePhone(phone);
 
-  const { data: conversation } = await admin
-    .from("conversations")
-    .select("id")
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .ilike("customer_phone", `%${national}%`)
-    .order("last_message_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const conversationId = (conversation?.id as string) ?? null;
+  let conversationId = options.conversationId ?? null;
+  if (!conversationId) {
+    const { data: conversation } = await admin
+      .from("conversations")
+      .select("id")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .ilike("customer_phone", `%${national}%`)
+      .order("last_message_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    conversationId = (conversation?.id as string) ?? null;
+  }
 
   const [messages, rekaz] = await Promise.all([
     conversationId ? fetchMessages(conversationId) : Promise.resolve([]),
