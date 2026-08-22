@@ -5,6 +5,7 @@ import {
   mobileServerError,
 } from "@/lib/mobile/http";
 import { fetchRekazReservations, type RekazFetchResult } from "@/lib/rekaz";
+import { RekazAuthError } from "@/lib/rekaz-auth";
 import { applyRekazSync, previewRekazSync } from "@/lib/rekaz-sync";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
@@ -66,6 +67,28 @@ async function lastCompletedRun() {
     : null;
 }
 
+/**
+ * A Rekaz outage and a Rekaz login problem look identical to a caller that
+ * only sees "failed", but they are not the same event: one clears by itself,
+ * the other needs someone to reconnect the account. They get separate codes so
+ * the banner can stop telling an employee to "try again in a moment" when
+ * trying again cannot possibly help.
+ */
+function rekazFailure(error: unknown, fallbackCode: string, fallbackMessage: string) {
+  if (error instanceof RekazAuthError) {
+    return mobileError(
+      424,
+      "REKAZ_AUTH_REQUIRED",
+      error.reason === "not_configured"
+        ? "لم يتم ربط حساب ركاز بعد — تحتاج الإدارة إلى إدخال بيانات الدخول"
+        : error.reason === "unreachable"
+          ? "تعذّر الوصول إلى منصة ركاز"
+          : "انتهت صلاحية جلسة ركاز — تحتاج الإدارة إلى إعادة ربط الحساب",
+    );
+  }
+  return mobileError(502, fallbackCode, fallbackMessage);
+}
+
 export async function GET(request: Request) {
   const auth = await authorizeMobileRequest(request);
   if (auth.response) return auth.response;
@@ -84,8 +107,8 @@ export async function GET(request: Request) {
     // A Rekaz outage is not a Kiara outage: report it as an integration
     // failure so the banner can say so instead of showing a silent zero.
     console.error("[mobile-api] REKAZ_CHECK_FAILED", error);
-    return mobileError(
-      502,
+    return rekazFailure(
+      error,
       "REKAZ_CHECK_FAILED",
       "تعذّر فحص تحديثات ركاز — حاولي بعد قليل",
     );
@@ -104,8 +127,8 @@ export async function POST(request: Request) {
     cachedCheck = { at: Date.now(), promise: Promise.resolve(fetched) };
   } catch (error) {
     console.error("[mobile-api] REKAZ_FETCH_FAILED", error);
-    return mobileError(
-      502,
+    return rekazFailure(
+      error,
       "REKAZ_FETCH_FAILED",
       "تعذّر الاتصال بمنصة ركاز — حاولي بعد قليل",
     );

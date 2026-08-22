@@ -49,6 +49,14 @@ export type TimelineEvent =
       kind: "booking";
       at: string;
       id: string;
+      /**
+       * The Rekaz order this reservation belongs to. Several services booked
+       * together share one order id and one order total — without it a visit
+       * of three services reads as three visits, and its money is counted
+       * three times.
+       */
+      orderId: string;
+      orderTotal: number;
       service: string;
       providers: string[];
       status: string;
@@ -67,9 +75,37 @@ export type TimelineEvent =
     }
   | { kind: "note"; at: string; body: string; author: string | null };
 
+/**
+ * What the booking history says about the customer, as opposed to what it
+ * lists. The salon reads a profile to answer three questions before she walks
+ * in — what does she book, who does she ask for, and is she overdue — and none
+ * of them are answerable by scrolling a timeline of forty events.
+ *
+ * Every figure here is derived from the same Rekaz reservations the timeline
+ * already fetched, so the profile costs no extra upstream call.
+ */
+export interface CustomerInsights {
+  /** Most-booked services, busiest first. */
+  topServices: { name: string; count: number; spend: number }[];
+  /** The specialist she has seen most, when one stands out. */
+  favoriteProvider: { name: string; visits: number } | null;
+  /** Share of her bookings that were cancelled, 0–100. */
+  cancelledRate: number;
+  /** Average value of a non-cancelled visit. */
+  avgSpend: number;
+  /** Her last completed visit, and the next one on the books. */
+  lastVisitAt: string | null;
+  nextVisitAt: string | null;
+  daysSinceLastVisit: number | null;
+  /** How her bookings arrive: online herself, or entered by staff. */
+  bookedOnline: number;
+  bookedByStaff: number;
+}
+
 export interface CustomerTimeline {
   customer: TimelineCustomer;
   revenue: TimelineRevenue;
+  insights: CustomerInsights;
   events: TimelineEvent[]; // newest first
   messagesShown: number;
   messagesTotal: number;
@@ -77,7 +113,89 @@ export interface CustomerTimeline {
   rekazError: boolean;
 }
 
-export async function getCustomerTimeline(phone: string): Promise<CustomerTimeline> {
+const EMPTY_INSIGHTS: CustomerInsights = {
+  topServices: [],
+  favoriteProvider: null,
+  cancelledRate: 0,
+  avgSpend: 0,
+  lastVisitAt: null,
+  nextVisitAt: null,
+  daysSinceLastVisit: null,
+  bookedOnline: 0,
+  bookedByStaff: 0,
+};
+
+/** Top services, usual specialist, cadence — read off the booking history. */
+function summarizeReservations(
+  reservations: RekazReservation[]
+): CustomerInsights {
+  if (reservations.length === 0) return EMPTY_INSIGHTS;
+
+  const live = reservations.filter((r) => r.status !== "Cancelled");
+  const now = Date.now();
+
+  const services = new Map<string, { count: number; spend: number }>();
+  const providers = new Map<string, number>();
+  let bookedOnline = 0;
+  let bookedByStaff = 0;
+
+  for (const r of live) {
+    const service = r.service.trim();
+    if (service) {
+      const entry = services.get(service) ?? { count: 0, spend: 0 };
+      entry.count += 1;
+      entry.spend += r.amount;
+      services.set(service, entry);
+    }
+    for (const provider of r.providers) {
+      if (provider) providers.set(provider, (providers.get(provider) ?? 0) + 1);
+    }
+    // An empty `createdBy` is Rekaz's own marker for a booking nobody on staff
+    // entered — i.e. the customer booked it herself.
+    if (r.createdBy) bookedByStaff += 1;
+    else bookedOnline += 1;
+  }
+
+  // Reservations arrive newest first, so past and future are two ends of the
+  // same list rather than two passes over it.
+  const past = live.filter((r) => Date.parse(r.arrivalAt) <= now);
+  const future = live.filter((r) => Date.parse(r.arrivalAt) > now);
+
+  const lastVisitAt = past[0]?.arrivalAt ?? null;
+  const spend = live.reduce((total, r) => total + r.amount, 0);
+  const [topProvider] = [...providers.entries()].sort((a, b) => b[1] - a[1]);
+
+  return {
+    topServices: [...services.entries()]
+      .map(([name, { count, spend: serviceSpend }]) => ({
+        name,
+        count,
+        spend: Math.round(serviceSpend * 100) / 100,
+      }))
+      .sort((a, b) => b.count - a.count || b.spend - a.spend)
+      .slice(0, 4),
+    favoriteProvider: topProvider
+      ? { name: topProvider[0], visits: topProvider[1] }
+      : null,
+    cancelledRate: Math.round(
+      ((reservations.length - live.length) / reservations.length) * 100
+    ),
+    avgSpend: live.length ? Math.round((spend / live.length) * 100) / 100 : 0,
+    lastVisitAt,
+    nextVisitAt: future.at(-1)?.arrivalAt ?? null,
+    daysSinceLastVisit: lastVisitAt
+      ? Math.floor((now - Date.parse(lastVisitAt)) / 86_400_000)
+      : null,
+    bookedOnline,
+    bookedByStaff,
+  };
+}
+
+export async function getCustomerTimeline(
+  phone: string,
+  options: { includeMessages?: boolean } = {}
+): Promise<CustomerTimeline> {
+  const includeMessages = options.includeMessages ?? true;
   const admin = getAdminSupabaseClient();
   const national = normalizePhone(phone);
 
@@ -96,7 +214,9 @@ export async function getCustomerTimeline(phone: string): Promise<CustomerTimeli
 
   // Everything that depends on the thread, plus Rekaz, runs together.
   const [messagesResult, driverOrders, notes, labels, rekaz] = await Promise.all([
-    conversationId ? fetchMessages(conversationId) : Promise.resolve({ rows: [], total: 0 }),
+    conversationId
+      ? fetchMessages(conversationId, includeMessages)
+      : Promise.resolve({ rows: [], total: 0 }),
     fetchDriverOrders(conversationId, national),
     conversationId ? fetchNotes(conversationId) : Promise.resolve([]),
     conversationId ? fetchLabels(conversationId) : Promise.resolve([]),
@@ -127,6 +247,10 @@ export async function getCustomerTimeline(phone: string): Promise<CustomerTimeli
       kind: "booking",
       at: r.arrivalAt,
       id: r.id,
+      // A reservation entered without an order (rare, staff-created) stands
+      // alone as its own visit rather than joining a nonexistent one.
+      orderId: r.order?.id || r.id,
+      orderTotal: r.order?.total ?? 0,
       service: r.service,
       providers: r.providers,
       status: r.status,
@@ -175,6 +299,7 @@ export async function getCustomerTimeline(phone: string): Promise<CustomerTimeli
       bookings: reservations.length,
       cancelled: reservations.filter((r) => r.status === "Cancelled").length,
     },
+    insights: summarizeReservations(reservations),
     events,
     messagesShown: messagesResult.rows.length,
     messagesTotal: messagesResult.total,
@@ -191,22 +316,28 @@ interface MessageRow {
 }
 
 async function fetchMessages(
-  conversationId: string
+  conversationId: string,
+  includeRows: boolean
 ): Promise<{ rows: MessageRow[]; total: number }> {
   const admin = getAdminSupabaseClient();
-  const [{ data }, { count }] = await Promise.all([
-    admin
-      .from("messages")
-      .select("role, content, message_type, metadata, created_at")
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: false })
-      .limit(MESSAGE_LIMIT),
+  // The count is worth keeping even when the rows are not: a caller that hides
+  // messages still says how many exist.
+  const [rows, { count }] = await Promise.all([
+    includeRows
+      ? admin
+          .from("messages")
+          .select("role, content, message_type, metadata, created_at")
+          .eq("conversation_id", conversationId)
+          .order("created_at", { ascending: false })
+          .limit(MESSAGE_LIMIT)
+          .then(({ data }) => (data ?? []) as MessageRow[])
+      : Promise.resolve([] as MessageRow[]),
     admin
       .from("messages")
       .select("id", { count: "exact", head: true })
       .eq("conversation_id", conversationId),
   ]);
-  return { rows: (data ?? []) as MessageRow[], total: count ?? 0 };
+  return { rows, total: count ?? 0 };
 }
 
 interface DriverOrderLite {

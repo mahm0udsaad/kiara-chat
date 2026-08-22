@@ -9,8 +9,8 @@ Expo Router mobile client for Kiara customer-service operations. The current MVP
 - Live typing indicators and animated reordering when assigned chats receive new messages.
 - Employee-scoped push notifications: assigned or exclusively routed chats notify only that team member's registered devices.
 - Conversation details, take-before-composer workflow, and text replies.
-- Reminder confirmation is pinned inside the conversation, with quick actions for
-  `أكدت الحضور` and `لم تؤكد بعد`.
+- A compact conversation-actions button opens one editable review sheet for
+  communication status, booking stage, attendance confirmation, and labels.
 - Orders list and detail with web-parity operational/audit data, reservation editing, assignment, and confirmed dispatch.
 - On-demand AI customer analysis with satisfaction, communication quality, red flags, and recommendations.
 - Authenticated specialist/driver orders with ride confirmation, pickup, service start, and order completion.
@@ -50,6 +50,7 @@ GET  /conversations/:id
 POST /conversations/:id/take
 POST /conversations/:id/reply      { "body": "..." }
 POST /conversations/:id/reservation-follow-up { "dayKey", "status" }
+PUT  /conversations/:id/actions   { "csStatus", "bookingStage", "labelIds", "reminderConfirmation" }
 POST /presence
 POST /push-token                  { "expoToken", "deviceId", "platform" }
 DELETE /push-token                { "deviceId" }

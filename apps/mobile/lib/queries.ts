@@ -1,12 +1,19 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
 
-import { apiRequest, apiUpload, type UploadFile } from "@/lib/api";
+import { ApiError, apiRequest, apiUpload, type UploadFile } from "@/lib/api";
 import type {
   BootstrapResponse,
   CatalogItem,
+  ConversationActionsInput,
   ConversationDetail,
   ConversationSummary,
+  ConversationSection,
   ConversationsResponse,
   CustomerAnalysisResult,
   CustomerTimeline,
@@ -18,6 +25,7 @@ import type {
   FieldSessionState,
   FieldOrder,
   FieldOrderAction,
+  InternalNote,
   OrderDetailResponse,
   OrderPatch,
   OrderSummary,
@@ -25,7 +33,6 @@ import type {
   OrdersCalendarResponse,
   RekazCheckResponse,
   RekazPullResponse,
-  ReminderConfirmation,
   TripType,
 } from "@/types/api";
 import { publicApiRequest } from "@/lib/api";
@@ -44,6 +51,7 @@ export const queryKeys = {
   fieldOrders: ["field-orders"] as const,
   fieldOrder: (id: string) => ["field-order", id] as const,
   customerTimeline: (phone: string) => ["customer-timeline", phone] as const,
+  conversationNotes: (id: string) => ["conversation-notes", id] as const,
   catalog: ["catalog"] as const,
   mediaUrl: (path: string) => ["media-url", path] as const,
 };
@@ -62,13 +70,20 @@ export function useConversations(
   search = "",
   options: { enabled?: boolean } = {},
 ) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: queryKeys.conversations(view, search),
-    queryFn: () => {
-      const params = new URLSearchParams({ view });
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({
+        view,
+        offset: String(pageParam),
+        limit: "50",
+      });
       if (search) params.set("q", search);
       return apiRequest<ConversationsResponse>(`/conversations?${params.toString()}`);
     },
+    getNextPageParam: (lastPage) =>
+      lastPage.conversations.nextOffset ?? undefined,
     enabled: options.enabled ?? true,
     // Keeps the previous page on screen while a new search resolves, so the
     // list never blanks out between keystrokes.
@@ -220,20 +235,14 @@ export function useMediaUrl(path: string | null) {
   });
 }
 
-export function useUpdateReminderConfirmation(id: string) {
+export function useUpdateConversationActions(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: {
-      dayKey: string;
-      status: "awaiting_reply" | "confirmed";
-    }) =>
-      apiRequest<{ reminderConfirmation: ReminderConfirmation }>(
-        `/conversations/${id}/reservation-follow-up`,
-        {
-          method: "POST",
-          body: JSON.stringify(input),
-        },
-      ),
+    mutationFn: (input: ConversationActionsInput) =>
+      apiRequest<{ ok: true }>(`/conversations/${id}/actions`, {
+        method: "PUT",
+        body: JSON.stringify(input),
+      }),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["conversations"] }),
@@ -278,12 +287,21 @@ export function useRekazCheck(options: { enabled?: boolean } = {}) {
     queryFn: () => apiRequest<RekazCheckResponse>("/rekaz/sync"),
     enabled: options.enabled ?? true,
     staleTime: 60_000,
-    refetchInterval: 5 * 60_000,
+    // A disconnected Rekaz account stays disconnected until someone fixes it
+    // on the server, so polling it every five minutes is a login attempt per
+    // phone per five minutes against an account that can be locked out.
+    refetchInterval: (query) =>
+      isRekazAuthError(query.state.error) ? false : 5 * 60_000,
     // Rekaz being unreachable is an integration warning, not a reason to
     // retry hard from every phone on the floor.
-    retry: 1,
+    retry: (failureCount, error) =>
+      !isRekazAuthError(error) && failureCount < 1,
   });
 }
+
+/** A Rekaz failure a retry cannot fix — the salon account needs reconnecting. */
+const isRekazAuthError = (error: unknown) =>
+  error instanceof ApiError && error.code === "REKAZ_AUTH_REQUIRED";
 
 /**
  * Raise the operational order for a Rekaz visit. Creates the pending visit
@@ -322,12 +340,126 @@ export function useRekazPull() {
   });
 }
 
+/**
+ * Everything the actions sheet can do to a conversation beyond its editable
+ * fields. These are immediate operations, not part of the sheet's draft: an
+ * employee who hands a thread to a colleague has handed it over, whether or
+ * not she then presses save.
+ */
+function useConversationMutation<TVariables>(
+  id: string,
+  request: (variables: TVariables) => Promise<unknown>,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: request,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+      ]);
+    },
+  });
+}
+
+/** Hand the thread back to the unassigned queue. */
+export function useReleaseConversation(id: string) {
+  return useConversationMutation(id, () =>
+    apiRequest<{ conversation: ConversationSummary }>(
+      `/conversations/${id}/release`,
+      { method: "POST" },
+    ),
+  );
+}
+
+/** Hand the thread to a named colleague. */
+export function useTransferConversation(id: string) {
+  return useConversationMutation(id, (targetTeamMemberId: string) =>
+    apiRequest<{ conversation: ConversationSummary }>(
+      `/conversations/${id}/transfer`,
+      {
+        method: "POST",
+        body: JSON.stringify({ targetTeamMemberId }),
+      },
+    ),
+  );
+}
+
+/** Owner-only: route the thread to one employee, or clear the route. */
+export function useSetConversationRouting(id: string) {
+  return useConversationMutation(id, (targetTeamMemberId: string | null) =>
+    apiRequest<{ conversation: ConversationSummary }>(
+      `/conversations/${id}/routing`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ targetTeamMemberId }),
+      },
+    ),
+  );
+}
+
+/** Owner-only: file the thread under a section, or clear it. */
+export function useSetConversationSection(id: string) {
+  return useConversationMutation(id, (section: ConversationSection | null) =>
+    apiRequest<{ conversation: ConversationSummary }>(
+      `/conversations/${id}/section`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ section }),
+      },
+    ),
+  );
+}
+
+/** Internal notes — staff-only, never sent to the customer. */
+export function useConversationNotes(id: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.conversationNotes(id),
+    queryFn: () =>
+      apiRequest<{ notes: InternalNote[] }>(`/conversations/${id}/notes`),
+    enabled: Boolean(id) && enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useAddConversationNote(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) =>
+      apiRequest<{ note: InternalNote }>(`/conversations/${id}/notes`, {
+        method: "POST",
+        body: JSON.stringify({ body }),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.conversationNotes(id),
+      });
+    },
+  });
+}
+
 export function useOrder(id: string) {
   return useQuery({
     queryKey: queryKeys.order(id),
     queryFn: () => apiRequest<OrderDetailResponse>(`/orders/${id}`),
     enabled: Boolean(id),
     refetchInterval: 20_000,
+  });
+}
+
+/**
+ * The AI read of one customer's experience, from her profile.
+ *
+ * A mutation rather than a query on purpose: it costs a model call, so it
+ * happens when an employee asks for it and never on screen open.
+ */
+export function useAnalyzeCustomer(phone: string) {
+  return useMutation({
+    mutationFn: () =>
+      apiRequest<{ analysis: CustomerAnalysisResult }>(
+        `/customers/${encodeURIComponent(phone)}/analysis`,
+        { method: "POST" },
+      ),
   });
 }
 
@@ -349,7 +481,9 @@ export function useCustomerTimeline(phone: string) {
     queryKey: queryKeys.customerTimeline(phone),
     queryFn: () =>
       apiRequest<CustomerTimeline>(
-        `/customers/${encodeURIComponent(phone)}/timeline`,
+        // The profile renders her visits, not her chat: asking for the
+        // timeline without messages keeps the response to what it shows.
+        `/customers/${encodeURIComponent(phone)}/timeline?messages=0`,
       ),
     enabled: Boolean(phone),
     staleTime: 2 * 60_000,

@@ -1,5 +1,5 @@
 import { Link, Stack } from "expo-router";
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import Animated, {
   FadeIn,
@@ -7,7 +7,8 @@ import Animated, {
   LinearTransition,
 } from "react-native-reanimated";
 
-import { EmptyState, ErrorState } from "@/components/screen-state";
+import { PrimaryButton } from "@/components/primary-button";
+import { EmptyState, ErrorState, InlineAlert } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge, CountBadge } from "@/components/ui/badge";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -147,8 +148,19 @@ export default function InboxScreen() {
   const deferredSearch = useDeferredValue(search);
   const conversations = useConversations(view, deferredSearch.trim());
 
-  const counts = conversations.data?.counts;
-  const items = conversations.data?.conversations.items ?? [];
+  const firstPage = conversations.data?.pages[0];
+  const counts = firstPage?.counts;
+  const items = useMemo(() => {
+    const seen = new Set<string>();
+    return (conversations.data?.pages ?? [])
+      .flatMap((page) => page.conversations.items)
+      .filter((conversation) => {
+        if (seen.has(conversation.id)) return false;
+        seen.add(conversation.id);
+        return true;
+      });
+  }, [conversations.data?.pages]);
+  const total = firstPage?.conversations.total ?? items.length;
   const showSkeleton = conversations.isLoading && items.length === 0;
 
   return (
@@ -219,20 +231,39 @@ export default function InboxScreen() {
           )
         }
         ListFooterComponent={
-          conversations.data?.conversations.hasMore ? (
+          items.length ? (
             <View
               style={{
-                flexDirection: "row-reverse",
-                alignItems: "center",
-                justifyContent: "center",
                 gap: spacing.sm,
                 paddingVertical: spacing.lg,
               }}
             >
-              <IconSymbol name="info.circle" color={colors.textTertiary} size={15} />
-              <Text style={{ ...type.footnote, color: colors.textTertiary, ...rtlText }}>
-                يتم عرض أحدث {conversations.data.conversations.items.length} محادثة
-              </Text>
+              {conversations.isFetchNextPageError ? (
+                <InlineAlert message={conversations.error.message} />
+              ) : null}
+              <View
+                style={{
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: spacing.sm,
+                }}
+              >
+                <IconSymbol name="info.circle" color={colors.textTertiary} size={15} />
+                <Text style={{ ...type.footnote, color: colors.textTertiary, ...rtlText }}>
+                  يتم عرض {items.length} من {total} محادثة
+                </Text>
+              </View>
+              {conversations.hasNextPage ? (
+                <PrimaryButton
+                  testID="conversations-load-more"
+                  label="عرض المزيد"
+                  icon="plus"
+                  variant="tinted"
+                  loading={conversations.isFetchingNextPage}
+                  onPress={() => void conversations.fetchNextPage()}
+                />
+              ) : null}
             </View>
           ) : null
         }

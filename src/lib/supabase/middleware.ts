@@ -9,12 +9,14 @@ const publicMarketingRoutes = ["/privacy", "/terms", "/support"];
 
 const publicRoutes = [...authEntryRoutes, ...publicMarketingRoutes];
 
-// Bypass the cookie-auth redirect: webhooks (OpenWA ingest) and mobile API
-// authenticate themselves (signature / Bearer), and the middleware's
-// cookie-only client can't validate those.
+// Bypass the cookie-auth redirect: webhooks (OpenWA ingest), scheduled cron
+// callers and the mobile API authenticate themselves (signature / shared
+// secret / Bearer), and the middleware's cookie-only client can't validate
+// those.
 const publicPrefixes = [
   "/api/webhooks/",
   "/api/internal/",
+  "/api/cron/",
   "/api/mobile/",
   "/api/session/",
   "/session/",

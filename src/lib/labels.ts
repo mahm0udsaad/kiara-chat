@@ -44,6 +44,19 @@ export async function getLabelAssignments(): Promise<Record<string, string[]>> {
   return map;
 }
 
+/** Label ids currently attached to one conversation. */
+export async function getConversationLabelIds(
+  conversationId: string
+): Promise<string[]> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("conversation_label_assignments")
+    .select("label_id")
+    .eq("conversation_id", conversationId);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => String(row.label_id));
+}
+
 export async function createLabel(
   userId: string,
   name: string,

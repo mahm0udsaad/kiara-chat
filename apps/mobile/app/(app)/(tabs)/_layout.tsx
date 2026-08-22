@@ -63,7 +63,7 @@ export default function TabsLayout() {
     );
   }
 
-  const unreadCount = newConversations.data?.counts.new ?? 0;
+  const unreadCount = newConversations.data?.pages[0]?.counts.new ?? 0;
 
   return (
     <NativeTabs tintColor={colors.brand} minimizeBehavior="onScrollDown">

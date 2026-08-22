@@ -1,8 +1,9 @@
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
+  Pressable,
   Text,
   TextInput,
   View,
@@ -10,12 +11,12 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Composer } from "@/components/inbox/composer";
+import { ConversationActionsButton } from "@/components/conversation-actions-button";
 import {
   MEDIA_MESSAGE_TYPES,
   MediaAttachment,
 } from "@/components/inbox/media-attachment";
 import { PrimaryButton } from "@/components/primary-button";
-import { ReminderConfirmationStrip } from "@/components/reminder-confirmation-strip";
 import { TypingIndicator } from "@/components/typing-indicator";
 import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-state";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +35,7 @@ import {
   useMarkConversationRead,
   useTakeConversation,
   useTakeOverConversation,
-  useUpdateReminderConfirmation,
+  useUpdateConversationActions,
 } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import { useInboxLive } from "@/providers/inbox-live-provider";
@@ -199,6 +200,7 @@ export default function ConversationScreen() {
   const { colors } = useTheme();
   const { isTyping } = useInboxLive();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const params = useLocalSearchParams<{ id: string | string[] }>();
   const id = useMemo(
     () => (Array.isArray(params.id) ? (params.id[0] ?? "") : (params.id ?? "")),
@@ -210,7 +212,7 @@ export default function ConversationScreen() {
   const { mutate: markRead } = useMarkConversationRead(id);
   const take = useTakeConversation(id);
   const takeover = useTakeOverConversation(id);
-  const reminderConfirmation = useUpdateReminderConfirmation(id);
+  const conversationActions = useUpdateConversationActions(id);
   const [takeoverReason, setTakeoverReason] = useState("");
 
   const messages = conversation.data?.messages;
@@ -237,7 +239,7 @@ export default function ConversationScreen() {
       current.assigned_to === bootstrap.data.session.teamMemberId,
   );
   const isAdmin = bootstrap.data?.session.role === "admin";
-  const canUpdateReminder = isAdmin || isAssignedToMe;
+  const canUpdateConversation = isAdmin || isAssignedToMe;
   // Being an admin is not itself permission to reply into someone else's
   // thread. The server returns TAKEOVER_REQUIRED for that, and the composer
   // below offers the takeover instead of a text box.
@@ -252,7 +254,56 @@ export default function ConversationScreen() {
       keyboardVerticalOffset={insets.top + 44}
       style={{ flex: 1, backgroundColor: colors.background }}
     >
-      <Stack.Screen options={{ title: current.customer_name || current.customer_phone }} />
+      {/* The name in the header is the way into the customer's record: an
+          employee mid-chat wants her history, not a trip through the calendar
+          to find the same person. `title` stays set so the back button on the
+          pushed screen still has a short label to fall back to. */}
+      <Stack.Screen
+        options={{
+          title: current.customer_name || current.customer_phone,
+          headerTitle: () => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`ملف ${current.customer_name || current.customer_phone}`}
+              accessibilityHint="يفتح سجل العميلة وحجوزاتها"
+              onPress={() =>
+                router.push({
+                  pathname: "/customer/[phone]",
+                  params: {
+                    phone: current.customer_phone,
+                    name: current.customer_name ?? "",
+                  },
+                })
+              }
+              style={({ pressed }) => ({
+                alignItems: "center",
+                gap: 1,
+                paddingHorizontal: spacing.sm,
+                opacity: pressed ? 0.6 : 1,
+              })}
+            >
+              <Text
+                numberOfLines={1}
+                style={{ ...type.headline, color: colors.text, ...rtlText }}
+              >
+                {current.customer_name || current.customer_phone}
+              </Text>
+              <View
+                style={{
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  gap: spacing.xs,
+                }}
+              >
+                <IconSymbol name="person.crop.circle" size={11} color={colors.brand} />
+                <Text style={{ ...type.caption, color: colors.brand }}>
+                  عرض الملف
+                </Text>
+              </View>
+            </Pressable>
+          ),
+        }}
+      />
 
       {/* Pinned context strip — status must stay visible while scrolling back.
           Kept to a single line: `nowrap` plus a shrinking phone means a long
@@ -290,26 +341,28 @@ export default function ConversationScreen() {
         >
           {current.customer_phone}
         </Text>
-      </View>
-
-      {current.reminderConfirmation ? (
-        <ReminderConfirmationStrip
+        <ConversationActionsButton
+          conversationId={id}
+          csStatus={current.csStatus}
+          bookingStage={current.bookingStage}
           reminder={current.reminderConfirmation}
-          canEdit={canUpdateReminder}
-          pendingStatus={
-            reminderConfirmation.isPending
-              ? reminderConfirmation.variables.status
-              : null
-          }
-          error={reminderConfirmation.error?.message ?? null}
-          onChange={(status) =>
-            reminderConfirmation.mutate({
-              dayKey: current.reminderConfirmation!.dayKey,
-              status,
-            })
+          labelIds={current.labelIds}
+          labels={bootstrap.data?.labels ?? []}
+          bookingStages={bootstrap.data?.bookingStages ?? []}
+          agents={bootstrap.data?.agents ?? []}
+          assignedTo={current.assigned_to}
+          myTeamMemberId={bootstrap.data?.session.teamMemberId ?? null}
+          isAdmin={Boolean(isAdmin)}
+          section={current.section}
+          routedTo={current.routedTo}
+          canEdit={canUpdateConversation}
+          pending={conversationActions.isPending}
+          error={conversationActions.error?.message ?? null}
+          onSave={(input, onSuccess) =>
+            conversationActions.mutate(input, { onSuccess })
           }
         />
-      ) : null}
+      </View>
 
       <FlatList
         // Inverted so new messages land at the bottom without manual scrolling.

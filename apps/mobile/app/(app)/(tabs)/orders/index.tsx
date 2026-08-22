@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 
+import { ApiError } from "@/lib/api";
 import { EmptyState, ErrorState } from "@/components/screen-state";
 import { Badge } from "@/components/ui/badge";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -176,6 +177,12 @@ function RekazBanner({ selectedDayVisible }: { selectedDayVisible: boolean }) {
 
   const pending = check.data?.preview.pending ?? 0;
   const failed = check.isError;
+  // Rekaz closed anonymous reads in Aug 2026: the salon account has to be
+  // connected on the server. That is an admin task, not something the employee
+  // on the floor can retry her way out of, so it gets its own wording and no
+  // pull button.
+  const needsReconnect =
+    check.error instanceof ApiError && check.error.code === "REKAZ_AUTH_REQUIRED";
 
   if (!failed && pending === 0 && !pull.isPending) return null;
 
@@ -212,7 +219,9 @@ function RekazBanner({ selectedDayVisible }: { selectedDayVisible: boolean }) {
           }}
         >
           {failed
-            ? "تعذّر فحص تحديثات ركاز"
+            ? needsReconnect
+              ? (check.error?.message ?? "يحتاج ركاز إلى إعادة ربط الحساب")
+              : "تعذّر فحص تحديثات ركاز"
             : `${pending} تغييرات جديدة من ركاز لم يتم سحبها`}
         </Text>
       </View>
@@ -245,6 +254,7 @@ function RekazBanner({ selectedDayVisible }: { selectedDayVisible: boolean }) {
       ) : null}
 
       <View style={{ flexDirection: "row-reverse", gap: spacing.sm }}>
+        {needsReconnect ? null : (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="سحب تغييرات ركاز الآن"
@@ -268,6 +278,7 @@ function RekazBanner({ selectedDayVisible }: { selectedDayVisible: boolean }) {
             </Text>
           )}
         </Pressable>
+        )}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="إعادة فحص تحديثات ركاز"
@@ -361,7 +372,7 @@ function VisitCard({ visit }: { visit: CalendarVisit }) {
                 tap from also opening the order. */}
             <Link
               href={{
-                pathname: "/orders/customer/[phone]",
+                pathname: "/customer/[phone]",
                 params: { phone: visit.customerPhone, name: visit.customerName },
               }}
               asChild

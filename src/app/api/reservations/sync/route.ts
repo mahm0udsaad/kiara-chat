@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { fetchRekazReservations, isCancelledReservation } from "@/lib/rekaz";
+import { RekazAuthError } from "@/lib/rekaz-auth";
 import {
   fillMissingCustomerNames,
   publishReservationsSnapshot,
@@ -21,6 +22,15 @@ import { applyRekazSync, previewRekazSync } from "@/lib/rekaz-sync";
 /** Two pages of Rekaz plus a bucket write; comfortably inside this. */
 export const maxDuration = 60;
 
+/** Why the login failed, in words the salon can act on. */
+function rekazAuthMessage(error: RekazAuthError): string {
+  if (error.reason === "not_configured") {
+    return "لم يتم ربط حساب ركاز بعد — أضيفي بيانات الدخول في إعدادات الخادم";
+  }
+  if (error.reason === "unreachable") return "تعذّر الوصول إلى منصة ركاز";
+  return "انتهت صلاحية جلسة ركاز — أعيدي ربط الحساب";
+}
+
 export async function GET() {
   const session = await getKiaraSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -35,6 +45,9 @@ export async function GET() {
     });
   } catch (error) {
     console.error("[reservations/sync] preview failed", error);
+    if (error instanceof RekazAuthError) {
+      return NextResponse.json({ error: rekazAuthMessage(error) }, { status: 424 });
+    }
     return NextResponse.json(
       { error: "تعذّر فحص تحديثات ركاز — حاولي بعد قليل" },
       { status: 502 },
@@ -51,6 +64,9 @@ export async function POST() {
     fetched = await fetchRekazReservations();
   } catch (e) {
     console.error("[reservations/sync] Rekaz fetch failed", e);
+    if (e instanceof RekazAuthError) {
+      return NextResponse.json({ error: rekazAuthMessage(e) }, { status: 424 });
+    }
     return NextResponse.json(
       { error: "تعذّر الاتصال بمنصة ركاز — حاولي بعد قليل" },
       { status: 502 }

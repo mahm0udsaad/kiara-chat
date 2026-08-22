@@ -1,17 +1,23 @@
 /**
  * Kiara's schedule, read straight off the Rekaz platform.
  *
- * The client hasn't enabled the "الوصول لـ API" integration, so there is no API
- * key and no OAuth — but the platform's own SPA endpoint answers a plain server
- * request as long as it carries the tenant id in the `__tenant` header. No
- * session cookie, no antiforgery pair (those are only needed for the endpoints
- * that write). That is what lets /orders refresh itself from a button instead
- * of someone exporting rows out of a logged-in browser.
+ * The client still hasn't enabled the "الوصول لـ API" integration, so there is
+ * no API key — the platform's own SPA endpoint is what this reads, carrying the
+ * tenant id in the `__tenant` header.
  *
- * If Rekaz ever closes that door, this module is the only thing that changes:
- * everything downstream consumes `RekazReservation`.
+ * That endpoint used to answer any request that named the tenant. On
+ * 2026-08-22 it stopped: it now returns 401 with `www-authenticate: Bearer`.
+ * The door the module was built on closed, exactly as the old comment here
+ * anticipated, so requests now also carry a credential obtained by logging in
+ * as the salon's own Rekaz user — see `src/lib/rekaz-auth.ts`. Everything
+ * downstream still consumes `RekazReservation` and did not change.
  */
 import type { RekazReservation } from "@/lib/reservations";
+import {
+  invalidateRekazAuth,
+  RekazAuthError,
+  rekazAuthHeaders,
+} from "@/lib/rekaz-auth";
 
 const REKAZ_API = "https://platform.rekaz.io/api/app/reservation";
 
@@ -159,14 +165,35 @@ async function fetchPage(
   url.searchParams.set("Sorting", "date desc");
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
-  const res = await fetch(url, {
-    headers: {
-      "X-Requested-With": "XMLHttpRequest",
-      __tenant: REKAZ_TENANT_ID,
-      Accept: "application/json",
-    },
-    cache: "no-store",
-  });
+  const read = async () => {
+    const auth = await rekazAuthHeaders();
+    return fetch(url, {
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+        __tenant: REKAZ_TENANT_ID,
+        Accept: "application/json",
+        ...auth,
+      },
+      cache: "no-store",
+    });
+  };
+
+  let res = await read();
+  if (res.status === 401 || res.status === 403) {
+    // The credential expired mid-window, or Rekaz invalidated the session.
+    // One re-login, then believe the answer: retrying a genuine rejection in a
+    // loop is how an account gets locked.
+    invalidateRekazAuth();
+    res = await read();
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    throw new RekazAuthError(
+      "Rekaz refused the salon session",
+      "rejected",
+      `HTTP ${res.status}`
+    );
+  }
   if (!res.ok) {
     throw new Error(`Rekaz responded ${res.status}`);
   }

@@ -17,8 +17,6 @@ export default function OrdersLayout() {
       }}
     >
       <Stack.Screen name="index" options={{ title: "الطلبات" }} />
-      {/* Static segment, so it resolves ahead of the sibling `[id]` route. */}
-      <Stack.Screen name="customer/[phone]" options={{ title: "ملف العميلة" }} />
       <Stack.Screen name="[id]/index" options={{ title: "تفاصيل الطلب" }} />
       <Stack.Screen
         name="[id]/edit"

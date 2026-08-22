@@ -14,6 +14,22 @@ export type BookingStage =
   | "in_progress"
   | "completed";
 
+export type LabelColor =
+  | "slate"
+  | "red"
+  | "amber"
+  | "emerald"
+  | "blue"
+  | "indigo"
+  | "fuchsia"
+  | "rose";
+
+export type ConversationLabel = {
+  id: string;
+  name: string;
+  color: LabelColor;
+};
+
 export type BootstrapResponse = {
   apiVersion: 1;
   session: {
@@ -34,7 +50,9 @@ export type BootstrapResponse = {
     dangerAfterSeconds: number;
     views: { id: InboxView; label: string }[];
   };
+  bookingStages: { id: BookingStage; label: string }[];
   agents: { id: string; fullName: string | null; email: string | null }[];
+  labels: ConversationLabel[];
   savedReplies: SavedReply[];
 };
 
@@ -96,9 +114,23 @@ export type CatalogItem = {
   isAvailable: boolean;
 };
 
+/** قسم الطلبات / قسم الردود — how the owner files a thread. */
+export type ConversationSection = "orders" | "replies";
+
+export type InternalNote = {
+  id: string;
+  body: string;
+  author_user_id: string | null;
+  created_at: string;
+};
+
 export type ConversationDetail = {
   conversation: ConversationSummary & {
     reminderConfirmation: ReminderConfirmation | null;
+    labelIds: string[];
+    /** Detail-only; older API builds omit both. */
+    section?: ConversationSection | null;
+    routedTo?: string | null;
   };
   messages: ConversationMessage[];
   hasMore: boolean;
@@ -116,6 +148,16 @@ export type ReminderConfirmation = {
   status: ReminderConfirmationStatus;
   remindedAt: string | null;
   updatedAt: string | null;
+};
+
+export type ConversationActionsInput = {
+  csStatus: CsStatus;
+  bookingStage: BookingStage | null;
+  labelIds: string[];
+  reminderConfirmation: {
+    dayKey: string;
+    status: "awaiting_reply" | "confirmed";
+  } | null;
 };
 
 export type OrderSummary = {
@@ -280,6 +322,9 @@ export type TimelineEvent =
       kind: "booking";
       at: string;
       id: string;
+      /** The Rekaz order this service was booked under; one visit, one id. */
+      orderId?: string;
+      orderTotal?: number;
       service: string;
       providers: string[];
       status: string;
@@ -298,6 +343,19 @@ export type TimelineEvent =
     }
   | { kind: "note"; at: string; body: string; author: string | null };
 
+/** Mirrors `CustomerInsights` in src/lib/customer-timeline.ts. */
+export type CustomerInsights = {
+  topServices: { name: string; count: number; spend: number }[];
+  favoriteProvider: { name: string; visits: number } | null;
+  cancelledRate: number;
+  avgSpend: number;
+  lastVisitAt: string | null;
+  nextVisitAt: string | null;
+  daysSinceLastVisit: number | null;
+  bookedOnline: number;
+  bookedByStaff: number;
+};
+
 export type CustomerTimeline = {
   customer: {
     phone: string;
@@ -315,6 +373,9 @@ export type CustomerTimeline = {
     bookings: number;
     cancelled: number;
   };
+  // Older API builds predate the profile screen and omit this; the screen
+  // falls back rather than crashing on a deploy skew.
+  insights?: CustomerInsights;
   events: TimelineEvent[];
   messagesShown: number;
   messagesTotal: number;

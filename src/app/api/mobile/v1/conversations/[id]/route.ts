@@ -5,6 +5,8 @@ import {
 } from "@/lib/inbox";
 import { toMobileConversation } from "@/lib/mobile/conversations";
 import { mobileReminderConfirmationFor } from "@/lib/mobile/reminders";
+import { routedToOf, sectionOf } from "@/lib/conversation-meta";
+import { getConversationLabelIds } from "@/lib/labels";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -43,18 +45,24 @@ export async function GET(
       );
     }
 
-    const [page, reminderConfirmation] = await Promise.all([
+    const [page, reminderConfirmation, labelIds] = await Promise.all([
       getConversationMessages(id, { limit: MESSAGE_PAGE_SIZE }),
       mobileReminderConfirmationFor({
         customerPhone: conversation.customer_phone,
         metadata: conversation.metadata,
       }),
+      getConversationLabelIds(id),
     ]);
 
     return mobileData({
       conversation: {
         ...toMobileConversation(conversation),
         reminderConfirmation,
+        labelIds,
+        // Detail-only: the actions sheet shows and edits these, the inbox list
+        // has no use for them.
+        section: sectionOf(conversation),
+        routedTo: routedToOf(conversation),
       },
       messages: page.messages,
       hasMore: page.hasMore,

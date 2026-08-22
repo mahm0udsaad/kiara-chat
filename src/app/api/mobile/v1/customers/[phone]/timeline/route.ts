@@ -69,7 +69,12 @@ export async function GET(
 
     // No conversation at all means there is no routed thread to protect — the
     // remaining data is the salon's own Rekaz booking history.
-    const timeline = await getCustomerTimeline(phone);
+    // The profile screen is a booking record, not a second inbox: it asks for
+    // the timeline without messages so the response carries her visits rather
+    // than forty chat lines she can read in the thread itself.
+    const includeMessages =
+      new URL(request.url).searchParams.get("messages") !== "0";
+    const timeline = await getCustomerTimeline(phone, { includeMessages });
     return mobileData(timeline);
   } catch (error) {
     return mobileServerError(
