@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { BookingSheet } from "@/components/inbox/booking-sheet";
 import { Composer } from "@/components/inbox/composer";
 import { ConversationActionsButton } from "@/components/conversation-actions-button";
 import {
@@ -22,6 +23,7 @@ import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-stat
 import { Badge } from "@/components/ui/badge";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { findSharedLocation } from "@/lib/location";
 import {
   bookingStageLabel,
   csStatusLabel,
@@ -32,6 +34,7 @@ import {
 import {
   useBootstrap,
   useConversation,
+  useDismissBookingRequest,
   useMarkConversationRead,
   useTakeConversation,
   useTakeOverConversation,
@@ -213,10 +216,20 @@ export default function ConversationScreen() {
   const take = useTakeConversation(id);
   const takeover = useTakeOverConversation(id);
   const conversationActions = useUpdateConversationActions(id);
+  const dismissBooking = useDismissBookingRequest(id);
   const [takeoverReason, setTakeoverReason] = useState("");
+  const [bookingOpen, setBookingOpen] = useState(false);
 
   const messages = conversation.data?.messages;
   const chatItems = useMemo(() => buildChatItems(messages ?? []), [messages]);
+  // Read from the thread the same way the web inbox does, so a pin or a maps
+  // link she already sent fills the booking sheet instead of being retyped.
+  // The server sends the same value; this keeps working against older builds
+  // of the API that do not.
+  const sharedLocation = useMemo(
+    () => conversation.data?.sharedLocation ?? findSharedLocation(messages ?? []),
+    [conversation.data?.sharedLocation, messages],
+  );
 
   useEffect(() => {
     if ((conversation.data?.conversation.unread_count ?? 0) > 0) markRead();
@@ -234,6 +247,7 @@ export default function ConversationScreen() {
   }
 
   const current = conversation.data.conversation;
+  const booking = current.bookingRequest ?? null;
   const isAssignedToMe = Boolean(
     bootstrap.data?.session.teamMemberId &&
       current.assigned_to === bootstrap.data.session.teamMemberId,
@@ -267,7 +281,7 @@ export default function ConversationScreen() {
               accessibilityLabel={`ملف ${current.customer_name || current.customer_phone}`}
               accessibilityHint="يفتح سجل العميلة وحجوزاتها"
               onPress={() =>
-                router.push({
+                router.navigate({
                   pathname: "/customer/[phone]",
                   params: {
                     phone: current.customer_phone,
@@ -341,6 +355,44 @@ export default function ConversationScreen() {
         >
           {current.customer_phone}
         </Text>
+        {/* Confirming an appointment is the most common thing an employee does
+            mid-chat, so it sits in the pinned strip rather than behind the
+            composer's attachment menu — reachable whether or not the assistant
+            collected a booking first. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="تأكيد الحجز وطلب السائق"
+          accessibilityHint="يفتح نموذج حفظ الموعد"
+          onPress={() => setBookingOpen(true)}
+          style={({ pressed }) => ({
+            flexDirection: "row-reverse",
+            alignItems: "center",
+            gap: spacing.xs,
+            minHeight: hitSize.min - 8,
+            paddingHorizontal: spacing.sm + 2,
+            borderRadius: radius.full,
+            backgroundColor: pressed ? colors.brand : colors.brandSoft,
+          })}
+        >
+          {({ pressed }) => (
+            <>
+              <IconSymbol
+                name="calendar"
+                size={14}
+                color={pressed ? colors.onBrand : colors.onBrandSoft}
+              />
+              <Text
+                style={{
+                  ...type.caption,
+                  color: pressed ? colors.onBrand : colors.onBrandSoft,
+                  ...rtlText,
+                }}
+              >
+                حجز
+              </Text>
+            </>
+          )}
+        </Pressable>
         <ConversationActionsButton
           conversationId={id}
           csStatus={current.csStatus}
@@ -363,6 +415,90 @@ export default function ConversationScreen() {
           }
         />
       </View>
+
+      {/* The assistant collected the details; a human still owns the date. The
+          banner pins to the top of the thread, like the web inbox, so it is the
+          first thing seen on opening the chat rather than something to scroll
+          back for. */}
+      {booking ? (
+        <View
+          style={{
+            gap: spacing.sm,
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.md,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.border,
+            backgroundColor: colors.brandSoft,
+          }}
+        >
+          <View
+            style={{
+              flexDirection: "row-reverse",
+              alignItems: "center",
+              gap: spacing.sm,
+            }}
+          >
+            <IconSymbol name="calendar" color={colors.onBrandSoft} size={17} />
+            <Text
+              style={{
+                flex: 1,
+                ...type.subheadStrong,
+                color: colors.onBrandSoft,
+                ...rtlText,
+              }}
+            >
+              جمع المساعد تفاصيل حجز
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="تجاهل طلب الحجز"
+              disabled={dismissBooking.isPending}
+              onPress={() => dismissBooking.mutate()}
+              hitSlop={spacing.sm}
+              style={({ pressed }) => ({
+                width: hitSize.min - 12,
+                height: hitSize.min - 12,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: radius.full,
+                opacity: pressed || dismissBooking.isPending ? 0.5 : 1,
+              })}
+            >
+              <IconSymbol name="xmark" color={colors.onBrandSoft} size={15} />
+            </Pressable>
+          </View>
+
+          <Text
+            selectable
+            style={{ ...type.footnote, color: colors.onBrandSoft, ...rtlText }}
+          >
+            {[
+              booking.service ? `الخدمة: ${booking.service}` : "",
+              booking.time ? `الموعد: ${booking.time}` : "",
+              booking.location ? `الموقع: ${booking.location}` : "",
+            ]
+              .filter(Boolean)
+              .join(" · ") || booking.summary}
+          </Text>
+
+          <PrimaryButton
+            label="تأكيد الحجز وطلب السائق"
+            icon="checkmark.circle"
+            onPress={() => setBookingOpen(true)}
+          />
+          {dismissBooking.error ? (
+            <InlineAlert message={dismissBooking.error.message} />
+          ) : null}
+        </View>
+      ) : null}
+
+      <BookingSheet
+        open={bookingOpen}
+        onClose={() => setBookingOpen(false)}
+        conversationId={id}
+        booking={booking}
+        sharedLocation={sharedLocation}
+      />
 
       <FlatList
         // Inverted so new messages land at the bottom without manual scrolling.

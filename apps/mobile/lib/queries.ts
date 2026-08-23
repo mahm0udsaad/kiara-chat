@@ -14,7 +14,9 @@ import type {
   ConversationDetail,
   ConversationSummary,
   ConversationSection,
+  ConversationFilters,
   ConversationsResponse,
+  CreateOrderInput,
   CustomerAnalysisResult,
   CustomerTimeline,
   InboxView,
@@ -33,14 +35,26 @@ import type {
   OrdersCalendarResponse,
   RekazCheckResponse,
   RekazPullResponse,
+  SavedReply,
   TripType,
 } from "@/types/api";
 import { publicApiRequest } from "@/lib/api";
 
 export const queryKeys = {
   bootstrap: ["bootstrap"] as const,
-  conversations: (view: InboxView, search: string) =>
-    ["conversations", view, search] as const,
+  conversations: (
+    view: InboxView,
+    search: string,
+    filters: ConversationFilters = EMPTY_CONVERSATION_FILTERS,
+  ) =>
+    [
+      "conversations",
+      view,
+      search,
+      filters.status ?? "",
+      filters.section ?? "",
+      filters.labelId ?? "",
+    ] as const,
   conversation: (id: string) => ["conversation", id] as const,
   orders: (search: string) => ["orders", search] as const,
   ordersCalendar: (from: string, to: string) => ["orders-calendar", from, to] as const,
@@ -65,13 +79,21 @@ export function useBootstrap(enabled = true) {
   });
 }
 
+/** No refinement beyond the open view — the inbox's resting state. */
+export const EMPTY_CONVERSATION_FILTERS: ConversationFilters = {
+  status: null,
+  section: null,
+  labelId: null,
+};
+
 export function useConversations(
   view: InboxView,
   search = "",
-  options: { enabled?: boolean } = {},
+  options: { enabled?: boolean; filters?: ConversationFilters } = {},
 ) {
+  const filters = options.filters ?? EMPTY_CONVERSATION_FILTERS;
   return useInfiniteQuery({
-    queryKey: queryKeys.conversations(view, search),
+    queryKey: queryKeys.conversations(view, search, filters),
     initialPageParam: 0,
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams({
@@ -80,6 +102,9 @@ export function useConversations(
         limit: "50",
       });
       if (search) params.set("q", search);
+      if (filters.status) params.set("status", filters.status);
+      if (filters.section) params.set("section", filters.section);
+      if (filters.labelId) params.set("label", filters.labelId);
       return apiRequest<ConversationsResponse>(`/conversations?${params.toString()}`);
     },
     getNextPageParam: (lastPage) =>
@@ -248,6 +273,66 @@ export function useUpdateConversationActions(id: string) {
         queryClient.invalidateQueries({ queryKey: ["conversations"] }),
         queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
       ]);
+    },
+  });
+}
+
+/**
+ * Confirm the appointment from inside the chat.
+ *
+ * Creates the pending visit only — the caller then opens the dispatch screen,
+ * where the exact driver and specialist messages are reviewed before anything
+ * is sent. Creating the order also clears the assistant's booking request, so
+ * the conversation is refetched alongside the order lists.
+ */
+export function useCreateConversationOrder(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateOrderInput) =>
+      apiRequest<{ order: OrderSummary }>(`/conversations/${id}/orders`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["orders"] }),
+        queryClient.invalidateQueries({ queryKey: ["orders-calendar"] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
+      ]);
+    },
+  });
+}
+
+/** Drop the assistant's booking request without booking anything. */
+export function useDismissBookingRequest(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiRequest<{ ok: true }>(`/conversations/${id}/booking-request`, {
+        method: "DELETE",
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.conversation(id),
+      });
+    },
+  });
+}
+
+/**
+ * Save a canned reply written on the phone. The sheet reads its list from the
+ * bootstrap payload, so that is what has to come back fresh.
+ */
+export function useCreateSavedReply() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { title: string; body: string }) =>
+      apiRequest<{ savedReply: SavedReply }>("/saved-replies", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap });
     },
   });
 }

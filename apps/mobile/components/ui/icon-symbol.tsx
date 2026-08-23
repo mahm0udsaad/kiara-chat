@@ -57,7 +57,8 @@ export type IconName =
   | "play.fill"
   | "pause.fill"
   | "trash"
-  | "waveform";
+  | "waveform"
+  | "slider.horizontal.3";
 
 const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcons>["name"]> = {
   message: "chat-bubble-outline",
@@ -109,6 +110,7 @@ const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcon
   "pause.fill": "pause",
   trash: "delete-outline",
   waveform: "graphic-eq",
+  "slider.horizontal.3": "tune",
 };
 
 type Props = {

@@ -5,7 +5,12 @@ import {
 } from "@/lib/inbox";
 import { toMobileConversation } from "@/lib/mobile/conversations";
 import { mobileReminderConfirmationFor } from "@/lib/mobile/reminders";
-import { routedToOf, sectionOf } from "@/lib/conversation-meta";
+import {
+  bookingRequestOf,
+  routedToOf,
+  sectionOf,
+} from "@/lib/conversation-meta";
+import { findSharedLocation } from "@/lib/location";
 import { getConversationLabelIds } from "@/lib/labels";
 import {
   authorizeMobileRequest,
@@ -63,8 +68,14 @@ export async function GET(
         // has no use for them.
         section: sectionOf(conversation),
         routedTo: routedToOf(conversation),
+        // The booking the bot collected, so the chat screen can offer
+        // "تأكيد الحجز" the same way the web inbox banner does.
+        bookingRequest: bookingRequestOf(conversation),
       },
       messages: page.messages,
+      // Prefills the booking sheet's location field: a pin she dropped is the
+      // address, so the phone should not make anyone retype it.
+      sharedLocation: findSharedLocation(page.messages),
       hasMore: page.hasMore,
       nextBefore: page.hasMore ? page.messages[0]?.created_at ?? null : null,
     });

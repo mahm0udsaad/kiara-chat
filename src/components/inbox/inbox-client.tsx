@@ -67,7 +67,6 @@ import { Button } from "@/components/ui/button";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
 import type {
-  BookingRequest,
   Conversation,
   ConversationSection,
   Message,
@@ -85,6 +84,7 @@ import {
 import {
   SECTION_LABEL,
   SECTION_ORDER,
+  bookingRequestOf,
   canViewConversation,
   routedToOf,
   sectionOf,
@@ -209,13 +209,6 @@ function MenuItem({
       {label}
     </button>
   );
-}
-
-/** The bot-collected booking details awaiting a human, if any. */
-function bookingRequestOf(c: Conversation): BookingRequest | null {
-  const br = (c.metadata as { booking_request?: BookingRequest } | null)
-    ?.booking_request;
-  return br && br.status === "pending" ? br : null;
 }
 
 function csStatusOf(c: Conversation): CsStatus {

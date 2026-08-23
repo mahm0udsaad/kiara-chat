@@ -1,4 +1,6 @@
 import { bookingStageOf } from "@/lib/booking-stage";
+import { sectionOf } from "@/lib/conversation-meta";
+import { getLabelAssignments } from "@/lib/labels";
 import { listRosterContactPhones } from "@/lib/dispatch";
 import { listConversations } from "@/lib/inbox";
 import {
@@ -8,7 +10,11 @@ import {
   type MobilePage,
 } from "@/lib/mobile/contracts";
 import { normalizePhone, phoneMatches } from "@/lib/phone";
-import type { Conversation, CsStatus } from "@/lib/types";
+import type {
+  Conversation,
+  ConversationSection,
+  CsStatus,
+} from "@/lib/types";
 
 const MAX_MOBILE_CONVERSATION_SCAN = 500;
 const EMPTY_PHONE_SET: ReadonlySet<string> = new Set();
@@ -125,6 +131,24 @@ function matchesView(
   );
 }
 
+/**
+ * The refinements that sit beside the four views, mirroring the web inbox's
+ * three dropdowns. They narrow whichever view is open rather than replacing
+ * it, and the view counts are computed before they apply so the tab numbers
+ * keep meaning "how many are in this view".
+ */
+export interface MobileConversationFilters {
+  status: CsStatus | null;
+  section: ConversationSection | null;
+  labelId: string | null;
+}
+
+const NO_FILTERS: MobileConversationFilters = {
+  status: null,
+  section: null,
+  labelId: null,
+};
+
 export async function listMobileConversations(options: {
   isAdmin: boolean;
   teamMemberId: string | null;
@@ -132,24 +156,45 @@ export async function listMobileConversations(options: {
   search: string;
   offset: number;
   limit: number;
+  filters?: MobileConversationFilters;
 }): Promise<{
   page: MobilePage<MobileConversation>;
   counts: Record<MobileConversationView, number>;
 }> {
   const now = Date.now();
-  const [conversations, rosterPhones] = await Promise.all([
+  const filters = options.filters ?? NO_FILTERS;
+  const [conversations, rosterPhones, labelAssignments] = await Promise.all([
     listConversations(MAX_MOBILE_CONVERSATION_SCAN, {
       isAdmin: options.isAdmin,
       teamMemberId: options.teamMemberId,
     }),
     listRosterContactPhones(),
+    // Only the label filter needs the assignment map, and it is a full-table
+    // read — skip it whenever no label is selected.
+    filters.labelId
+      ? getLabelAssignments()
+      : Promise.resolve({} as Record<string, string[]>),
   ]);
   const dangerExcludedPhoneSet = new Set(
     rosterPhones.map(normalizePhone).filter(Boolean)
   );
-  const searched = conversations.filter((conversation) =>
-    matchesSearch(conversation, options.search)
-  );
+  const searched = conversations
+    .filter((conversation) => matchesSearch(conversation, options.search))
+    .filter((conversation) => {
+      if (filters.status && conversationCsStatus(conversation) !== filters.status) {
+        return false;
+      }
+      if (filters.section && sectionOf(conversation) !== filters.section) {
+        return false;
+      }
+      if (
+        filters.labelId &&
+        !(labelAssignments[conversation.id] ?? []).includes(filters.labelId)
+      ) {
+        return false;
+      }
+      return true;
+    });
   const counts = {
     new: searched.filter((conversation) =>
       matchesView(

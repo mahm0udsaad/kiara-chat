@@ -13,7 +13,11 @@
  *
  * Pure helpers only — imported by both the server queries and the client.
  */
-import type { Conversation, ConversationSection } from "@/lib/types";
+import type {
+  BookingRequest,
+  Conversation,
+  ConversationSection,
+} from "@/lib/types";
 
 export const SECTION_LABEL: Record<ConversationSection, string> = {
   orders: "قسم الطلبات",
@@ -58,4 +62,19 @@ export function canViewConversation(
   if (viewer.isAdmin) return true;
   const routedTo = routedToOf(c);
   return !routedTo || routedTo === viewer.teamMemberId;
+}
+
+/**
+ * The bot-collected booking details still waiting on a human, if any.
+ *
+ * Lives in the same `conversations.metadata` blob as the routing keys above.
+ * Both clients read it — the web inbox banner and the mobile chat header —
+ * so the shape check belongs here rather than in either component.
+ */
+export function bookingRequestOf(
+  c: Pick<Conversation, "metadata">
+): BookingRequest | null {
+  const request = (c.metadata as { booking_request?: BookingRequest } | null)
+    ?.booking_request;
+  return request && request.status === "pending" ? request : null;
 }

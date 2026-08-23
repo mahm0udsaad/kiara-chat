@@ -7,6 +7,10 @@ import Animated, {
   LinearTransition,
 } from "react-native-reanimated";
 
+import {
+  ConversationFiltersSheet,
+  activeFilterCount,
+} from "@/components/inbox/conversation-filters-sheet";
 import { PrimaryButton } from "@/components/primary-button";
 import { EmptyState, ErrorState, InlineAlert } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
@@ -15,14 +19,18 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { TypingIndicator } from "@/components/typing-indicator";
-import { radius, rtlText, spacing, type } from "@/constants/theme";
-import { bookingStageLabel, relativeTimeLabel } from "@/lib/format";
-import { useConversations } from "@/lib/queries";
+import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { bookingStageLabel, csStatusLabel, relativeTimeLabel } from "@/lib/format";
+import { EMPTY_CONVERSATION_FILTERS, useBootstrap, useConversations } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import { useInboxLive } from "@/providers/inbox-live-provider";
-import type { ConversationSummary, InboxView } from "@/types/api";
+import type {
+  ConversationFilters,
+  ConversationSummary,
+  InboxView,
+} from "@/types/api";
 
-const filters: SegmentOption<InboxView>[] = [
+const views: SegmentOption<InboxView>[] = [
   { value: "new", label: "جديد" },
   { value: "mine", label: "محادثاتي" },
   { value: "unassigned", label: "غير مستلمة" },
@@ -144,9 +152,46 @@ export default function InboxScreen() {
   const { isTyping } = useInboxLive();
   const [view, setView] = useState<InboxView>("new");
   const [search, setSearch] = useState("");
+  // The web inbox's status/section/label dropdowns, folded into one sheet.
+  const [filters, setFilters] = useState<ConversationFilters>(
+    EMPTY_CONVERSATION_FILTERS,
+  );
+  const [filtersOpen, setFiltersOpen] = useState(false);
   // Keeps typing responsive — the request tracks a frame behind the keystroke.
   const deferredSearch = useDeferredValue(search);
-  const conversations = useConversations(view, deferredSearch.trim());
+  const conversations = useConversations(view, deferredSearch.trim(), { filters });
+  const bootstrapLabels = useBootstrap().data?.labels;
+  const labels = useMemo(() => bootstrapLabels ?? [], [bootstrapLabels]);
+  const activeFilters = activeFilterCount(filters);
+
+  // Chips for what is currently on, each one its own way back out.
+  const filterChips = useMemo(() => {
+    const chips: { key: string; label: string; clear: () => void }[] = [];
+    if (filters.status) {
+      chips.push({
+        key: "status",
+        label: csStatusLabel[filters.status],
+        clear: () => setFilters((current) => ({ ...current, status: null })),
+      });
+    }
+    if (filters.section) {
+      chips.push({
+        key: "section",
+        label: filters.section === "orders" ? "قسم الطلبات" : "قسم الردود",
+        clear: () => setFilters((current) => ({ ...current, section: null })),
+      });
+    }
+    if (filters.labelId) {
+      const name =
+        labels.find((label) => label.id === filters.labelId)?.name ?? "تصنيف";
+      chips.push({
+        key: "label",
+        label: name,
+        clear: () => setFilters((current) => ({ ...current, labelId: null })),
+      });
+    }
+    return chips;
+  }, [filters, labels]);
 
   const firstPage = conversations.data?.pages[0];
   const counts = firstPage?.counts;
@@ -197,16 +242,101 @@ export default function InboxScreen() {
         keyboardDismissMode="on-drag"
         ListHeaderComponent={
           <View style={{ gap: spacing.md, paddingBottom: spacing.xs }}>
-            <Segmented
-              accessibilityLabel="تصفية المحادثات"
-              options={filters.map((filter) => ({
-                ...filter,
-                count: counts?.[filter.value],
-              }))}
-              value={view}
-              onChange={setView}
-              layout="scroll"
-            />
+            {/* The four views, plus the way into everything the web keeps in
+                dropdowns next to its search box. */}
+            <View
+              style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}
+            >
+              <View style={{ flex: 1 }}>
+                <Segmented
+                  accessibilityLabel="تصفية المحادثات"
+                  options={views.map((option) => ({
+                    ...option,
+                    count: counts?.[option.value],
+                  }))}
+                  value={view}
+                  onChange={setView}
+                  layout="scroll"
+                />
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  activeFilters
+                    ? `تصفية متقدمة، ${activeFilters} مطبّقة`
+                    : "تصفية متقدمة"
+                }
+                onPress={() => setFiltersOpen(true)}
+                style={({ pressed }) => ({
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  gap: spacing.xs,
+                  minHeight: hitSize.min,
+                  paddingHorizontal: spacing.md,
+                  borderRadius: radius.full,
+                  borderWidth: activeFilters ? 1.5 : 1,
+                  borderColor: activeFilters ? colors.brand : colors.border,
+                  backgroundColor: activeFilters
+                    ? colors.brandSoft
+                    : pressed
+                      ? colors.surfaceSunken
+                      : colors.surface,
+                })}
+              >
+                <IconSymbol
+                  name="slider.horizontal.3"
+                  color={activeFilters ? colors.brand : colors.textSecondary}
+                  size={17}
+                />
+                {activeFilters ? (
+                  <Text
+                    style={{
+                      ...type.caption,
+                      color: colors.onBrandSoft,
+                      fontVariant: ["tabular-nums"],
+                    }}
+                  >
+                    {activeFilters}
+                  </Text>
+                ) : null}
+              </Pressable>
+            </View>
+
+            {filterChips.length ? (
+              <View
+                style={{
+                  flexDirection: "row-reverse",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: spacing.sm,
+                }}
+              >
+                {filterChips.map((chip) => (
+                  <Pressable
+                    key={chip.key}
+                    accessibilityRole="button"
+                    accessibilityLabel={`إزالة تصفية ${chip.label}`}
+                    onPress={chip.clear}
+                    style={({ pressed }) => ({
+                      flexDirection: "row-reverse",
+                      alignItems: "center",
+                      gap: spacing.xs,
+                      minHeight: hitSize.min - 10,
+                      paddingHorizontal: spacing.md,
+                      borderRadius: radius.full,
+                      backgroundColor: colors.brandSoft,
+                      opacity: pressed ? 0.6 : 1,
+                    })}
+                  >
+                    <Text style={{ ...type.caption, color: colors.onBrandSoft, ...rtlText }}>
+                      {chip.label}
+                    </Text>
+                    <IconSymbol name="xmark" color={colors.onBrandSoft} size={11} />
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+
             {showSkeleton ? <SkeletonList count={6} /> : null}
           </View>
         }
@@ -274,6 +404,14 @@ export default function InboxScreen() {
             tintColor={colors.brand}
           />
         }
+      />
+
+      <ConversationFiltersSheet
+        open={filtersOpen}
+        filters={filters}
+        labels={labels}
+        onClose={() => setFiltersOpen(false)}
+        onChange={setFilters}
       />
     </>
   );

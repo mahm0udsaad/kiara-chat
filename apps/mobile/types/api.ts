@@ -114,6 +114,13 @@ export type CatalogItem = {
   isAvailable: boolean;
 };
 
+/** The refinements that narrow whichever inbox view is open. */
+export type ConversationFilters = {
+  status: CsStatus | null;
+  section: ConversationSection | null;
+  labelId: string | null;
+};
+
 /** قسم الطلبات / قسم الردود — how the owner files a thread. */
 export type ConversationSection = "orders" | "replies";
 
@@ -124,6 +131,27 @@ export type InternalNote = {
   created_at: string;
 };
 
+/** Booking details the assistant collected, still waiting on a human. */
+export type BookingRequest = {
+  status: "pending";
+  summary: string;
+  service: string;
+  time: string;
+  location: string;
+  /** ISO — when the assistant captured it. */
+  at: string;
+};
+
+/** Where the customer already said she is, best evidence first. */
+export type SharedLocation = {
+  /** One line, ready to drop into the order's location field. */
+  value: string;
+  url: string | null;
+  label: string | null;
+  source: "pin" | "link" | "text";
+  at: string;
+};
+
 export type ConversationDetail = {
   conversation: ConversationSummary & {
     reminderConfirmation: ReminderConfirmation | null;
@@ -131,10 +159,22 @@ export type ConversationDetail = {
     /** Detail-only; older API builds omit both. */
     section?: ConversationSection | null;
     routedTo?: string | null;
+    /** Detail-only; older API builds omit it. */
+    bookingRequest?: BookingRequest | null;
   };
   messages: ConversationMessage[];
+  /** Detail-only; older API builds omit it. */
+  sharedLocation?: SharedLocation | null;
   hasMore: boolean;
   nextBefore: string | null;
+};
+
+/** What the chat screen's booking sheet sends to confirm an appointment. */
+export type CreateOrderInput = {
+  arrivalAt: string;
+  customerLocation: string;
+  durationMinutes: number;
+  tripType: TripType;
 };
 
 export type ReminderConfirmationStatus =
