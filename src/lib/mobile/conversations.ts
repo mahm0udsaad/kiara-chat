@@ -134,8 +134,9 @@ function matchesView(
 /**
  * The refinements that sit beside the four views, mirroring the web inbox's
  * three dropdowns. They narrow whichever view is open rather than replacing
- * it, and the view counts are computed before they apply so the tab numbers
- * keep meaning "how many are in this view".
+ * it, and they apply before the view counts are taken — so a tab's number is
+ * exactly how many rows tapping it would show under the current filter, and
+ * never promises results the filter has already excluded.
  */
 export interface MobileConversationFilters {
   status: CsStatus | null;
