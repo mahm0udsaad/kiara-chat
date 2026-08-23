@@ -142,12 +142,22 @@ export function ConversationActionsButton({
     useState<QuickReminderStatus | null>(quickReminderStatus(reminder));
   const [draftLabelIds, setDraftLabelIds] = useState(labelIds);
   const [draftReceipt, setDraftReceipt] = useState<PendingReceipt | null>(null);
-  const [uploadedReceipt, setUploadedReceipt] =
-    useState<BookingReceipt | null>(null);
+  const [uploadedReceipt, setUploadedReceipt] = useState<{
+    conversationId: string;
+    previousPath: string | null;
+    receipt: BookingReceipt;
+  } | null>(null);
   const [receiptError, setReceiptError] = useState<string | null>(null);
 
   const receiptUpload = useSaveBookingReceipt(conversationId);
-  const savedReceipt = uploadedReceipt ?? bookingReceipt;
+  const uploadedReceiptIsCurrent = Boolean(
+    uploadedReceipt &&
+      uploadedReceipt.conversationId === conversationId &&
+      uploadedReceipt.previousPath === (bookingReceipt?.storagePath ?? null),
+  );
+  const savedReceipt = uploadedReceiptIsCurrent
+    ? (uploadedReceipt?.receipt ?? null)
+    : bookingReceipt;
   const receiptUrl = useMediaUrl(savedReceipt?.storagePath ?? null, open);
 
   // Assignment, filing and notes are immediate operations rather than part of
@@ -271,7 +281,11 @@ export function ConversationActionsButton({
           type: draftReceipt.type,
         });
         receipt = response.receipt;
-        setUploadedReceipt(response.receipt);
+        setUploadedReceipt({
+          conversationId,
+          previousPath: bookingReceipt?.storagePath ?? null,
+          receipt: response.receipt,
+        });
         setDraftReceipt(null);
       } catch {
         return;
@@ -356,8 +370,8 @@ export function ConversationActionsButton({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="إغلاق"
-              accessibilityState={{ disabled: pending }}
-              disabled={pending}
+              accessibilityState={{ disabled: saving }}
+              disabled={saving}
               onPress={closeSheet}
               style={({ pressed }) => ({
                 width: hitSize.min,
@@ -366,7 +380,7 @@ export function ConversationActionsButton({
                 justifyContent: "center",
                 borderRadius: radius.full,
                 backgroundColor: colors.surfaceSunken,
-                opacity: pending ? 0.45 : pressed ? 0.6 : 1,
+                opacity: saving ? 0.45 : pressed ? 0.6 : 1,
               })}
             >
               <IconSymbol name="xmark" color={colors.textSecondary} size={18} />
@@ -390,7 +404,7 @@ export function ConversationActionsButton({
                     testID={`conversation-actions-status-${status}`}
                     label={csStatusLabel[status]}
                     selected={draftCsStatus === status}
-                    disabled={!canEdit || pending}
+                    disabled={!canEdit || saving}
                     onPress={() => {
                       tapFeedback();
                       setDraftCsStatus(status);
@@ -408,15 +422,48 @@ export function ConversationActionsButton({
                     testID={`conversation-actions-booking-${stage.id}`}
                     label={stage.label}
                     selected={draftBookingStage === stage.id}
-                    disabled={!canEdit || pending}
+                    disabled={!canEdit || saving}
                     onPress={() => {
                       tapFeedback();
                       setDraftBookingStage(stage.id);
+                      if (stage.id !== "invoice_required") {
+                        setDraftReceipt(null);
+                        setReceiptError(null);
+                      }
                     }}
                   />
                 ))}
               </View>
             </ActionSection>
+
+            {receiptRequired || savedReceipt || draftReceipt ? (
+              <ReceiptAttachmentField
+                required={receiptRequired}
+                draft={draftReceipt}
+                saved={savedReceipt}
+                previewUrl={
+                  draftReceipt?.type.startsWith("image/")
+                    ? draftReceipt.uri
+                    : savedReceipt?.contentType.startsWith("image/")
+                      ? (receiptUrl.data?.url ?? null)
+                      : null
+                }
+                loadingPreview={receiptUrl.isFetching && !draftReceipt}
+                disabled={!canEdit || saving}
+                error={
+                  receiptError ??
+                  receiptUpload.error?.message ??
+                  (receiptUrl.isError ? receiptUrl.error.message : null)
+                }
+                onPick={() => void pickReceipt()}
+                onView={() => void viewReceipt()}
+                onRemoveDraft={() => {
+                  tapFeedback();
+                  setDraftReceipt(null);
+                  setReceiptError(null);
+                }}
+              />
+            ) : null}
 
             {reminder ? (
               <ActionSection
@@ -437,7 +484,7 @@ export function ConversationActionsButton({
                       testID={`conversation-actions-reminder-${option.value}`}
                       label={option.label}
                       selected={draftReminderStatus === option.value}
-                      disabled={!canEdit || pending}
+                      disabled={!canEdit || saving}
                       onPress={() => {
                         tapFeedback();
                         setDraftReminderStatus(option.value);
@@ -461,9 +508,9 @@ export function ConversationActionsButton({
                         accessibilityLabel={label.name}
                         accessibilityState={{
                           checked: selected,
-                          disabled: !canEdit || pending,
+                          disabled: !canEdit || saving,
                         }}
-                        disabled={!canEdit || pending}
+                        disabled={!canEdit || saving}
                         onPress={() => toggleLabel(label.id)}
                         style={({ pressed }) => ({
                           minHeight: hitSize.min,
@@ -524,6 +571,16 @@ export function ConversationActionsButton({
                     : "غير محددة"
                 }
               />
+              {receiptRequired ? (
+                <ReviewRow
+                  label="الفاتورة"
+                  value={
+                    draftReceipt?.name ??
+                    savedReceipt?.originalFilename ??
+                    (hasReceipt ? "مرفقة" : "مطلوبة قبل الحفظ")
+                  }
+                />
+              ) : null}
               {reminderPreview ? (
                 <ReviewRow label="تأكيد الحضور" value={reminderPreview} />
               ) : null}
@@ -722,30 +779,14 @@ export function ConversationActionsButton({
               testID="conversation-actions-save"
               label="حفظ إجراءات المحادثة"
               icon="checkmark"
-              loading={pending}
-              disabled={!canEdit || !dirty}
-              onPress={() =>
-                onSave(
-                  {
-                    csStatus: draftCsStatus,
-                    bookingStage: draftBookingStage,
-                    labelIds: draftLabelIds,
-                    reminderConfirmation:
-                      reminder && draftReminderStatus
-                        ? {
-                            dayKey: reminder.dayKey,
-                            status: draftReminderStatus,
-                          }
-                        : null,
-                  },
-                  () => setOpen(false),
-                )
-              }
+              loading={saving}
+              disabled={!canEdit || !dirty || (receiptRequired && !hasReceipt)}
+              onPress={() => void saveActions()}
             />
             <PrimaryButton
               label="إلغاء"
               variant="plain"
-              disabled={pending}
+              disabled={saving}
               silent
               onPress={closeSheet}
             />
@@ -754,6 +795,239 @@ export function ConversationActionsButton({
       </Modal>
     </>
   );
+}
+
+function ReceiptAttachmentField({
+  required,
+  draft,
+  saved,
+  previewUrl,
+  loadingPreview,
+  disabled,
+  error,
+  onPick,
+  onView,
+  onRemoveDraft,
+}: {
+  required: boolean;
+  draft: PendingReceipt | null;
+  saved: BookingReceipt | null;
+  previewUrl: string | null;
+  loadingPreview: boolean;
+  disabled: boolean;
+  error: string | null;
+  onPick: () => void;
+  onView: () => void;
+  onRemoveDraft: () => void;
+}) {
+  const { colors } = useTheme();
+  const hasFile = Boolean(draft || saved);
+  const filename =
+    draft?.name ?? saved?.originalFilename ?? (saved ? "فاتورة محفوظة" : null);
+  const sizeBytes = draft?.sizeBytes ?? saved?.sizeBytes ?? null;
+  const contentType = draft?.type ?? saved?.contentType ?? null;
+
+  return (
+    <ActionSection
+      title="الفاتورة أو الإيصال"
+      subtitle={draft ? "جاهزة للحفظ" : saved ? "محفوظة" : "مطلوبة"}
+    >
+      <View
+        style={{
+          gap: spacing.md,
+          padding: spacing.md,
+          borderRadius: radius.lg,
+          borderCurve: "continuous",
+          borderWidth: 1,
+          borderColor: required && !hasFile ? colors.warning : colors.border,
+          backgroundColor: colors.surface,
+        }}
+      >
+        {previewUrl ? (
+          <Image
+            source={{ uri: previewUrl }}
+            alt="معاينة الفاتورة"
+            contentFit="contain"
+            transition={160}
+            style={{
+              width: "100%",
+              aspectRatio: 16 / 9,
+              borderRadius: radius.md,
+              backgroundColor: colors.surfaceSunken,
+            }}
+          />
+        ) : hasFile ? (
+          <View
+            style={{
+              minHeight: 112,
+              alignItems: "center",
+              justifyContent: "center",
+              gap: spacing.sm,
+              borderRadius: radius.md,
+              backgroundColor: colors.surfaceSunken,
+            }}
+          >
+            {loadingPreview && contentType?.startsWith("image/") ? (
+              <ActivityIndicator color={colors.brand} />
+            ) : (
+              <IconSymbol
+                name={contentType === "application/pdf" ? "doc.text" : "photo"}
+                color={colors.brand}
+                size={30}
+              />
+            )}
+            <Text
+              selectable
+              numberOfLines={2}
+              style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}
+            >
+              {filename}
+            </Text>
+          </View>
+        ) : (
+          <View
+            style={{
+              minHeight: 92,
+              alignItems: "center",
+              justifyContent: "center",
+              gap: spacing.sm,
+              borderRadius: radius.md,
+              backgroundColor: colors.surfaceSunken,
+            }}
+          >
+            <IconSymbol name="doc.text" color={colors.textTertiary} size={28} />
+            <Text style={{ ...type.footnote, color: colors.textTertiary, ...rtlText }}>
+              اختاري صورة واضحة أو ملف PDF
+            </Text>
+          </View>
+        )}
+
+        {filename ? (
+          <View style={{ gap: 2 }}>
+            <Text
+              selectable
+              numberOfLines={2}
+              style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}
+            >
+              {filename}
+            </Text>
+            <Text
+              style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}
+            >
+              {[contentType === "application/pdf" ? "PDF" : "صورة", formatReceiptSize(sizeBytes)]
+                .filter(Boolean)
+                .join(" • ")}
+            </Text>
+          </View>
+        ) : null}
+
+        <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
+          {required ? (
+            <Pressable
+              testID="conversation-actions-receipt-pick"
+              accessibilityRole="button"
+              accessibilityLabel={hasFile ? "استبدال الفاتورة" : "اختيار الفاتورة"}
+              accessibilityState={{ disabled }}
+              disabled={disabled}
+              onPress={onPick}
+              style={({ pressed }) => ({
+                minHeight: hitSize.min,
+                flexDirection: "row-reverse",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: spacing.sm,
+                paddingHorizontal: spacing.md,
+                borderRadius: radius.md,
+                backgroundColor: colors.brand,
+                opacity: disabled ? 0.5 : pressed ? 0.75 : 1,
+              })}
+            >
+              <IconSymbol name="plus" color={colors.onBrand} size={16} />
+              <Text style={{ ...type.subheadStrong, color: colors.onBrand, ...rtlText }}>
+                {hasFile ? "استبدال الملف" : "اختيار صورة أو PDF"}
+              </Text>
+            </Pressable>
+          ) : null}
+
+          {hasFile ? (
+            <Pressable
+              testID="conversation-actions-receipt-view"
+              accessibilityRole="button"
+              accessibilityLabel="عرض الفاتورة"
+              onPress={onView}
+              style={({ pressed }) => ({
+                minHeight: hitSize.min,
+                flexDirection: "row-reverse",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: spacing.sm,
+                paddingHorizontal: spacing.md,
+                borderRadius: radius.md,
+                borderWidth: 1,
+                borderColor: colors.borderStrong,
+                backgroundColor: colors.surface,
+                opacity: pressed ? 0.68 : 1,
+              })}
+            >
+              <IconSymbol name="eye" color={colors.brand} size={16} />
+              <Text style={{ ...type.subheadStrong, color: colors.brand, ...rtlText }}>
+                عرض
+              </Text>
+            </Pressable>
+          ) : null}
+
+          {draft ? (
+            <Pressable
+              testID="conversation-actions-receipt-remove"
+              accessibilityRole="button"
+              accessibilityLabel="إزالة الفاتورة المختارة"
+              disabled={disabled}
+              onPress={onRemoveDraft}
+              style={({ pressed }) => ({
+                minHeight: hitSize.min,
+                alignItems: "center",
+                justifyContent: "center",
+                paddingHorizontal: spacing.md,
+                borderRadius: radius.md,
+                opacity: disabled ? 0.5 : pressed ? 0.6 : 1,
+              })}
+            >
+              <Text style={{ ...type.subheadStrong, color: colors.danger, ...rtlText }}>
+                إزالة
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {required && !hasFile ? (
+          <Text style={{ ...type.footnote, color: colors.warning, ...rtlText }}>
+            إرفاق الفاتورة مطلوب قبل حفظ هذه المرحلة.
+          </Text>
+        ) : null}
+        {error ? <InlineAlert message={error} /> : null}
+      </View>
+    </ActionSection>
+  );
+}
+
+function receiptMimeType(filename: string, provided?: string | null) {
+  const mime = provided?.toLowerCase().split(";").at(0)?.trim();
+  if (mime === "application/pdf" || mime?.startsWith("image/")) return mime;
+
+  const extension = filename.toLowerCase().split(".").pop();
+  if (extension === "pdf") return "application/pdf";
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+  if (extension === "gif") return "image/gif";
+  if (extension === "heic" || extension === "heif") return "image/heic";
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  return null;
+}
+
+function formatReceiptSize(sizeBytes: number | null) {
+  if (!sizeBytes || sizeBytes < 1) return "";
+  if (sizeBytes < 1024 * 1024) return `${Math.ceil(sizeBytes / 1024)} كيلوبايت`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} ميجابايت`;
 }
 
 /**

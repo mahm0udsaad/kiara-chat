@@ -75,7 +75,7 @@ function buildBookingReceiptPath(params: {
  * metadata write fails, only the just-created, unreachable object is removed.
  */
 export async function saveBookingReceipt(params: {
-  conversation: Pick<Conversation, "id" | "restaurant_id" | "metadata">;
+  conversation: Pick<Conversation, "id" | "restaurant_id">;
   buffer: Buffer;
   contentType: string;
   originalFilename: string | null;
@@ -106,19 +106,34 @@ export async function saveBookingReceipt(params: {
     });
   if (uploadError) throw new Error(uploadError.message);
 
+  // Re-read just before the patch so a label/status write made while the file
+  // was uploading is not replaced by the older conversation snapshot.
+  const { data: latest, error: readError } = await admin
+    .from("conversations")
+    .select("metadata")
+    .eq("id", params.conversation.id)
+    .eq("restaurant_id", params.conversation.restaurant_id)
+    .maybeSingle();
+  if (readError || !latest) {
+    await admin.storage.from(WHATSAPP_MEDIA_BUCKET).remove([path]);
+    throw new Error(readError?.message || "Conversation no longer exists");
+  }
+
   const metadata = {
-    ...(params.conversation.metadata ?? {}),
+    ...((latest.metadata as Record<string, unknown> | null) ?? {}),
     booking_receipt: stored,
   };
-  const { error: updateError } = await admin
+  const { data: updated, error: updateError } = await admin
     .from("conversations")
     .update({ metadata })
     .eq("id", params.conversation.id)
-    .eq("restaurant_id", params.conversation.restaurant_id);
+    .eq("restaurant_id", params.conversation.restaurant_id)
+    .select("id")
+    .maybeSingle();
 
-  if (updateError) {
+  if (updateError || !updated) {
     await admin.storage.from(WHATSAPP_MEDIA_BUCKET).remove([path]);
-    throw new Error(updateError.message);
+    throw new Error(updateError?.message || "Conversation no longer exists");
   }
 
   return {

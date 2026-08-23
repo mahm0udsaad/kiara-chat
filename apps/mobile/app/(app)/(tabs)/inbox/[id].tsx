@@ -397,6 +397,7 @@ export default function ConversationScreen() {
           conversationId={id}
           csStatus={current.csStatus}
           bookingStage={current.bookingStage}
+          bookingReceipt={current.bookingReceipt ?? null}
           reminder={current.reminderConfirmation}
           labelIds={current.labelIds}
           labels={bootstrap.data?.labels ?? []}
