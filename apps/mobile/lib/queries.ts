@@ -9,6 +9,7 @@ import * as Crypto from "expo-crypto";
 import { ApiError, apiRequest, apiUpload, type UploadFile } from "@/lib/api";
 import type {
   BootstrapResponse,
+  BookingReceipt,
   CatalogItem,
   ConversationActionsInput,
   ConversationDetail,
@@ -246,17 +247,34 @@ export function useCatalog(enabled = true) {
  * cache is held just under that and never refetched in the background — a
  * thread being re-read should not re-sign every photo in it.
  */
-export function useMediaUrl(path: string | null) {
+export function useMediaUrl(path: string | null, enabled = true) {
   return useQuery({
     queryKey: queryKeys.mediaUrl(path ?? ""),
     queryFn: () =>
       apiRequest<{ url: string; expiresIn: number }>(
         `/media?path=${encodeURIComponent(path!)}`,
       ),
-    enabled: Boolean(path),
+    enabled: Boolean(path) && enabled,
     staleTime: 50 * 60_000,
     gcTime: 55 * 60_000,
     retry: 1,
+  });
+}
+
+/** Upload a receipt without sending it to the customer as a chat message. */
+export function useSaveBookingReceipt(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (file: UploadFile) =>
+      apiUpload<{ receipt: BookingReceipt }>(
+        `/conversations/${id}/receipt`,
+        { file },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.conversation(id),
+      });
+    },
   });
 }
 

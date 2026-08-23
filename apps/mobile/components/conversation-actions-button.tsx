@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -10,6 +11,8 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as DocumentPicker from "expo-document-picker";
+import { Image } from "expo-image";
 
 import { PrimaryButton } from "@/components/primary-button";
 import { InlineAlert } from "@/components/screen-state";
@@ -24,7 +27,9 @@ import { tapFeedback } from "@/lib/haptics";
 import {
   useAddConversationNote,
   useConversationNotes,
+  useMediaUrl,
   useReleaseConversation,
+  useSaveBookingReceipt,
   useSetConversationRouting,
   useSetConversationSection,
   useTransferConversation,
@@ -32,6 +37,7 @@ import {
 import { useTheme } from "@/providers/theme-provider";
 import type {
   BookingStage,
+  BookingReceipt,
   ConversationActionsInput,
   ConversationLabel,
   ConversationSection,
@@ -45,7 +51,15 @@ type Agent = { id: string; fullName: string | null; email: string | null };
 
 type QuickReminderStatus = "awaiting_reply" | "confirmed";
 
+type PendingReceipt = {
+  uri: string;
+  name: string;
+  type: string;
+  sizeBytes: number | null;
+};
+
 const EMPTY_LABEL_IDS: string[] = [];
+const MAX_RECEIPT_BYTES = 20 * 1024 * 1024;
 const CS_STATUS_OPTIONS: readonly CsStatus[] = ["open", "waiting", "resolved"];
 const SECTION_OPTIONS: { value: ConversationSection | null; label: string }[] = [
   { value: "orders", label: "قسم الطلبات" },
@@ -80,6 +94,7 @@ export function ConversationActionsButton({
   conversationId,
   csStatus,
   bookingStage,
+  bookingReceipt,
   reminder,
   labelIds: labelIdsProp,
   labels,
@@ -98,6 +113,7 @@ export function ConversationActionsButton({
   conversationId: string;
   csStatus: CsStatus;
   bookingStage: BookingStage | null;
+  bookingReceipt: BookingReceipt | null;
   reminder: ReminderConfirmation | null;
   // Older API builds omit this, so treat it as optional and default below.
   labelIds?: string[] | null;
@@ -125,6 +141,14 @@ export function ConversationActionsButton({
   const [draftReminderStatus, setDraftReminderStatus] =
     useState<QuickReminderStatus | null>(quickReminderStatus(reminder));
   const [draftLabelIds, setDraftLabelIds] = useState(labelIds);
+  const [draftReceipt, setDraftReceipt] = useState<PendingReceipt | null>(null);
+  const [uploadedReceipt, setUploadedReceipt] =
+    useState<BookingReceipt | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+
+  const receiptUpload = useSaveBookingReceipt(conversationId);
+  const savedReceipt = uploadedReceipt ?? bookingReceipt;
+  const receiptUrl = useMediaUrl(savedReceipt?.storagePath ?? null, open);
 
   // Assignment, filing and notes are immediate operations rather than part of
   // the draft above: handing a thread to a colleague has happened the moment
@@ -160,19 +184,25 @@ export function ConversationActionsButton({
     draftCsStatus !== csStatus ||
     draftBookingStage !== bookingStage ||
     draftReminderStatus !== quickReminderStatus(reminder) ||
-    !sameIds(draftLabelIds, labelIds);
+    !sameIds(draftLabelIds, labelIds) ||
+    Boolean(draftBookingStage === "invoice_required" && draftReceipt);
+  const receiptRequired = draftBookingStage === "invoice_required";
+  const hasReceipt = Boolean(draftReceipt || savedReceipt);
+  const saving = pending || receiptUpload.isPending;
 
   function openSheet() {
     setDraftCsStatus(csStatus);
     setDraftBookingStage(bookingStage);
     setDraftReminderStatus(quickReminderStatus(reminder));
     setDraftLabelIds(labelIds);
+    setDraftReceipt(null);
+    setReceiptError(null);
     tapFeedback();
     setOpen(true);
   }
 
   function closeSheet() {
-    if (!pending) setOpen(false);
+    if (!saving) setOpen(false);
   }
 
   function toggleLabel(labelId: string) {
@@ -181,6 +211,91 @@ export function ConversationActionsButton({
       current.includes(labelId)
         ? current.filter((id) => id !== labelId)
         : [...current, labelId],
+    );
+  }
+
+  async function pickReceipt() {
+    setReceiptError(null);
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ["image/*", "application/pdf"],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    if (!asset) return;
+    if ((asset.size ?? 0) > MAX_RECEIPT_BYTES) {
+      setReceiptError("الفاتورة أكبر من الحد المسموح (20 ميجابايت).");
+      return;
+    }
+
+    const mimeType = receiptMimeType(asset.name, asset.mimeType);
+    if (!mimeType) {
+      setReceiptError("الفاتورة يجب أن تكون صورة أو ملف PDF.");
+      return;
+    }
+    tapFeedback();
+    setDraftReceipt({
+      uri: asset.uri,
+      name: asset.name,
+      type: mimeType,
+      sizeBytes: asset.size ?? null,
+    });
+  }
+
+  async function viewReceipt() {
+    setReceiptError(null);
+    try {
+      if (draftReceipt) {
+        await Linking.openURL(draftReceipt.uri);
+        return;
+      }
+      if (!savedReceipt) return;
+      const url =
+        receiptUrl.data?.url ?? (await receiptUrl.refetch()).data?.url ?? null;
+      if (!url) throw new Error("missing receipt URL");
+      await Linking.openURL(url);
+    } catch {
+      setReceiptError("تعذّر فتح الفاتورة. حاولي مرة أخرى.");
+    }
+  }
+
+  async function saveActions() {
+    setReceiptError(null);
+    let receipt = savedReceipt;
+    if (receiptRequired && draftReceipt) {
+      try {
+        const response = await receiptUpload.mutateAsync({
+          uri: draftReceipt.uri,
+          name: draftReceipt.name,
+          type: draftReceipt.type,
+        });
+        receipt = response.receipt;
+        setUploadedReceipt(response.receipt);
+        setDraftReceipt(null);
+      } catch {
+        return;
+      }
+    }
+    if (receiptRequired && !receipt) {
+      setReceiptError("أرفقي صورة الفاتورة أو ملف PDF قبل الحفظ.");
+      return;
+    }
+
+    onSave(
+      {
+        csStatus: draftCsStatus,
+        bookingStage: draftBookingStage,
+        labelIds: draftLabelIds,
+        reminderConfirmation:
+          reminder && draftReminderStatus
+            ? {
+                dayKey: reminder.dayKey,
+                status: draftReminderStatus,
+              }
+            : null,
+      },
+      () => setOpen(false),
     );
   }
 

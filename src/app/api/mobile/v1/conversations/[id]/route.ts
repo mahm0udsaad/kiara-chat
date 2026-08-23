@@ -3,6 +3,7 @@ import {
   getConversationMessages,
   MESSAGE_PAGE_SIZE,
 } from "@/lib/inbox";
+import { bookingReceiptOf } from "@/lib/booking-receipt";
 import { toMobileConversation } from "@/lib/mobile/conversations";
 import { mobileReminderConfirmationFor } from "@/lib/mobile/reminders";
 import {
@@ -10,7 +11,8 @@ import {
   routedToOf,
   sectionOf,
 } from "@/lib/conversation-meta";
-import { findSharedLocation } from "@/lib/location";
+import { findSharedLocationInConversation } from "@/lib/location";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getConversationLabelIds } from "@/lib/labels";
 import {
   authorizeMobileRequest,
@@ -71,11 +73,19 @@ export async function GET(
         // The booking the bot collected, so the chat screen can offer
         // "تأكيد الحجز" the same way the web inbox banner does.
         bookingRequest: bookingRequestOf(conversation),
+        // Stored separately from chat messages so the invoice remains attached
+        // to the booking workflow even after the conversation moves forward.
+        bookingReceipt: bookingReceiptOf(conversation),
       },
       messages: page.messages,
-      // Prefills the booking sheet's location field: a pin she dropped is the
-      // address, so the phone should not make anyone retype it.
-      sharedLocation: findSharedLocation(page.messages),
+      // Prefills the booking sheet's location field. Searched across the whole
+      // thread, not just this page: a pin is usually dropped once, early, and
+      // the phone must not ask for an address the customer already sent.
+      sharedLocation: await findSharedLocationInConversation(
+        await createServerSupabaseClient(),
+        id,
+        page.messages
+      ),
       hasMore: page.hasMore,
       nextBefore: page.hasMore ? page.messages[0]?.created_at ?? null : null,
     });

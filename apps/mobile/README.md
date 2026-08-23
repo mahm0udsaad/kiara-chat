@@ -51,6 +51,7 @@ POST /conversations/:id/take
 POST /conversations/:id/reply      { "body": "..." }
 POST /conversations/:id/reservation-follow-up { "dayKey", "status" }
 PUT  /conversations/:id/actions   { "csStatus", "bookingStage", "labelIds", "reminderConfirmation" }
+POST /conversations/:id/receipt   multipart { "file" } (image or PDF)
 POST /presence
 POST /push-token                  { "expoToken", "deviceId", "platform" }
 DELETE /push-token                { "deviceId" }

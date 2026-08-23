@@ -90,6 +90,15 @@ export type MediaSlot = {
   delivery_status?: "stored" | "too_large" | "failed" | string;
 };
 
+/** The durable invoice/receipt attached to the booking workflow. */
+export type BookingReceipt = {
+  storagePath: string;
+  contentType: string;
+  sizeBytes: number | null;
+  originalFilename: string | null;
+  uploadedAt: string;
+};
+
 export type ConversationMessage = {
   id: string;
   conversation_id: string;
@@ -161,6 +170,8 @@ export type ConversationDetail = {
     routedTo?: string | null;
     /** Detail-only; older API builds omit it. */
     bookingRequest?: BookingRequest | null;
+    /** Detail-only; older API builds omit it. */
+    bookingReceipt?: BookingReceipt | null;
   };
   messages: ConversationMessage[];
   /** Detail-only; older API builds omit it. */
