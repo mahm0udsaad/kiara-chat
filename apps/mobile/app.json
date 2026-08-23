@@ -2,7 +2,7 @@
   "expo": {
     "name": "Kiara Operations",
     "slug": "kiara-operations",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "kiara",
@@ -10,7 +10,6 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.kiara.operations",
-      "buildNumber": "1",
       "config": {
         "usesNonExemptEncryption": false
       }
