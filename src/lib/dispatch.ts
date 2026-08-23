@@ -396,6 +396,50 @@ export class RekazBookingError extends Error {
  * pending visit. Choosing a specialist and driver still goes through the
  * dispatch preview, where the employee sees and edits the exact messages.
  */
+/**
+ * Arrival to end for every service booked under one Rekaz order, falling back
+ * to the single reservation when it carries no order id (or when the lookup
+ * turns up nothing, which must never block raising the order).
+ */
+async function rekazVisitSpan(
+  admin: ReturnType<typeof getAdminSupabaseClient>,
+  orderId: string,
+  arrivalAt: string,
+  durationMinutes: number
+): Promise<{ startsAt: string; minutes: number }> {
+  const own = Number.isFinite(durationMinutes) && durationMinutes > 0
+    ? durationMinutes
+    : 60;
+  const alone = { startsAt: arrivalAt, minutes: own };
+  if (!orderId) return alone;
+
+  const { data } = await admin
+    .from("rekaz_reservations")
+    .select("arrival_at, payload, status, removed_at")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .is("removed_at", null)
+    .filter("payload->order->>id", "eq", orderId);
+  if (!data?.length) return alone;
+
+  let start = Number.POSITIVE_INFINITY;
+  let end = Number.NEGATIVE_INFINITY;
+  for (const row of data) {
+    if (row.status === "Cancelled") continue;
+    const from = Date.parse(String(row.arrival_at));
+    if (!Number.isFinite(from)) continue;
+    const minutes =
+      Number((row.payload as { durationMinutes?: number } | null)?.durationMinutes) || 0;
+    start = Math.min(start, from);
+    end = Math.max(end, from + Math.max(minutes, 0) * 60_000);
+  }
+  if (!Number.isFinite(start) || end <= start) return alone;
+
+  return {
+    startsAt: new Date(start).toISOString(),
+    minutes: Math.round((end - start) / 60_000),
+  };
+}
+
 export async function createBookingFromReservation(
   userId: string,
   sourceId: string
@@ -420,8 +464,20 @@ export async function createBookingFromReservation(
     durationMinutes?: number;
     location?: { label?: string } | null;
     service?: string;
+    order?: { id?: string } | null;
   };
   const phone = String(reservation.customer_phone ?? "");
+
+  // Several services booked together are one visit and share one Rekaz order
+  // id. The driver is planned around the whole stay, so the order spans from
+  // the first service's arrival to the last one's end — booking only the
+  // service that happened to be tapped would send the car back an hour early.
+  const visit = await rekazVisitSpan(
+    admin,
+    payload.order?.id?.trim() ?? "",
+    String(reservation.arrival_at),
+    Number(payload.durationMinutes)
+  );
 
   // The conversation is the customer's identity in Kiara and the order's
   // required parent. A Rekaz booking from someone who has never messaged the
@@ -440,10 +496,7 @@ export async function createBookingFromReservation(
 
   const location =
     payload.location?.label?.trim() || payload.service?.trim() || "—";
-  const durationMinutes =
-    Number.isFinite(payload.durationMinutes) && Number(payload.durationMinutes) > 0
-      ? Math.min(Math.max(Number(payload.durationMinutes), 5), 480)
-      : 60;
+  const durationMinutes = Math.min(Math.max(visit.minutes, 5), 480);
 
   const { data: created, error: insErr } = await admin
     .from("driver_orders")
@@ -452,7 +505,7 @@ export async function createBookingFromReservation(
       conversation_id: conversation.id,
       specialist_id: null,
       driver_id: null,
-      arrival_at: reservation.arrival_at,
+      arrival_at: visit.startsAt,
       customer_location: location,
       customer_phone: conversation.customer_phone as string,
       duration_minutes: durationMinutes,

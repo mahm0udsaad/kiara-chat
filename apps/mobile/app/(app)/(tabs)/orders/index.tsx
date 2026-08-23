@@ -350,6 +350,21 @@ function VisitCard({ visit }: { visit: CalendarVisit }) {
           >
             {formatters.time.format(arrival)}
           </Text>
+          {/* When several services run back to back, the finish time is what
+              the next slot and the driver's return are planned around, so it
+              is shown rather than left to be worked out from the duration. */}
+          {visit.serviceCount > 1 ? (
+            <Text
+              style={{
+                ...type.caption,
+                fontWeight: "400",
+                color: colors.textTertiary,
+                fontVariant: ["tabular-nums"],
+              }}
+            >
+              ← {formatters.time.format(new Date(visit.endsAt))}
+            </Text>
+          ) : null}
           <Text
             style={{ ...type.caption, fontWeight: "400", color: colors.textTertiary }}
           >
@@ -404,12 +419,19 @@ function VisitCard({ visit }: { visit: CalendarVisit }) {
           </View>
 
           {visit.services.length ? (
-            <Text
-              numberOfLines={2}
-              style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}
-            >
-              {visit.services.join(" · ")}
-            </Text>
+            <View style={{ gap: 2 }}>
+              <Text
+                numberOfLines={3}
+                style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}
+              >
+                {visit.services.join(" · ")}
+              </Text>
+              {visit.serviceCount > 1 ? (
+                <Text style={{ ...type.caption, color: colors.brand, ...rtlText }}>
+                  {visit.serviceCount} خدمات في نفس الزيارة
+                </Text>
+              ) : null}
+            </View>
           ) : null}
 
           {visit.location ? (
