@@ -1,6 +1,7 @@
 import {
   listDrivers,
   listSpecialists,
+  orderExists,
   updateDriverOrder,
   type OrderPatch,
 } from "@/lib/dispatch";
@@ -12,7 +13,6 @@ import {
 } from "@/lib/mobile/http";
 import {
   getMobileOrderById,
-  getVisibleOrderConversationId,
   orderForMobileSession,
 } from "@/lib/mobile/orders";
 import { OperationalCommandError } from "@/lib/operational-commands";
@@ -192,8 +192,7 @@ export async function PATCH(
 
   const { id } = await params;
   try {
-    const conversationId = await getVisibleOrderConversationId(id, auth.session);
-    if (!conversationId) {
+    if (!(await orderExists(id))) {
       return mobileError(404, "ORDER_NOT_FOUND", "Order not found");
     }
     if (!(await rosterIdsAreValid(patch))) {

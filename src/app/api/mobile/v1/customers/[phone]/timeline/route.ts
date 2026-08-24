@@ -49,7 +49,10 @@ export async function GET(
       .from("conversations")
       .select("id, metadata")
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .eq("customer_phone", normalizePhone(phone))
+      // Match the national part, as every other thread lookup does. The exact
+      // comparison here compared `538948831` against a stored `+966538948831`,
+      // so it resolved nothing and this routing check never once fired.
+      .ilike("customer_phone", `%${normalizePhone(phone)}%`)
       .order("last_message_at", { ascending: false })
       .limit(1)
       .maybeSingle();

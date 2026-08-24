@@ -1,14 +1,11 @@
-import { dispatchBooking } from "@/lib/dispatch";
+import { dispatchBooking, orderExists } from "@/lib/dispatch";
 import {
   authorizeMobileRequest,
   mobileData,
   mobileError,
   mobileServerError,
 } from "@/lib/mobile/http";
-import {
-  getVisibleOrderConversationId,
-  orderForMobileSession,
-} from "@/lib/mobile/orders";
+import { orderForMobileSession } from "@/lib/mobile/orders";
 import { OperationalCommandError } from "@/lib/operational-commands";
 
 export const runtime = "nodejs";
@@ -70,8 +67,7 @@ export async function POST(
 
   const { id } = await params;
   try {
-    const conversationId = await getVisibleOrderConversationId(id, auth.session);
-    if (!conversationId) {
+    if (!(await orderExists(id))) {
       return mobileError(404, "ORDER_NOT_FOUND", "Order not found");
     }
 

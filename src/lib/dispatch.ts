@@ -18,6 +18,7 @@ import {
   updateOrderCommand,
   type OperationsActor,
 } from "@/lib/operational-commands";
+import { findOrCreateConversation } from "@/lib/server-conversations";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { translateMessage } from "@/lib/translate";
@@ -376,7 +377,7 @@ export class RekazBookingError extends Error {
   constructor(public readonly code:
     | "RESERVATION_NOT_FOUND"
     | "RESERVATION_CANCELLED"
-    | "CONVERSATION_NOT_FOUND"
+    | "CUSTOMER_PHONE_INVALID"
     | "ORDER_ALREADY_LINKED"
     | "REKAZ_LINK_UNAVAILABLE") {
     super(code);
@@ -448,7 +449,9 @@ export async function createBookingFromReservation(
 
   const { data: reservation, error: resErr } = await admin
     .from("rekaz_reservations")
-    .select("source_id, arrival_at, customer_phone, status, payload, removed_at")
+    .select(
+      "source_id, arrival_at, customer_phone, customer_name, status, payload, removed_at",
+    )
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .eq("source_id", sourceId)
     .maybeSingle();
@@ -479,20 +482,41 @@ export async function createBookingFromReservation(
     Number(payload.durationMinutes)
   );
 
-  // The conversation is the customer's identity in Kiara and the order's
-  // required parent. A Rekaz booking from someone who has never messaged the
-  // salon has nothing to hang off yet, so the employee is told that plainly
-  // rather than having a placeholder thread invented for them.
-  const { data: conversation, error: convErr } = await admin
+  // Every order still hangs off a conversation, but a Rekaz booking is not
+  // allowed to depend on one already existing: raising the visit is an
+  // operational act, and the customer may never have written on WhatsApp.
+  //
+  // The match is on the national part rather than the stored string. Threads
+  // are kept as `+9665…` while Rekaz hands back anything from `05…` to bare
+  // digits, and the previous exact comparison normalized one side only — so it
+  // matched nothing at all, and even customers with a live chat were turned
+  // away with "لا توجد محادثة واتساب بهذا الرقم".
+  const national = normalizePhone(phone);
+  if (!national) throw new RekazBookingError("CUSTOMER_PHONE_INVALID");
+  const { data: matched, error: convErr } = await admin
     .from("conversations")
     .select("id, customer_phone")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq("customer_phone", normalizePhone(phone))
+    .ilike("customer_phone", `%${national}%`)
     .order("last_message_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (convErr) throw new Error(convErr.message);
-  if (!conversation) throw new RekazBookingError("CONVERSATION_NOT_FOUND");
+
+  // No thread yet: open an empty one under her Rekaz name, exactly as the web
+  // schedule's طلب سائق already does. The salon writes to her from it later
+  // — the order is not held up waiting for her to message first.
+  const conversation =
+    matched ??
+    {
+      id: (
+        await findOrCreateConversation(
+          phone,
+          String(reservation.customer_name ?? "").trim() || null,
+        )
+      ).id,
+      customer_phone: phone,
+    };
 
   const location =
     payload.location?.label?.trim() || payload.service?.trim() || "—";
@@ -570,8 +594,29 @@ export interface DispatchPreview {
   automaticAdditions: string[];
 }
 
-/** Resolve the conversation before an order mutation so the route can apply
- * the same exclusive-routing authorization used by conversation actions. */
+/**
+ * Does this order exist for the tenant?
+ *
+ * This is the whole authorization rule for acting on an order. Orders used to
+ * be gated on the conversation behind them, which meant a chat routed to one
+ * employee took her visits out of everyone else's schedule — including the
+ * colleague covering her shift. Reading a chat is hers; the driver run is the
+ * floor's.
+ */
+export async function orderExists(id: string): Promise<boolean> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("driver_orders")
+    .select("id")
+    .eq("id", id)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return Boolean(data);
+}
+
+/** The conversation an order hangs off, for the surfaces that read the chat
+ * itself rather than the operational row. */
 export async function getOrderConversationId(id: string): Promise<string | null> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase

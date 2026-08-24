@@ -1,11 +1,10 @@
-import { previewBookingDispatch } from "@/lib/dispatch";
+import { orderExists, previewBookingDispatch } from "@/lib/dispatch";
 import {
   authorizeMobileRequest,
   mobileData,
   mobileError,
   mobileServerError,
 } from "@/lib/mobile/http";
-import { getVisibleOrderConversationId } from "@/lib/mobile/orders";
 import type { TripType } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -55,7 +54,7 @@ export async function POST(
 
   const { id } = await params;
   try {
-    if (!(await getVisibleOrderConversationId(id, auth.session))) {
+    if (!(await orderExists(id))) {
       return mobileError(404, "ORDER_NOT_FOUND", "Order not found");
     }
     const preview = await previewBookingDispatch(id, {

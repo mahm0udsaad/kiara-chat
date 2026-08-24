@@ -13,6 +13,10 @@ import {
  * order — no message is sent and nothing is assigned — so the employee
  * continues into the dispatch preview, where the exact driver and specialist
  * text is shown and edited before anything leaves the building.
+ *
+ * A customer who has never written on WhatsApp is not a reason to refuse: the
+ * visit is real work regardless, so the thread is opened for her rather than
+ * demanded from her.
  */
 export const runtime = "nodejs";
 
@@ -25,9 +29,9 @@ const ERROR_STATUS: Record<string, { status: number; message: string }> = {
     status: 409,
     message: "هذا الحجز ملغي في ركاز",
   },
-  CONVERSATION_NOT_FOUND: {
+  CUSTOMER_PHONE_INVALID: {
     status: 409,
-    message: "لا توجد محادثة واتساب بهذا الرقم — افتحي محادثة مع العميلة أولًا",
+    message: "رقم العميلة في ركاز غير صحيح — صحّحيه في ركاز ثم حدّثي التقويم",
   },
   ORDER_ALREADY_LINKED: {
     status: 409,

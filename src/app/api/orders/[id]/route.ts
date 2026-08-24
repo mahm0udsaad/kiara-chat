@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { denyIfRouted } from "@/lib/conversation-access";
 import {
-  getOrderConversationId,
+  orderExists,
   updateDriverOrder,
   type OrderPatch,
 } from "@/lib/dispatch";
@@ -96,12 +95,11 @@ export async function PATCH(
   }
 
   try {
-    const conversationId = await getOrderConversationId(id);
-    if (!conversationId) {
+    // Any employee may act on any order: the schedule is shared work, and the
+    // inbox's exclusive routing governs reading a chat, not dispatching a car.
+    if (!(await orderExists(id))) {
       return NextResponse.json({ error: "الطلب غير موجود" }, { status: 404 });
     }
-    const denied = await denyIfRouted(conversationId, session);
-    if (denied) return denied;
 
     const order = await updateDriverOrder(id, patch, {
       expectedVersion,
