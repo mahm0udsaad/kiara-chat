@@ -16,7 +16,6 @@ import {
   formatters,
   locationUrl,
   relativeDayLabel,
-  telUrl,
   tripTypeLabel,
 } from "@/lib/format";
 import { successFeedback } from "@/lib/haptics";
@@ -202,7 +201,6 @@ export default function FieldOrderDetailScreen() {
         ) : (
           <PrimaryButton label="تم إنهاء الطلب" icon="checkmark.circle" tone="success" variant="tinted" disabled onPress={() => undefined} />
         )}
-        <PrimaryButton label="اتصال بالعميلة" icon="phone" variant="plain" onPress={() => void Linking.openURL(telUrl(order.customerPhone))} />
       </ActionBar>
     </View>
   );

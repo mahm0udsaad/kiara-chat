@@ -503,6 +503,8 @@ export type FieldOrderAction =
   | "complete_order"
   | "driver_return";
 
+export type FieldOrderListView = "today" | "upcoming" | "previous" | "done";
+
 export type FieldOrderProgress = {
   driverConfirmedAt: string | null;
   driverArrivedAt: string | null;

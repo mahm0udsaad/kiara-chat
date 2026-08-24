@@ -18,6 +18,14 @@ export type FieldOrderAction =
   | "complete_order"
   | "driver_return";
 
+export type FieldOrderListView = "today" | "upcoming" | "previous" | "done";
+
+export interface FieldOrderListOptions {
+  view?: FieldOrderListView;
+  dayStart?: string;
+  dayEnd?: string;
+}
+
 export interface FieldStaffSession {
   kind: "field";
   userId: string;
@@ -301,7 +309,10 @@ export function driverArrivalPingAvailable(progress: FieldOrderProgress): boolea
   );
 }
 
-async function loadOrdersForSession(session: FieldStaffSession, orderId?: string) {
+async function loadOrdersForSession(
+  session: FieldStaffSession,
+  options: FieldOrderListOptions & { orderId?: string } = {},
+) {
   const admin = getAdminSupabaseClient();
   const rosterColumn = session.role === "specialist" ? "specialist_id" : "driver_id";
   let query = admin
@@ -310,15 +321,28 @@ async function loadOrdersForSession(session: FieldStaffSession, orderId?: string
       "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type"
     )
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq(rosterColumn, session.rosterId)
-    .order("arrival_at", { ascending: true })
-    .limit(100);
-  if (orderId) query = query.eq("id", orderId);
-  else {
+    .eq(rosterColumn, session.rosterId);
+  if (options.orderId) {
+    query = query.eq("id", options.orderId);
+  } else if (options.view && options.dayStart && options.dayEnd) {
+    if (options.view === "today") {
+      query = query.gte("arrival_at", options.dayStart).lt("arrival_at", options.dayEnd);
+    } else if (options.view === "upcoming") {
+      query = query.gte("arrival_at", options.dayEnd);
+    } else if (options.view === "previous") {
+      query = query.lt("arrival_at", options.dayStart);
+    }
+  } else if (!options.view) {
+    // Backward-compatible window for older mobile builds that do not send a
+    // list view yet.
     query = query
       .gte("arrival_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
       .lte("arrival_at", new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString());
   }
+  const descending = options.view === "previous" || options.view === "done";
+  query = query
+    .order("arrival_at", { ascending: !descending })
+    .limit(options.view === "done" ? 250 : 100);
   const { data: orders, error } = await query;
   if (error) throw new Error(error.message);
   const rows = orders ?? [];
@@ -355,7 +379,7 @@ async function loadOrdersForSession(session: FieldStaffSession, orderId?: string
     (progressResult.data ?? []).map((row) => [row.order_id as string, row as Record<string, unknown>])
   );
 
-  return rows.map((row): FieldOrder => {
+  const mapped = rows.map((row): FieldOrder => {
     const progress = progressOf(progressRows.get(row.id as string));
     const next = nextFieldAction(progress);
     return {
@@ -380,11 +404,17 @@ async function loadOrdersForSession(session: FieldStaffSession, orderId?: string
         session.role === "driver" && driverArrivalPingAvailable(progress),
     };
   });
+  return options.view === "done"
+    ? mapped.filter((order) => Boolean(order.progress.driverReturnedAt))
+    : mapped;
 }
 
-export async function listFieldOrders(session: FieldStaffSession): Promise<FieldOrder[]> {
+export async function listFieldOrders(
+  session: FieldStaffSession,
+  options: FieldOrderListOptions = {},
+): Promise<FieldOrder[]> {
   await touchFieldStaffActivity(session.accountId);
-  return loadOrdersForSession(session);
+  return loadOrdersForSession(session, options);
 }
 
 export async function getFieldOrder(
@@ -393,7 +423,7 @@ export async function getFieldOrder(
 ): Promise<FieldOrder | null> {
   if (!UUID.test(orderId)) return null;
   await touchFieldStaffActivity(session.accountId);
-  return (await loadOrdersForSession(session, orderId))[0] ?? null;
+  return (await loadOrdersForSession(session, { orderId }))[0] ?? null;
 }
 
 export async function updateFieldOrder(

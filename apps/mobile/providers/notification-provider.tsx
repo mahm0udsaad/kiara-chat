@@ -21,6 +21,7 @@ import { useAuth } from "@/providers/auth-provider";
 
 /** Alert kinds the server sends for the inbox — see `lib/inbox-notifications`. */
 const INBOX_ALERTS = new Set(["inbox_message", "inbox_unassigned", "inbox_danger"]);
+const FIELD_ALERTS = new Set(["field_order", "field_push_test"]);
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -62,13 +63,13 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   // Bumped by the account screen's retry, after the employee has gone into the
   // system settings and turned notifications back on.
   const [attempt, setAttempt] = useState(0);
+  const register = fieldStaff
+    ? registerFieldNotifications
+    : inboxStaff && teamMemberId
+      ? registerInboxNotifications
+      : null;
 
   useEffect(() => {
-    const register = fieldStaff
-      ? registerFieldNotifications
-      : inboxStaff && teamMemberId
-        ? registerInboxNotifications
-        : null;
     if (!register) return;
 
     let cancelled = false;
@@ -85,7 +86,23 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     return () => {
       cancelled = true;
     };
-  }, [attempt, fieldStaff, inboxStaff, teamMemberId]);
+  }, [attempt, register]);
+
+  // APNs/FCM can rotate the native token while the app is running. Recreate
+  // and upload the derived Expo token immediately instead of waiting for the
+  // employee to restart or sign in again.
+  useEffect(() => {
+    if (!register) return;
+    const subscription = Notifications.addPushTokenListener(() => {
+      void register().then(setRegistration).catch((error: unknown) => {
+        setRegistration({
+          state: "failed",
+          message: error instanceof Error ? error.message : "تعذّر تحديث رمز الإشعارات",
+        });
+      });
+    });
+    return () => subscription.remove();
+  }, [register]);
 
   const refresh = useCallback(async () => {
     setAttempt((previous) => previous + 1);
@@ -99,7 +116,17 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     const subscription = Notifications.addNotificationReceivedListener((notification) => {
       const data = notification.request.content.data;
-      if (typeof data?.type !== "string" || !INBOX_ALERTS.has(data.type)) return;
+      if (typeof data?.type !== "string") return;
+      if (FIELD_ALERTS.has(data.type)) {
+        void queryClient.invalidateQueries({ queryKey: ["field-orders"] });
+        if (typeof data.orderId === "string") {
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.fieldOrder(data.orderId),
+          });
+        }
+        return;
+      }
+      if (!INBOX_ALERTS.has(data.type)) return;
       // Every inbox alert changes at least one list count (new, unassigned,
       // danger), so the tab badges are refreshed even when the alert is about
       // a thread this employee has not opened.
@@ -113,17 +140,39 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     return () => subscription.remove();
   }, [queryClient]);
 
-  useEffect(() => {
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+  const openNotification = useCallback(
+    (response: Notifications.NotificationResponse) => {
       const url = response.notification.request.content.data?.url;
       if (typeof url === "string" && url.startsWith("/field/orders/")) {
         router.push(url as never);
+      } else if (url === "/field/account") {
+        router.push("/field/account");
       } else if (typeof url === "string" && url.startsWith("/inbox/")) {
         router.push(url as never);
       }
-    });
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener(openNotification);
     return () => subscription.remove();
-  }, [router]);
+  }, [openNotification]);
+
+  // The listener above only catches taps while the JS runtime exists. Handle
+  // the notification that launched a killed app once, then clear it so a later
+  // cold start does not reopen the same order.
+  useEffect(() => {
+    let active = true;
+    void Notifications.getLastNotificationResponseAsync().then(async (response) => {
+      if (!active || !response) return;
+      openNotification(response);
+      await Notifications.clearLastNotificationResponseAsync();
+    });
+    return () => {
+      active = false;
+    };
+  }, [openNotification]);
 
   return (
     <NotificationStatusContext value={status}>{children}</NotificationStatusContext>

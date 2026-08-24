@@ -1,15 +1,31 @@
 import { Link, Stack } from "expo-router";
+import { useState } from "react";
 import { Pressable, RefreshControl, FlatList, Text, View } from "react-native";
 
 import { EmptyState, ErrorState, LoadingScreen } from "@/components/screen-state";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { Segmented } from "@/components/ui/segmented";
 import { radius, rtlText, spacing, type } from "@/constants/theme";
 import { durationLabel, formatters, relativeDayLabel } from "@/lib/format";
 import { useBootstrap, useFieldOrders } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
-import type { FieldOrder } from "@/types/api";
+import type { FieldOrder, FieldOrderListView } from "@/types/api";
+
+const ORDER_VIEWS: { value: FieldOrderListView; label: string }[] = [
+  { value: "today", label: "اليوم" },
+  { value: "upcoming", label: "القادمة" },
+  { value: "previous", label: "السابقة" },
+  { value: "done", label: "المكتملة" },
+];
+
+const EMPTY_COPY: Record<FieldOrderListView, { title: string; detail: string }> = {
+  today: { title: "لا توجد طلبات اليوم", detail: "ستظهر طلبات اليوم هنا فور إسنادها لك." },
+  upcoming: { title: "لا توجد طلبات قادمة", detail: "لا توجد رحلات مجدولة بعد اليوم." },
+  previous: { title: "لا توجد طلبات سابقة", detail: "لا توجد طلبات أقدم في سجلك." },
+  done: { title: "لا توجد طلبات مكتملة", detail: "تظهر هنا الطلبات بعد تأكيد عودة السائق." },
+};
 
 function OrderCard({ order }: { order: FieldOrder }) {
   const { colors } = useTheme();
@@ -79,7 +95,8 @@ function OrderCard({ order }: { order: FieldOrder }) {
 export default function FieldOrdersScreen() {
   const { colors } = useTheme();
   const bootstrap = useBootstrap();
-  const orders = useFieldOrders();
+  const [view, setView] = useState<FieldOrderListView>("today");
+  const orders = useFieldOrders(view);
   const name = bootstrap.data?.session.displayName ?? "";
   if (orders.isLoading) return <LoadingScreen label="جارٍ تحميل الطلبات…" />;
   if (orders.isError) {
@@ -111,15 +128,27 @@ export default function FieldOrdersScreen() {
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, flexGrow: 1, paddingBottom: spacing["4xl"] }}
         ListHeaderComponent={
-          <View style={{ gap: spacing.xs }}>
-            <Text style={{ ...type.title2, color: colors.text, ...rtlText }}>أهلًا {name}</Text>
-            <Text style={{ ...type.callout, color: colors.textSecondary, ...rtlText }}>
-              افتحي الطلب واتّبعي الخطوة الظاهرة فقط.
-            </Text>
+          <View style={{ gap: spacing.lg, paddingBottom: spacing.xs }}>
+            <View style={{ gap: spacing.xs }}>
+              <Text style={{ ...type.title2, color: colors.text, ...rtlText }}>أهلًا {name}</Text>
+              <Text style={{ ...type.callout, color: colors.textSecondary, ...rtlText }}>
+                افتحي الطلب واتّبعي الخطوة الظاهرة فقط.
+              </Text>
+            </View>
+            <Segmented
+              accessibilityLabel="تصفية طلباتي"
+              options={ORDER_VIEWS}
+              value={view}
+              onChange={setView}
+            />
           </View>
         }
         ListEmptyComponent={
-          <EmptyState icon="calendar" title="لا توجد طلبات" detail="ستصل الطلبات الجديدة هنا مع إشعار." />
+          <EmptyState
+            icon={view === "done" ? "checkmark.circle" : "calendar"}
+            title={EMPTY_COPY[view].title}
+            detail={EMPTY_COPY[view].detail}
+          />
         }
         refreshControl={
           <RefreshControl refreshing={orders.isRefetching} onRefresh={() => void orders.refetch()} tintColor={colors.brand} />

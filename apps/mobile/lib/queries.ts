@@ -7,6 +7,7 @@ import {
 import * as Crypto from "expo-crypto";
 
 import { ApiError, apiRequest, apiUpload, type UploadFile } from "@/lib/api";
+import { fieldNotificationDeviceId } from "@/lib/notifications";
 import type {
   BootstrapResponse,
   BookingReceipt,
@@ -28,6 +29,7 @@ import type {
   FieldSessionState,
   FieldOrder,
   FieldOrderAction,
+  FieldOrderListView,
   InternalNote,
   OrderDetailResponse,
   OrderPatch,
@@ -63,7 +65,8 @@ export const queryKeys = {
   order: (id: string) => ["order", id] as const,
   dispatchOptions: ["dispatch-options"] as const,
   fieldSession: (token: string) => ["field-session", token] as const,
-  fieldOrders: ["field-orders"] as const,
+  fieldOrders: (view?: FieldOrderListView, dayStart?: string) =>
+    ["field-orders", view ?? "all", dayStart ?? ""] as const,
   fieldOrder: (id: string) => ["field-order", id] as const,
   customerTimeline: (phone: string) => ["customer-timeline", phone] as const,
   conversationNotes: (id: string) => ["conversation-notes", id] as const,
@@ -686,10 +689,25 @@ export function useFieldSessionAction(token: string) {
   });
 }
 
-export function useFieldOrders() {
+function localDayBounds(now = new Date()) {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { dayStart: start.toISOString(), dayEnd: end.toISOString() };
+}
+
+export function useFieldOrders(view: FieldOrderListView = "today") {
+  const { dayStart, dayEnd } = localDayBounds();
+  const params = new URLSearchParams({ view });
+  if (view !== "done") {
+    params.set("dayStart", dayStart);
+    params.set("dayEnd", dayEnd);
+  }
   return useQuery({
-    queryKey: queryKeys.fieldOrders,
-    queryFn: () => apiRequest<{ orders: FieldOrder[] }>("/field/orders"),
+    queryKey: queryKeys.fieldOrders(view, dayStart),
+    queryFn: () =>
+      apiRequest<{ orders: FieldOrder[] }>(`/field/orders?${params.toString()}`),
     refetchInterval: 30_000,
   });
 }
@@ -720,9 +738,37 @@ export function useFieldOrderAction(id: string) {
       }),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.fieldOrders }),
+        queryClient.invalidateQueries({ queryKey: ["field-orders"] }),
         queryClient.invalidateQueries({ queryKey: queryKeys.fieldOrder(id) }),
       ]);
+    },
+  });
+}
+
+export type FieldPushDeliverySummary = {
+  attempted: number;
+  accepted: number;
+  delivered: number;
+  pending: number;
+  failed: number;
+  errors: string[];
+};
+
+export function useFieldPushTest() {
+  return useMutation({
+    mutationFn: async () => {
+      const deviceId = await fieldNotificationDeviceId();
+      if (!deviceId) {
+        throw new ApiError(
+          "لا يوجد معرّف إشعارات مسجل لهذا الجهاز.",
+          0,
+          "NO_FIELD_DEVICE_ID",
+        );
+      }
+      return apiRequest<{ delivery: FieldPushDeliverySummary }>("/field/push-test", {
+        method: "POST",
+        body: JSON.stringify({ deviceId }),
+      });
     },
   });
 }

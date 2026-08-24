@@ -136,6 +136,10 @@ export async function unregisterFieldNotifications(): Promise<void> {
   await SecureStore.deleteItemAsync(FIELD_REGISTERED_TOKEN_KEY);
 }
 
+export async function fieldNotificationDeviceId(): Promise<string | null> {
+  return SecureStore.getItemAsync(FIELD_DEVICE_ID_KEY);
+}
+
 export async function registerInboxNotifications(): Promise<NotificationRegistration> {
   const identity = await notificationIdentity(true, {
     device: INBOX_DEVICE_ID_KEY,

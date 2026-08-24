@@ -76,21 +76,33 @@ export async function POST(
           ? body.location
           : null,
     });
-    if (action === "driver_arrived") {
-      // A side ping, not a step advance: tell the specialist her ride is here
-      // rather than nudging her with the generic next-step reminder.
-      await notifyFieldDriverArrived({
-        orderId: order.id,
-        specialistId: order.specialistId,
-        customerName: order.customerName,
-      }).catch(() => undefined);
-    } else {
-      await notifyNextFieldStep({
-        orderId: order.id,
-        specialistId: order.specialistId,
-        driverId: order.driverId,
-        progress: order.progress,
-      }).catch(() => undefined);
+    try {
+      if (action === "driver_arrived") {
+        // A side ping, not a step advance: tell the specialist her ride is here
+        // rather than nudging her with the generic next-step reminder.
+        const delivery = await notifyFieldDriverArrived({
+          orderId: order.id,
+          specialistId: order.specialistId,
+          customerName: order.customerName,
+        });
+        if (delivery.failed) {
+          console.error("[field-push] Driver-arrival notification failed", delivery);
+        }
+      } else {
+        const delivery = await notifyNextFieldStep({
+          orderId: order.id,
+          specialistId: order.specialistId,
+          driverId: order.driverId,
+          progress: order.progress,
+        });
+        if (delivery.failed) {
+          console.error("[field-push] Next-step notification failed", delivery);
+        }
+      }
+    } catch (pushError) {
+      // The operational step is already committed. Never turn a transient push
+      // outage into a retry of the action itself.
+      console.error("[field-push] Unable to send field notification", pushError);
     }
     return mobileData({ order });
   } catch (error) {
