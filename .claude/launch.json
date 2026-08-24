@@ -6,6 +6,13 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--port", "3200"],
       "port": 3200
+    },
+    {
+      "name": "kiara-mobile-web",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["expo", "start", "--web", "--port", "8081"],
+      "cwd": "apps/mobile",
+      "port": 8081
     }
   ]
 }

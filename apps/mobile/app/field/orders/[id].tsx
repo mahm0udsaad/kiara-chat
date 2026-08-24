@@ -24,7 +24,7 @@ import { useFieldOrder, useFieldOrderAction } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { FieldOrder, FieldOrderAction } from "@/types/api";
 
-const STEP_LABELS = ["تأكيد الرحلة", "استلام الأخصائية", "بدء الخدمة", "إنهاء الطلب"];
+const STEP_LABELS = ["تأكيد الرحلة", "ركوب الأخصائية", "بدء الخدمة", "إنهاء الخدمة", "عودة السائق"];
 
 function ProgressRail({ order }: { order: FieldOrder }) {
   const { colors } = useTheme();
@@ -33,6 +33,7 @@ function ProgressRail({ order }: { order: FieldOrder }) {
     Boolean(order.progress.specialistPickupAt),
     Boolean(order.progress.serviceStartedAt),
     Boolean(order.progress.completedAt),
+    Boolean(order.progress.driverReturnedAt),
   ];
   return (
     <View style={{ flexDirection: "row-reverse", alignItems: "flex-start", gap: spacing.xs }}>
@@ -69,10 +70,12 @@ function ProgressRail({ order }: { order: FieldOrder }) {
 }
 
 const confirmationText: Record<FieldOrderAction, { title: string; body: string }> = {
-  confirm_ride: { title: "تأكيد الرحلة", body: "أؤكد أنني بدأت الرحلة لهذا الطلب." },
-  confirm_pickup: { title: "بدء الطلب", body: "أؤكد وصول السائق واستلامي لبدء التوجه إلى العميلة." },
+  confirm_ride: { title: "تأكيد الرحلة والانطلاق", body: "أؤكد أنني انطلقت لاصطحاب الأخصائية." },
+  driver_arrived: { title: "وصلت لمقر الأخصائية", body: "سيتم تنبيه الأخصائية بوصولك الآن." },
+  confirm_pickup: { title: "ركبتُ مع السائق", body: "أؤكد ركوبي مع السائق والتوجه إلى العميلة." },
   start_service: { title: "بدء الخدمة", body: "أؤكد وصولي إلى منزل العميلة وبدء الخدمة الآن." },
-  complete_order: { title: "إنهاء الطلب", body: "أؤكد انتهاء الخدمة ومغادرتي منزل العميلة." },
+  complete_order: { title: "إنهاء الخدمة والمغادرة", body: "أؤكد انتهاء الخدمة ومغادرتي منزل العميلة." },
+  driver_return: { title: "إنهاء الرحلة والعودة", body: "أؤكد عودتي وإتمام رحلة هذا الطلب." },
 };
 
 export default function FieldOrderDetailScreen() {
@@ -103,6 +106,13 @@ export default function FieldOrderDetailScreen() {
       },
     ]);
   };
+  // The driver's non-blocking "I've arrived" ping — fires straight away and
+  // just notifies the specialist; it never gates her next step.
+  const pingArrival = () =>
+    action.mutate(
+      { action: "driver_arrived", expectedVersion: order.progress.version },
+      { onSuccess: () => successFeedback() },
+    );
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <ScrollView
@@ -120,9 +130,9 @@ export default function FieldOrderDetailScreen() {
               </Text>
             </View>
             <Badge
-              label={order.progress.completedAt ? "مكتمل" : order.canAct ? "بانتظارك" : "بانتظار الخطوة التالية"}
-              tone={order.progress.completedAt ? "success" : order.canAct ? "warning" : "neutral"}
-              icon={order.progress.completedAt ? "checkmark.circle" : "clock"}
+              label={order.progress.driverReturnedAt ? "مكتمل" : order.canAct ? "بانتظارك" : "بانتظار الخطوة التالية"}
+              tone={order.progress.driverReturnedAt ? "success" : order.canAct ? "warning" : "neutral"}
+              icon={order.progress.driverReturnedAt ? "checkmark.circle" : "clock"}
             />
           </View>
           <Divider />
@@ -177,6 +187,14 @@ export default function FieldOrderDetailScreen() {
       </ScrollView>
 
       <ActionBar bottomInset={insets.bottom}>
+        {order.canPingArrival ? (
+          <PrimaryButton
+            label="وصلت لمقر الأخصائية"
+            icon="mappin.and.ellipse"
+            loading={action.isPending}
+            onPress={pingArrival}
+          />
+        ) : null}
         {next && order.canAct ? (
           <PrimaryButton label={order.nextActionLabel ?? "تأكيد الخطوة"} icon="checkmark.circle" loading={action.isPending} onPress={confirm} />
         ) : next ? (

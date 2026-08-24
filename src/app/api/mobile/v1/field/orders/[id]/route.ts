@@ -3,7 +3,7 @@ import {
   updateFieldOrder,
   type FieldOrderAction,
 } from "@/lib/field-staff";
-import { notifyNextFieldStep } from "@/lib/field-push";
+import { notifyFieldDriverArrived, notifyNextFieldStep } from "@/lib/field-push";
 import {
   authorizeFieldStaffRequest,
   mobileData,
@@ -16,9 +16,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 
 const ACTIONS = new Set<FieldOrderAction>([
   "confirm_ride",
+  "driver_arrived",
   "confirm_pickup",
   "start_service",
   "complete_order",
+  "driver_return",
 ]);
 
 export async function GET(
@@ -74,12 +76,22 @@ export async function POST(
           ? body.location
           : null,
     });
-    await notifyNextFieldStep({
-      orderId: order.id,
-      specialistId: order.specialistId,
-      driverId: order.driverId,
-      progress: order.progress,
-    }).catch(() => undefined);
+    if (action === "driver_arrived") {
+      // A side ping, not a step advance: tell the specialist her ride is here
+      // rather than nudging her with the generic next-step reminder.
+      await notifyFieldDriverArrived({
+        orderId: order.id,
+        specialistId: order.specialistId,
+        customerName: order.customerName,
+      }).catch(() => undefined);
+    } else {
+      await notifyNextFieldStep({
+        orderId: order.id,
+        specialistId: order.specialistId,
+        driverId: order.driverId,
+        progress: order.progress,
+      }).catch(() => undefined);
+    }
     return mobileData({ order });
   } catch (error) {
     if (error instanceof OperationalCommandError && error.isConflict) {

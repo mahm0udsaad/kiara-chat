@@ -60,7 +60,14 @@ for f in "$REPO_ROOT"/supabase/tests/harness/*.sql; do
 done
 
 echo "==> migrations (timestamp order)"
-for f in $(ls "$REPO_ROOT"/supabase/migrations/20260811*.sql | sort); do
+for f in $(ls "$REPO_ROOT"/supabase/migrations/2026*.sql | sort); do
+  # Everything before 20260811 is folded into the production baseline stub
+  # (01_production_baseline.sql); those earlier migrations touch tables the
+  # stub deliberately omits, so re-applying them here would fail. Timestamps
+  # are fixed-width, so a lexical compare is a numeric one.
+  if [[ "$(basename "$f")" < "20260811" ]]; then
+    continue
+  fi
   echo "    $(basename "$f")"
   case "$(basename "$f")" in
     *field_reminders_supabase_cron*)

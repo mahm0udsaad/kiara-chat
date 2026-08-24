@@ -12,9 +12,11 @@ import type { TripType } from "@/lib/types";
 export type FieldStaffRole = "specialist" | "driver";
 export type FieldOrderAction =
   | "confirm_ride"
+  | "driver_arrived"
   | "confirm_pickup"
   | "start_service"
-  | "complete_order";
+  | "complete_order"
+  | "driver_return";
 
 export interface FieldStaffSession {
   kind: "field";
@@ -28,9 +30,11 @@ export interface FieldStaffSession {
 
 export interface FieldOrderProgress {
   driverConfirmedAt: string | null;
+  driverArrivedAt: string | null;
   specialistPickupAt: string | null;
   serviceStartedAt: string | null;
   completedAt: string | null;
+  driverReturnedAt: string | null;
   lastActivityAt: string;
   lastReminderAt: string | null;
   version: number;
@@ -52,6 +56,12 @@ export interface FieldOrder {
   nextAction: FieldOrderAction | null;
   nextActionLabel: string | null;
   canAct: boolean;
+  /**
+   * The driver's non-blocking "I've arrived at the specialist" ping is offered
+   * only to the driver, only after he has confirmed the ride and before she is
+   * in the car, and only until he taps it once.
+   */
+  canPingArrival: boolean;
 }
 
 export interface FieldStaffAccountSummary {
@@ -246,9 +256,11 @@ function progressOf(row: Record<string, unknown> | null | undefined): FieldOrder
   const now = new Date().toISOString();
   return {
     driverConfirmedAt: (row?.driver_confirmed_at as string | null) ?? null,
+    driverArrivedAt: (row?.driver_arrived_at as string | null) ?? null,
     specialistPickupAt: (row?.specialist_pickup_at as string | null) ?? null,
     serviceStartedAt: (row?.service_started_at as string | null) ?? null,
     completedAt: (row?.completed_at as string | null) ?? null,
+    driverReturnedAt: (row?.driver_returned_at as string | null) ?? null,
     lastActivityAt: (row?.last_activity_at as string | null) ?? now,
     lastReminderAt: (row?.last_reminder_at as string | null) ?? null,
     version: Number(row?.version ?? 1),
@@ -259,18 +271,34 @@ export function nextFieldAction(
   progress: FieldOrderProgress
 ): { action: FieldOrderAction | null; role: FieldStaffRole | null; label: string | null } {
   if (!progress.driverConfirmedAt) {
-    return { action: "confirm_ride", role: "driver", label: "تأكيد الرحلة" };
+    return { action: "confirm_ride", role: "driver", label: "تأكيد الرحلة والانطلاق" };
   }
   if (!progress.specialistPickupAt) {
-    return { action: "confirm_pickup", role: "specialist", label: "بدء الطلب عند وصول السائق" };
+    return { action: "confirm_pickup", role: "specialist", label: "ركبتُ مع السائق" };
   }
   if (!progress.serviceStartedAt) {
-    return { action: "start_service", role: "specialist", label: "بدء الخدمة عند منزل العميلة" };
+    return { action: "start_service", role: "specialist", label: "بدء الخدمة عند العميلة" };
   }
   if (!progress.completedAt) {
-    return { action: "complete_order", role: "specialist", label: "إنهاء الطلب عند مغادرة منزل العميلة" };
+    return { action: "complete_order", role: "specialist", label: "إنهاء الخدمة والمغادرة" };
+  }
+  if (!progress.driverReturnedAt) {
+    return { action: "driver_return", role: "driver", label: "إنهاء الرحلة والعودة" };
   }
   return { action: null, role: null, label: null };
+}
+
+/**
+ * Whether the driver may fire the non-blocking "I reached the specialist" ping
+ * for a given progress state. Kept beside {@link nextFieldAction} so the linear
+ * chain and this side event stay defined in one place.
+ */
+export function driverArrivalPingAvailable(progress: FieldOrderProgress): boolean {
+  return Boolean(
+    progress.driverConfirmedAt &&
+      !progress.driverArrivedAt &&
+      !progress.specialistPickupAt,
+  );
 }
 
 async function loadOrdersForSession(session: FieldStaffSession, orderId?: string) {
@@ -348,6 +376,8 @@ async function loadOrdersForSession(session: FieldStaffSession, orderId?: string
       nextAction: next.action,
       nextActionLabel: next.label,
       canAct: next.role === session.role,
+      canPingArrival:
+        session.role === "driver" && driverArrivalPingAvailable(progress),
     };
   });
 }
@@ -378,9 +408,19 @@ export async function updateFieldOrder(
 ): Promise<FieldOrder> {
   const currentOrder = await getFieldOrder(session, orderId);
   if (!currentOrder) throw new Error("الطلب غير موجود أو غير مخصص لك");
-  const expected = nextFieldAction(currentOrder.progress);
-  if (expected.action !== action) throw new Error("هذه الخطوة غير متاحة الآن");
-  if (expected.role !== session.role) throw new Error("هذه الخطوة تخص عضو الفريق الآخر");
+  if (action === "driver_arrived") {
+    // A side event, not part of the linear chain — validated on its own terms.
+    if (session.role !== "driver") {
+      throw new Error("هذه الخطوة تخص عضو الفريق الآخر");
+    }
+    if (!driverArrivalPingAvailable(currentOrder.progress)) {
+      throw new Error("هذه الخطوة غير متاحة الآن");
+    }
+  } else {
+    const expected = nextFieldAction(currentOrder.progress);
+    if (expected.action !== action) throw new Error("هذه الخطوة غير متاحة الآن");
+    if (expected.role !== session.role) throw new Error("هذه الخطوة تخص عضو الفريق الآخر");
+  }
 
   const result = await fieldOrderStepCommand({
     restaurantId: KIARA_RESTAURANT_ID,
@@ -398,11 +438,15 @@ export async function updateFieldOrder(
   const actionTime =
     action === "confirm_ride"
       ? progress?.driver_confirmed_at
-      : action === "confirm_pickup"
-        ? progress?.specialist_pickup_at
-        : action === "start_service"
-          ? progress?.service_started_at
-          : progress?.completed_at;
+      : action === "driver_arrived"
+        ? progress?.driver_arrived_at
+        : action === "confirm_pickup"
+          ? progress?.specialist_pickup_at
+          : action === "start_service"
+            ? progress?.service_started_at
+            : action === "complete_order"
+              ? progress?.completed_at
+              : progress?.driver_returned_at;
   const now = typeof actionTime === "string" ? actionTime : new Date().toISOString();
 
   await mirrorFieldProgressToConversation(orderId, action, now);
@@ -458,13 +502,16 @@ async function mirrorFieldProgressToConversation(
   const nextDriver = { ...driver };
   const nextSpecialist = { ...specialist };
   if (action === "confirm_ride") nextDriver.started_at = driver.started_at ?? at;
+  if (action === "driver_arrived") nextDriver.arrived_at = driver.arrived_at ?? at;
   if (action === "start_service") {
-    nextDriver.completed_at = driver.completed_at ?? at;
     nextSpecialist.started_at = specialist.started_at ?? at;
   }
   if (action === "complete_order") {
     nextSpecialist.completed_at = specialist.completed_at ?? at;
   }
+  // The driver's leg closes when he confirms the return trip, not when the
+  // specialist starts the service — that only means he dropped her and left.
+  if (action === "driver_return") nextDriver.completed_at = driver.completed_at ?? at;
   const completing = action === "complete_order";
   const nextMetadata = {
     ...metadata,

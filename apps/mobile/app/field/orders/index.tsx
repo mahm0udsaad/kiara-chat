@@ -13,7 +13,8 @@ import type { FieldOrder } from "@/types/api";
 
 function OrderCard({ order }: { order: FieldOrder }) {
   const { colors } = useTheme();
-  const completed = Boolean(order.progress.completedAt);
+  // The visit is fully closed only once the driver confirms the return trip.
+  const completed = Boolean(order.progress.driverReturnedAt);
   return (
     <Link href={{ pathname: "/field/orders/[id]", params: { id: order.id } }} asChild>
       <Pressable accessibilityRole="button" accessibilityLabel={`فتح طلب ${order.customerName ?? order.customerPhone}`}>

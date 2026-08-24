@@ -497,15 +497,19 @@ export type FieldSessionDashboard = {
 
 export type FieldOrderAction =
   | "confirm_ride"
+  | "driver_arrived"
   | "confirm_pickup"
   | "start_service"
-  | "complete_order";
+  | "complete_order"
+  | "driver_return";
 
 export type FieldOrderProgress = {
   driverConfirmedAt: string | null;
+  driverArrivedAt: string | null;
   specialistPickupAt: string | null;
   serviceStartedAt: string | null;
   completedAt: string | null;
+  driverReturnedAt: string | null;
   lastActivityAt: string;
   lastReminderAt: string | null;
   version: number;
@@ -527,4 +531,6 @@ export type FieldOrder = {
   nextAction: FieldOrderAction | null;
   nextActionLabel: string | null;
   canAct: boolean;
+  /** The driver's non-blocking "I've arrived at the specialist" ping is offered. */
+  canPingArrival: boolean;
 };

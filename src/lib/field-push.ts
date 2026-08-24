@@ -127,6 +127,31 @@ export async function notifyFieldOrderAssigned(input: {
   await sendExpoMessages(messages);
 }
 
+/**
+ * The driver's non-blocking "I've arrived at the specialist" ping. Notifies
+ * only the specialist so she knows her ride is waiting; it does not advance the
+ * step machine, so it is sent instead of — not alongside — the next-step nudge.
+ */
+export async function notifyFieldDriverArrived(input: {
+  orderId: string;
+  specialistId: string | null;
+  customerName: string | null;
+}): Promise<void> {
+  if (!input.specialistId) return;
+  const tokens = await activeTokensForRoster("specialist", [input.specialistId]);
+  const name = input.customerName || "العميلة";
+  await sendExpoMessages(
+    (tokens.get(input.specialistId) ?? []).map((to) => ({
+      to,
+      title: "وصل السائق",
+      body: `السائق في انتظاركِ للتوجه إلى ${name}.`,
+      data: { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` },
+      sound: "default" as const,
+      priority: "high" as const,
+    }))
+  );
+}
+
 export async function notifyNextFieldStep(input: {
   orderId: string;
   specialistId: string | null;
