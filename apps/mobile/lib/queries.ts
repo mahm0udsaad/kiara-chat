@@ -429,11 +429,16 @@ export function useCreateOrderFromReservation() {
         method: "POST",
         body: JSON.stringify({ reservationId }),
       }),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["orders-calendar"] }),
-        queryClient.invalidateQueries({ queryKey: ["orders"] }),
-      ]);
+    // Deliberately not awaited. `invalidateQueries` resolves only once every
+    // active query has refetched, and react-query awaits this callback before
+    // running the one passed to `mutate` — so awaiting it here held the
+    // dispatch modal shut through a calendar refetch and an orders refetch
+    // after the order already existed. The employee tapped طلب سائق and
+    // watched nothing happen for several seconds. The lists catch up on their
+    // own while she works in the modal.
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["orders-calendar"] });
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
     },
   });
 }
@@ -635,7 +640,14 @@ export function useDispatchOrder(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: DispatchInput) =>
-      apiRequest<{ order: OrderDetailResponse["order"] }>(
+      // The server reports what actually left the building, per recipient.
+      // Dropping those two flags here is what let a dispatch that WhatsApp
+      // refused outright still read as sent on the phone.
+      apiRequest<{
+        order: OrderDetailResponse["order"];
+        driverSent: boolean;
+        specialistSent: boolean | null;
+      }>(
         `/orders/${id}/dispatch`,
         {
           method: "POST",
@@ -649,11 +661,11 @@ export function useDispatchOrder(id: string) {
           }),
         },
       ),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["orders"] }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.order(id) }),
-      ]);
+    // Same reason as above: the screen closes on send, and holding it open
+    // for the refetches only makes a finished action look unfinished.
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.order(id) });
     },
   });
 }

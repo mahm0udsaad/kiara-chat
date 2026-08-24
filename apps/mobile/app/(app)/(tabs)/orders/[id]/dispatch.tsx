@@ -16,7 +16,12 @@ import {
   relativeDayLabel,
   tripTypeLabel,
 } from "@/lib/format";
-import { successFeedback, tapFeedback, warningFeedback } from "@/lib/haptics";
+import {
+  errorFeedback,
+  successFeedback,
+  tapFeedback,
+  warningFeedback,
+} from "@/lib/haptics";
 import {
   useDispatchOptions,
   useDispatchOrder,
@@ -132,7 +137,23 @@ function DispatchForm({ id }: { id: string }) {
         expectedVersion: current.version,
       },
       {
-        onSuccess: () => {
+        // A 200 means the order was processed, not that WhatsApp accepted it:
+        // when the engine is disconnected both messages come back unsent. The
+        // employee has to be told that here — she is the only one who can act
+        // on it, and she leaves this screen believing the driver has been
+        // told where to be.
+        onSuccess: ({ driverSent, specialistSent }) => {
+          if (!driverSent || specialistSent === false) {
+            errorFeedback();
+            setValidation(
+              !driverSent && specialistSent === false
+                ? "لم تصل أي رسالة — واتساب غير متصل. راجعي حالة الاتصال ثم أعيدي الإرسال."
+                : !driverSent
+                  ? "رسالة السائق لم تُرسل. الطلب محفوظ — أعيدي الإرسال من صفحة الطلب."
+                  : "رسالة الأخصائية لم تُرسل. الطلب محفوظ — أعيدي الإرسال من صفحة الطلب.",
+            );
+            return;
+          }
           successFeedback();
           router.back();
         },
