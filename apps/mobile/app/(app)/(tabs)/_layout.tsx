@@ -73,7 +73,13 @@ export default function TabsLayout() {
       tintColor={colors.brand}
       minimizeBehavior="onScrollDown"
     >
-      <NativeTabs.Trigger name="inbox">
+      <NativeTabs.Trigger
+        name="inbox"
+        // The inbox FlatList already owns the native-stack header/search-bar
+        // inset. Letting NativeTabs discover and override that same scroll view
+        // again on every tab re-attachment makes iOS accumulate the top inset.
+        disableAutomaticContentInsets
+      >
         <NativeTabs.Trigger.Icon sf={{ default: "message", selected: "message.fill" }} md="chat" />
         <NativeTabs.Trigger.Label>المحادثات</NativeTabs.Trigger.Label>
         {unreadCount > 0 ? (
