@@ -8,6 +8,7 @@ import {
   mobileError,
   mobileServerError,
 } from "@/lib/mobile/http";
+import { withTransientUpstreamRetry } from "@/lib/mobile/transient-retry";
 
 function bodyOf(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -18,7 +19,8 @@ function bodyOf(value: unknown): Record<string, unknown> {
 export async function POST(request: Request) {
   const auth = await authorizeMobileRequest(request);
   if (auth.response) return auth.response;
-  if (!auth.session.teamMemberId) {
+  const teamMemberId = auth.session.teamMemberId;
+  if (!teamMemberId) {
     return mobileError(409, "TEAM_MEMBER_REQUIRED", "A team member account is required");
   }
   const body = bodyOf(await request.json().catch(() => ({})));
@@ -34,12 +36,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    await registerInboxPushToken({
-      teamMemberId: auth.session.teamMemberId,
-      expoToken,
-      deviceId,
-      platform,
-    });
+    await withTransientUpstreamRetry(
+      () =>
+        registerInboxPushToken({
+          teamMemberId,
+          expoToken,
+          deviceId,
+          platform,
+        }),
+      { label: "inbox push registration" },
+    );
     return mobileData({ registered: true });
   } catch (error) {
     return mobileServerError(

@@ -5,6 +5,10 @@ import {
   MOBILE_API_VERSION,
   type MobileApiError,
 } from "@/lib/mobile/contracts";
+import {
+  conciseUpstreamError,
+  isTransientUpstreamError,
+} from "@/lib/mobile/transient-retry";
 
 const MOBILE_HEADERS = {
   "Cache-Control": "private, no-store, max-age=0",
@@ -113,8 +117,12 @@ export function mobileServerError(
   code: string,
   fallbackMessage: string
 ): NextResponse<MobileApiError> {
-  console.error(`[mobile-api] ${code}`, error);
-  return mobileError(500, code, fallbackMessage);
+  const transient = isTransientUpstreamError(error);
+  console.error(
+    `[mobile-api] ${code}`,
+    transient ? conciseUpstreamError(error) : error,
+  );
+  return mobileError(transient ? 503 : 500, code, fallbackMessage);
 }
 
 export function parseIntegerParam(

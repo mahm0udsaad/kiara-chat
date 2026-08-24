@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { supabaseServerFetch } from "@/lib/supabase/fetch";
 
 /**
  * Service-role client — BYPASSES RLS. Reserved for narrow admin tasks
@@ -17,6 +18,7 @@ export function getAdminSupabaseClient(): SupabaseClient {
   if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL environment variable");
   if (!key) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY environment variable");
   cached = createClient(url, key, {
+    global: { fetch: supabaseServerFetch },
     auth: { autoRefreshToken: false, persistSession: false },
   });
   return cached;

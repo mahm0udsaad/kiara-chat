@@ -41,13 +41,27 @@ let appScopedTokenSchema: Promise<boolean> | null = null;
 
 async function supportsAppScopedTokens(): Promise<boolean> {
   if (!appScopedTokenSchema) {
-    appScopedTokenSchema = (async () => {
+    const detection = (async () => {
       const { error } = await getAdminSupabaseClient()
         .from("user_push_tokens")
         .select("app_id, disabled_reason, last_error_at")
         .limit(0);
-      return !error;
+      if (!error) return true;
+      // Only a real legacy-schema response may select the compatibility path.
+      // Network and Cloudflare failures must propagate so the request can retry.
+      if (
+        error.code === "42703" ||
+        error.code === "PGRST204" ||
+        /column .* does not exist|could not find .* column/i.test(error.message)
+      ) {
+        return false;
+      }
+      throw new Error(error.message);
     })();
+    appScopedTokenSchema = detection.catch((error) => {
+      appScopedTokenSchema = null;
+      throw error;
+    });
   }
   return appScopedTokenSchema;
 }

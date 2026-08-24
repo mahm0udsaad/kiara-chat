@@ -5,6 +5,7 @@ import {
   mobileError,
   mobileServerError,
 } from "@/lib/mobile/http";
+import { withTransientUpstreamRetry } from "@/lib/mobile/transient-retry";
 
 export async function POST(request: Request) {
   const auth = await authorizeFieldStaffRequest(request);
@@ -16,7 +17,10 @@ export async function POST(request: Request) {
     return mobileError(400, "INVALID_PUSH_TOKEN", "expoToken and deviceId are required");
   }
   try {
-    await registerFieldPushToken({ accountId: auth.session.accountId, expoToken, deviceId });
+    await withTransientUpstreamRetry(
+      () => registerFieldPushToken({ accountId: auth.session.accountId, expoToken, deviceId }),
+      { label: "field push registration" },
+    );
     return mobileData({ registered: true });
   } catch (error) {
     return mobileServerError(error, "PUSH_REGISTRATION_FAILED", "Unable to register notifications");

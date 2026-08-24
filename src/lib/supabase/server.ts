@@ -2,6 +2,7 @@ import { cache } from "react";
 import { createServerClient } from "@supabase/ssr";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cookies, headers } from "next/headers";
+import { supabaseServerFetch } from "@/lib/supabase/fetch";
 
 /**
  * Per-request Supabase client (RLS-respecting). Supports two transports:
@@ -28,7 +29,10 @@ export const createServerSupabaseClient = cache(async function createServerSupab
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
         {
-          global: { headers: { Authorization: `Bearer ${token}` } },
+          global: {
+            fetch: supabaseServerFetch,
+            headers: { Authorization: `Bearer ${token}` },
+          },
           auth: {
             persistSession: false,
             autoRefreshToken: false,
@@ -55,6 +59,7 @@ export const createServerSupabaseClient = cache(async function createServerSupab
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: { fetch: supabaseServerFetch },
       cookies: {
         getAll() {
           return cookieStore.getAll();

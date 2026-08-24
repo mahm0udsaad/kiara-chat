@@ -86,6 +86,9 @@ export function useBootstrap(enabled = true) {
     queryKey: queryKeys.bootstrap,
     queryFn: () => apiRequest<BootstrapResponse>("/bootstrap"),
     enabled,
+    // Startup already has a bounded network deadline. Surface its retry action
+    // instead of multiplying that wait behind an unexplained full-screen spinner.
+    retry: false,
     staleTime: 5 * 60_000,
   });
 }
