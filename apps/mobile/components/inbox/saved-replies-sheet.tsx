@@ -135,7 +135,10 @@ export function SavedRepliesSheet({
       presentationStyle="pageSheet"
     >
       <KeyboardAvoidingView
-        behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
+        // Inside a Modal, Android's windowSoftInputMode=adjustResize can't reach
+        // this separate window, so — unlike the full-screen forms — the keyboard
+        // has to be avoided in JS here.
+        behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
         style={{ flex: 1, backgroundColor: colors.background }}
       >
         <View

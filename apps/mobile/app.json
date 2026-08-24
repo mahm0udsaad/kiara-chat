@@ -74,13 +74,18 @@
         "expo-localization",
         {
           "supportedLocales": {
-            "ios": ["ar"],
-            "android": ["ar"]
+            "ios": [
+              "ar"
+            ],
+            "android": [
+              "ar"
+            ]
           },
           "forcesRTL": true
         }
       ],
-      "expo-system-ui"
+      "expo-system-ui",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
