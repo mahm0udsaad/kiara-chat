@@ -928,32 +928,80 @@ export async function listOrdersForConversation(
   return (data ?? []) as DriverOrder[];
 }
 
-/** Newest-arrival-first orders for the /orders view, with names resolved. */
-export async function listDriverOrders(limit = 200): Promise<DriverOrderRow[]> {
-  const supabase = await createServerSupabaseClient();
-  const query = (cols: string) =>
-    supabase
-      .from("driver_orders")
-      .select(cols)
-      .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .order("arrival_at", { ascending: false })
-      .limit(limit);
-
-  let { data, error } = await query(ORDER_COLS_WITH_REKAZ);
+/**
+ * Run a `driver_orders` read down the column ladder, then resolve names.
+ *
+ * The ladder is the deploy-ahead-of-migration guard described at ORDER_COLS;
+ * every read needs it, so it lives here once rather than being copied into
+ * each caller.
+ */
+async function readOrders(
+  supabase: AuthedClient,
+  build: (cols: string) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+): Promise<DriverOrderRow[]> {
+  let { data, error } = await build(ORDER_COLS_WITH_REKAZ);
   if (error && missingRekazLink(error)) {
-    ({ data, error } = await query(ORDER_COLS_WITH_EDITOR));
+    ({ data, error } = await build(ORDER_COLS_WITH_EDITOR));
   }
-  if (error && missingUpdatedBy(error)) ({ data, error } = await query(ORDER_COLS));
+  if (error && missingUpdatedBy(error)) ({ data, error } = await build(ORDER_COLS));
   if (error && missingOperationalColumns(error)) {
-    ({ data, error } = await query(ORDER_COLS_LEGACY));
+    ({ data, error } = await build(ORDER_COLS_LEGACY));
     if (error) throw new Error(error.message);
     return withNames(
       supabase,
-      withLegacyOperationalDefaults((data ?? []) as unknown as DriverOrder[]),
+      withLegacyOperationalDefaults((data ?? []) as DriverOrder[]),
     );
   }
   if (error) throw new Error(error.message);
-  return withNames(supabase, (data ?? []) as unknown as DriverOrder[]);
+  return withNames(supabase, (data ?? []) as DriverOrder[]);
+}
+
+export interface DriverOrderQuery {
+  limit?: number;
+  /** Inclusive arrival window. The calendar asks for a week, not for "the
+   * newest 200 rows, most of which it will discard". */
+  from?: string;
+  to?: string;
+}
+
+/** Newest-arrival-first orders for the /orders view, with names resolved. */
+export async function listDriverOrders(
+  options: number | DriverOrderQuery = 200,
+): Promise<DriverOrderRow[]> {
+  const { limit = 200, from, to } =
+    typeof options === "number" ? { limit: options } : options;
+  const supabase = await createServerSupabaseClient();
+  return readOrders(supabase, (cols) => {
+    let query = supabase
+      .from("driver_orders")
+      .select(cols)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID);
+    if (from) query = query.gte("arrival_at", from);
+    if (to) query = query.lte("arrival_at", to);
+    return query.order("arrival_at", { ascending: false }).limit(limit);
+  });
+}
+
+/**
+ * One enriched order.
+ *
+ * Worth its own read: resolving a single order by scanning the newest
+ * thousand and enriching every one of them cost five queries and grew with
+ * the salon's history, on the path that opens the dispatch modal.
+ */
+export async function getDriverOrderById(
+  id: string,
+): Promise<DriverOrderRow | null> {
+  const supabase = await createServerSupabaseClient();
+  const [row] = await readOrders(supabase, (cols) =>
+    supabase
+      .from("driver_orders")
+      .select(cols)
+      .eq("id", id)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .limit(1),
+  );
+  return row ?? null;
 }
 
 export interface OrderPatch {

@@ -4,7 +4,7 @@ import {
   mobileError,
   mobileServerError,
 } from "@/lib/mobile/http";
-import { listMobileOrders } from "@/lib/mobile/orders";
+import { listMobileOrdersInRange } from "@/lib/mobile/orders";
 import { getReservationsSnapshot, type RekazReservation } from "@/lib/reservations";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
@@ -42,7 +42,10 @@ export async function GET(request: Request) {
 
   try {
     const admin = getAdminSupabaseClient();
-    const normalized = await admin
+    // Reservations, orders and the sync banner are three independent reads.
+    // Issued together they cost one round trip instead of three, which on the
+    // calendar — the screen the day is run from — is most of its load time.
+    const normalizedPromise = admin
       .from("rekaz_reservations")
       .select("payload")
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
@@ -55,6 +58,21 @@ export async function GET(request: Request) {
       .lte("arrival_at", endOfDay(to))
       .order("arrival_at", { ascending: true });
 
+    const ordersPromise = listMobileOrdersInRange({
+      session: auth.session,
+      from: startOfDay(from),
+      to: endOfDay(to),
+    });
+    const lastRunPromise = admin
+      .from("rekaz_sync_runs")
+      .select("id, completed_at, incoming_count, added_count, updated_count, removed_count")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .eq("status", "completed")
+      .order("completed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const normalized = await normalizedPromise;
     let reservations: RekazReservation[];
     if (!normalized.error) {
       reservations = (normalized.data ?? [])
@@ -69,35 +87,10 @@ export async function GET(request: Request) {
       });
     }
 
-    const firstOrders = await listMobileOrders({
-      session: auth.session,
-      search: "",
-      offset: 0,
-      limit: 100,
-    });
-    const secondOrders = firstOrders.hasMore
-      ? await listMobileOrders({
-          session: auth.session,
-          search: "",
-          offset: firstOrders.nextOffset ?? 100,
-          limit: 100,
-        })
-      : null;
-    const orders = [...firstOrders.items, ...(secondOrders?.items ?? [])].filter(
-      (order) => {
-        const at = new Date(order.arrival_at).getTime();
-        return at >= fromTime && at <= toTime;
-      },
-    );
-
-    const { data: lastRun } = await admin
-      .from("rekaz_sync_runs")
-      .select("id, completed_at, incoming_count, added_count, updated_count, removed_count")
-      .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .eq("status", "completed")
-      .order("completed_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const [orders, { data: lastRun }] = await Promise.all([
+      ordersPromise,
+      lastRunPromise,
+    ]);
 
     return mobileData({
       from,

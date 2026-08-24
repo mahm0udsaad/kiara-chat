@@ -143,10 +143,15 @@ export function useTakeConversation(id: string) {
     mutationFn: () =>
       apiRequest<{ conversation: ConversationSummary }>(`/conversations/${id}/take`, { method: "POST" }),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
-      ]);
+      // The open thread is awaited because the screen renders it: the reply
+      // should be in the list before the composer clears. The inbox list is
+      // behind that screen and only its preview line changes, so it refreshes
+      // on its own — awaiting it meant every send also waited on a refetch of
+      // every page of the inbox the employee had scrolled through.
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.conversation(id),
+      });
     },
   });
 }
@@ -170,10 +175,15 @@ export function useTakeOverConversation(id: string) {
         body: JSON.stringify({ reason }),
       }),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
-      ]);
+      // The open thread is awaited because the screen renders it: the reply
+      // should be in the list before the composer clears. The inbox list is
+      // behind that screen and only its preview line changes, so it refreshes
+      // on its own — awaiting it meant every send also waited on a refetch of
+      // every page of the inbox the employee had scrolled through.
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.conversation(id),
+      });
     },
   });
 }
@@ -200,10 +210,15 @@ export function useReply(id: string) {
         body: JSON.stringify({ body: text }),
       }),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
-      ]);
+      // The open thread is awaited because the screen renders it: the reply
+      // should be in the list before the composer clears. The inbox list is
+      // behind that screen and only its preview line changes, so it refreshes
+      // on its own — awaiting it meant every send also waited on a refetch of
+      // every page of the inbox the employee had scrolled through.
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.conversation(id),
+      });
     },
   });
 }
@@ -233,10 +248,15 @@ export function useSendMedia(id: string) {
         ...(input.voiceNote ? { voiceNote: "true" } : {}),
       }),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
-      ]);
+      // The open thread is awaited because the screen renders it: the reply
+      // should be in the list before the composer clears. The inbox list is
+      // behind that screen and only its preview line changes, so it refreshes
+      // on its own — awaiting it meant every send also waited on a refetch of
+      // every page of the inbox the employee had scrolled through.
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.conversation(id),
+      });
     },
   });
 }
@@ -297,10 +317,15 @@ export function useUpdateConversationActions(id: string) {
         body: JSON.stringify(input),
       }),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
-      ]);
+      // The open thread is awaited because the screen renders it: the reply
+      // should be in the list before the composer clears. The inbox list is
+      // behind that screen and only its preview line changes, so it refreshes
+      // on its own — awaiting it meant every send also waited on a refetch of
+      // every page of the inbox the employee had scrolled through.
+      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.conversation(id),
+      });
     },
   });
 }
@@ -628,10 +653,8 @@ export function useUpdateOrder(id: string) {
         }),
       }),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["orders"] }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.order(id) }),
-      ]);
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.order(id) });
     },
   });
 }
@@ -763,10 +786,13 @@ export function useFieldOrderAction(id: string) {
         }),
       }),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["field-orders"] }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.fieldOrder(id) }),
-      ]);
+      // A driver taps these standing beside the car, often on one bar of
+      // signal. He waits for his own order to update and nothing else — the
+      // day's list behind it catches up on its own.
+      void queryClient.invalidateQueries({ queryKey: ["field-orders"] });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.fieldOrder(id),
+      });
     },
   });
 }

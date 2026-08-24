@@ -1,4 +1,4 @@
-import { listDriverOrders } from "@/lib/dispatch";
+import { getDriverOrderById, listDriverOrders } from "@/lib/dispatch";
 import {
   type MobileOrder,
   type MobilePage,
@@ -8,7 +8,6 @@ import { phoneMatches } from "@/lib/phone";
 import { type KiaraSession } from "@/lib/tenant";
 
 const MAX_MOBILE_ORDER_SCAN = 200;
-const MAX_MOBILE_ORDER_DETAIL_SCAN = 1_000;
 
 export function orderForMobileSession(
   order: MobileOrder,
@@ -21,12 +20,29 @@ export async function getMobileOrderById(
   orderId: string,
   session: KiaraSession
 ): Promise<MobileOrder | null> {
-  // listDriverOrders is the existing enrichment path for customer, roster,
-  // editor and field-session names. The high bound is used only for a direct
-  // id lookup; PostgREST still applies its configured server row cap.
-  const orders = await listDriverOrders(MAX_MOBILE_ORDER_DETAIL_SCAN);
-  const order = orders.find((candidate) => candidate.id === orderId);
+  const order = await getDriverOrderById(orderId);
   return order ? orderForMobileSession(order, session) : null;
+}
+
+/**
+ * Every order arriving inside a window, enriched once.
+ *
+ * The calendar asks by date, so it reads by date. It used to page through
+ * `listMobileOrders` twice — repeating the whole enrichment on the second
+ * pass — and then discard, in JavaScript, every order outside the week it
+ * had asked for.
+ */
+export async function listMobileOrdersInRange(options: {
+  session: KiaraSession;
+  from: string;
+  to: string;
+}): Promise<MobileOrder[]> {
+  const orders = await listDriverOrders({
+    from: options.from,
+    to: options.to,
+    limit: MAX_MOBILE_ORDER_SCAN,
+  });
+  return options.session.role === "admin" ? orders : stripPrices(orders);
 }
 
 function matchesOrderSearch(order: MobileOrder, rawQuery: string): boolean {
