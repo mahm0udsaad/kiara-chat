@@ -7,6 +7,7 @@ import { useTheme } from "@/providers/theme-provider";
 
 I18nManager.allowRTL(true);
 I18nManager.forceRTL(true);
+I18nManager.swapLeftAndRightInRTL(true);
 
 /**
  * Shared header treatment: large titles on roots, blurred translucent bars, and
@@ -14,11 +15,11 @@ I18nManager.forceRTL(true);
  * previous screen's title.
  */
 function RootNavigator() {
-  const { colors, scheme } = useTheme();
+  const { colors } = useTheme();
 
   return (
     <>
-      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+      <StatusBar style="dark" />
       <Stack
         screenOptions={{
           headerTitleAlign: "center",

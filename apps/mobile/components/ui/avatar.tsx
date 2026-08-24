@@ -2,7 +2,6 @@ import { Text, View } from "react-native";
 
 import { radius, type } from "@/constants/theme";
 import { avatarHue, initialsOf } from "@/lib/format";
-import { useTheme } from "@/providers/theme-provider";
 
 type Props = {
   name: string | null;
@@ -16,10 +15,9 @@ type Props = {
  * a regular customer by colour before reading the name.
  */
 export function Avatar({ name, seed, size = 44 }: Props) {
-  const { scheme } = useTheme();
   const hue = avatarHue(seed);
-  const background = scheme === "dark" ? `hsl(${hue} 42% 26%)` : `hsl(${hue} 68% 92%)`;
-  const foreground = scheme === "dark" ? `hsl(${hue} 70% 82%)` : `hsl(${hue} 62% 26%)`;
+  const background = `hsl(${hue} 68% 92%)`;
+  const foreground = `hsl(${hue} 62% 26%)`;
 
   return (
     <View

@@ -1,20 +1,24 @@
 {
   "expo": {
-    "name": "Kiara Operations",
+    "name": "كيارا للعمليات",
     "slug": "kiara-operations",
     "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "kiara",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F4F6FB",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.kiara.operations",
+      "userInterfaceStyle": "light",
+      "backgroundColor": "#F4F6FB",
       "config": {
         "usesNonExemptEncryption": false
       }
     },
     "android": {
+      "userInterfaceStyle": "light",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -37,10 +41,7 @@
         {
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
-          "dark": {
-            "backgroundColor": "#0C0F1D"
-          }
+          "backgroundColor": "#F4F6FB"
         }
       ],
       "expo-secure-store",
@@ -68,7 +69,18 @@
           "cameraPermission": "يستخدم كيارا الكاميرا لالتقاط صورة وإرسالها في المحادثة."
         }
       ],
-      "expo-document-picker"
+      "expo-document-picker",
+      [
+        "expo-localization",
+        {
+          "supportedLocales": {
+            "ios": ["ar"],
+            "android": ["ar"]
+          },
+          "forcesRTL": true
+        }
+      ],
+      "expo-system-ui"
     ],
     "experiments": {
       "typedRoutes": true

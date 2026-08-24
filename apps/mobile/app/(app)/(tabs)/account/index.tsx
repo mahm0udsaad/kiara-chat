@@ -9,7 +9,6 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, Divider } from "@/components/ui/card";
 import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
-import { Segmented } from "@/components/ui/segmented";
 import { rtlText, spacing, type } from "@/constants/theme";
 import { useBootstrap } from "@/lib/queries";
 import {
@@ -18,7 +17,7 @@ import {
 } from "@/lib/notifications";
 import { useNotificationStatus } from "@/providers/notification-provider";
 import { useAuth } from "@/providers/auth-provider";
-import { type AppearancePreference, useTheme } from "@/providers/theme-provider";
+import { useTheme } from "@/providers/theme-provider";
 
 const roleLabels = {
   admin: "الإدارة",
@@ -34,7 +33,7 @@ const capabilityLabels = {
 } as const;
 
 export default function AccountScreen() {
-  const { colors, preference, setPreference } = useTheme();
+  const { colors } = useTheme();
   const bootstrap = useBootstrap();
   const { signOut } = useAuth();
   const queryClient = useQueryClient();
@@ -153,26 +152,6 @@ export default function AccountScreen() {
               onPress={() => void notification.refresh()}
             />
           )}
-        </Card>
-      </View>
-
-      {/* Appearance */}
-      <View style={{ gap: spacing.sm }}>
-        <SectionHeader title="المظهر" />
-        <Card>
-          <Segmented
-            accessibilityLabel="مظهر التطبيق"
-            options={[
-              { value: "system", label: "النظام" },
-              { value: "light", label: "فاتح" },
-              { value: "dark", label: "داكن" },
-            ]}
-            value={preference}
-            onChange={(next) => setPreference(next as AppearancePreference)}
-          />
-          <Text style={{ ...type.footnote, color: colors.textTertiary, ...rtlText }}>
-            «النظام» يتبع إعداد الوضع الليلي في جهازك تلقائيًا.
-          </Text>
         </Card>
       </View>
 
