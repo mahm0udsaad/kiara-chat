@@ -17,9 +17,41 @@ export class ApiError extends Error {
 
 type ApiEnvelope<T> = { data?: T; error?: { message?: string; code?: string } };
 
+/**
+ * Nothing waits forever.
+ *
+ * Without a deadline a request that never answers leaves the screen spinning
+ * with no way back: no error, no retry, and on a button whose label is
+ * replaced by the spinner, no clue what it is even waiting for. A phone on
+ * salon wifi drops connections silently, so this is the common case, not the
+ * exotic one.
+ *
+ * Most calls are small reads and 20s is already generous. Routes that
+ * legitimately take longer name their own deadline.
+ */
+const TIMEOUT_MS = 20_000;
+
+/** A model call sits inside this one; the server caps its own wait well below. */
+export const AI_TIMEOUT_MS = 45_000;
+
+/**
+ * Deliberately past the server's own 60s ceiling.
+ *
+ * Giving up first on a send is the one case where a deadline does harm: the
+ * engine may already have handed the message to WhatsApp, and an employee told
+ * it failed will send it again. Letting the server answer — success, failure,
+ * or its own timeout — keeps that decision in the one place that knows.
+ */
+export const SEND_TIMEOUT_MS = 65_000;
+
+export type ApiRequestOptions = RequestInit & {
+  /** Override the default deadline for a route known to take longer. */
+  timeoutMs?: number;
+};
+
 export async function apiRequest<T>(
   path: string,
-  init: RequestInit = {},
+  init: ApiRequestOptions = {},
 ): Promise<T> {
   if (!apiUrl) {
     throw new ApiError("أضيفي EXPO_PUBLIC_API_URL في ملف .env", 0, "NO_API_URL");
@@ -30,19 +62,34 @@ export async function apiRequest<T>(
     throw new ApiError("انتهت الجلسة. سجّلي الدخول مرة أخرى.", 401, "NO_SESSION");
   }
 
+  const { timeoutMs = TIMEOUT_MS, ...requestInit } = init;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   let response: Response;
   try {
     response = await fetch(`${apiUrl}/api/mobile/v1${path}`, {
-      ...init,
+      ...requestInit,
+      signal: controller.signal,
       headers: {
         Accept: "application/json",
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-        ...init.headers,
+        ...(requestInit.body ? { "Content-Type": "application/json" } : {}),
+        ...requestInit.headers,
         Authorization: `Bearer ${data.session.access_token}`,
       },
     });
   } catch {
-    throw new ApiError("تعذر الاتصال بالخادم. تحققي من الإنترنت.", 0, "NETWORK");
+    // An abort and a dropped connection are the same thing to the employee:
+    // it did not go through, and she may try again.
+    throw new ApiError(
+      controller.signal.aborted
+        ? "الخادم تأخر في الرد. حاولي مرة أخرى."
+        : "تعذر الاتصال بالخادم. تحققي من الإنترنت.",
+      0,
+      controller.signal.aborted ? "TIMEOUT" : "NETWORK",
+    );
+  } finally {
+    clearTimeout(timer);
   }
 
   return unwrap<T>(response);

@@ -6,7 +6,14 @@ import {
 } from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
 
-import { ApiError, apiRequest, apiUpload, type UploadFile } from "@/lib/api";
+import {
+  AI_TIMEOUT_MS,
+  ApiError,
+  apiRequest,
+  apiUpload,
+  SEND_TIMEOUT_MS,
+  type UploadFile,
+} from "@/lib/api";
 import { fieldNotificationDeviceId } from "@/lib/notifications";
 import type {
   BootstrapResponse,
@@ -632,6 +639,10 @@ export function useDispatchOrder(id: string) {
         `/orders/${id}/dispatch`,
         {
           method: "POST",
+          // Two WhatsApp messages have to be accepted by the provider before
+          // this answers — and the server, not the phone, decides when a send
+          // has failed.
+          timeoutMs: SEND_TIMEOUT_MS,
           body: JSON.stringify({
             ...input,
             idempotencyKey: Crypto.randomUUID(),
@@ -657,6 +668,9 @@ export function useDispatchPreview(id: string) {
     }) =>
       apiRequest<{ preview: DispatchPreview }>(`/orders/${id}/dispatch/preview`, {
         method: "POST",
+        // Writes the specialist's copy in her own language, so a model call
+        // sits in the middle of this one.
+        timeoutMs: AI_TIMEOUT_MS,
         body: JSON.stringify(input),
       }),
   });

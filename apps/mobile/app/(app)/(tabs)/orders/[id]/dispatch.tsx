@@ -289,6 +289,7 @@ function DispatchForm({ id }: { id: string }) {
               label="تأكيد وإرسال الرسالتين"
               icon="paperplane.fill"
               loading={dispatch.isPending}
+              loadingLabel="جاري الإرسال…"
               onPress={send}
               testID="dispatch-confirm-send"
             />
@@ -305,6 +306,7 @@ function DispatchForm({ id }: { id: string }) {
             label="إنشاء الرسائل ومراجعتها"
             icon="sparkles"
             loading={preparePreview.isPending}
+            loadingLabel="جاري تجهيز الرسائل…"
             onPress={review}
             testID="dispatch-generate-preview"
           />

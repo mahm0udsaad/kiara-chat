@@ -754,17 +754,20 @@ export async function previewBookingDispatch(
     SPECIALIST_APP_ADDITION,
   ].join("\n");
   const nationality = nationalityOf(context.specialist.nationality);
-  const specialistMessage = nationality?.targetLanguage
-    ? (await translateMessage(
-        arabicSpecialistMessage,
-        nationality.targetLanguage,
-      )) || arabicSpecialistMessage
-    : arabicSpecialistMessage;
+  const translated = nationality?.targetLanguage
+    ? await translateMessage(arabicSpecialistMessage, nationality.targetLanguage)
+    : null;
 
   return {
     driverMessage,
-    specialistMessage,
-    specialistLanguage: nationality?.languageLabel ?? "العربية",
+    specialistMessage: translated || arabicSpecialistMessage,
+    // Name the language of the text actually produced. Reporting her mother
+    // tongue while handing back the Arabic fallback told the employee the
+    // translation had happened when it had not — she would send it believing
+    // the specialist could read it.
+    specialistLanguage: translated
+      ? (nationality?.languageLabel ?? "العربية")
+      : "العربية",
     automaticAdditions: [DRIVER_APP_ADDITION, SPECIALIST_APP_ADDITION],
   };
 }

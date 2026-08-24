@@ -10,6 +10,12 @@ type Props = {
   onPress: () => void;
   testID?: string;
   loading?: boolean;
+  /**
+   * What the button says while it works. A bare spinner tells the employee
+   * that something is happening but not what, and on a call that takes several
+   * seconds she cannot tell a slow reply from a stuck screen.
+   */
+  loadingLabel?: string;
   disabled?: boolean;
   /** Exactly one filled button per view section. */
   variant?: "filled" | "tinted" | "outline" | "plain";
@@ -24,6 +30,7 @@ export function PrimaryButton({
   onPress,
   testID,
   loading = false,
+  loadingLabel,
   disabled = false,
   variant = "filled",
   tone = "brand",
@@ -83,7 +90,14 @@ export function PrimaryButton({
       })}
     >
       {loading ? (
-        <ActivityIndicator color={surface.foreground} />
+        <>
+          <ActivityIndicator color={surface.foreground} />
+          {loadingLabel ? (
+            <Text style={{ ...type.bodyStrong, color: surface.foreground, ...rtlText }}>
+              {loadingLabel}
+            </Text>
+          ) : null}
+        </>
       ) : (
         <>
           {icon ? <IconSymbol name={icon} color={surface.foreground} size={18} /> : null}
