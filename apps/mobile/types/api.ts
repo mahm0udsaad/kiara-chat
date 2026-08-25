@@ -353,6 +353,48 @@ export type OrdersCalendarResponse = {
   } | null;
 };
 
+export type OperationsRole = "specialist" | "driver";
+
+export type OperationsPerson = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  source: "roster" | "rekaz";
+  assignedCount: number;
+  completedCount: number;
+  scheduledMinutes: number;
+  completedMinutes: number;
+};
+
+export type OperationsEvent = {
+  id: string;
+  visitKey: string;
+  source: "rekaz" | "whatsapp";
+  sourceLabel: "حجز ركاز" | "طلب واتساب";
+  orderId: string | null;
+  personIds: string[];
+  arrivalAt: string;
+  endsAt: string;
+  durationMinutes: number;
+  customerName: string;
+  customerPhone: string;
+  service: string;
+  status: string;
+  completed: boolean;
+  completedAt: string | null;
+};
+
+export type OperationsReport = {
+  from: string;
+  to: string;
+  startTime: string;
+  endTime: string;
+  timeZone: "Asia/Riyadh";
+  generatedAt: string;
+  people: Record<OperationsRole, OperationsPerson[]>;
+  events: Record<OperationsRole, OperationsEvent[]>;
+};
+
 /**
  * The customer record, keyed on normalized phone. There is no `customers`
  * table — a conversation row is the customer — so this is Rekaz's lifetime

@@ -1,0 +1,259 @@
+- generic [active]:
+  - generic [ref=f6e1]:
+    - banner [ref=f6e2]:
+      - generic [ref=f6e3]:
+        - generic [ref=f6e4]:
+          - generic [ref=f6e5]: Kiara Chat
+          - generic [ref=f6e6]: مدير
+        - generic [ref=f6e7]:
+          - generic [ref=f6e8]: hanan@kiara.com
+          - button "خروج" [ref=f6e9] [cursor=pointer]
+      - navigation [ref=f6e10]:
+        - link "المحادثات" [ref=f6e11] [cursor=pointer]:
+          - /url: /inbox
+        - link "طلبات اليوم" [ref=f6e14] [cursor=pointer]:
+          - /url: /orders
+        - link "التقارير" [ref=f6e17] [cursor=pointer]:
+          - /url: /reports
+        - link "الموظفون" [ref=f6e20] [cursor=pointer]:
+          - /url: /team
+        - link "ربط واتساب" [ref=f6e26] [cursor=pointer]:
+          - /url: /connect
+        - link "الإعدادات" [ref=f6e33] [cursor=pointer]:
+          - /url: /settings
+    - main [ref=f6e37]:
+      - generic [ref=f6e38]:
+        - generic [ref=f6e40]:
+          - heading "التقارير" [level=1] [ref=f6e41]
+          - paragraph [ref=f6e42]: إدارة عبء العمل والساعات وأداء فرق العمليات وخدمة العملاء.
+        - generic [ref=f6e43]:
+          - tablist "نوع التقرير" [ref=f6e44]:
+            - tab "العمليات الميدانية" [selected] [ref=f6e45] [cursor=pointer]
+            - tab "خدمة العملاء" [ref=f6e46] [cursor=pointer]
+          - tabpanel "العمليات الميدانية" [ref=f6e47]:
+            - generic [ref=f6e48]:
+              - generic [ref=f6e49]:
+                - generic [ref=f6e50]:
+                  - generic [ref=f6e51]: نطاق التقرير
+                  - generic [ref=f6e52]: التوقيت المعروض هو توقيت الرياض. الحد الأقصى ٣١ يوماً.
+                - generic [ref=f6e53]:
+                  - generic [ref=f6e54]:
+                    - text: من تاريخ
+                    - textbox "من تاريخ" [ref=f6e55]: 2026-08-25
+                  - generic [ref=f6e56]:
+                    - text: إلى تاريخ
+                    - textbox "إلى تاريخ" [ref=f6e57]: 2026-08-25
+                  - generic [ref=f6e58]:
+                    - text: من الساعة
+                    - textbox "من الساعة" [ref=f6e59]: 08:00
+                  - generic [ref=f6e60]:
+                    - text: إلى الساعة
+                    - textbox "إلى الساعة" [ref=f6e61]: 22:00
+                  - button "تطبيق" [ref=f6e62] [cursor=pointer]
+              - generic [ref=f6e63]:
+                - radiogroup "الفريق المعروض" [ref=f6e64]:
+                  - radio "الأخصائيات" [checked] [ref=f6e65] [cursor=pointer]
+                  - radio "السائقون" [ref=f6e66] [cursor=pointer]
+                - paragraph [ref=f6e67]: يشمل حجوزات ركاز وطلبات واتساب دون تكرار الزيارة.
+              - generic [ref=f6e68]:
+                - generic [ref=f6e77]:
+                  - generic [ref=f6e78]: الطلبات المسندة
+                  - generic [ref=f6e79]: ٨
+                - generic [ref=f6e86]:
+                  - generic [ref=f6e87]: الطلبات المكتملة
+                  - generic [ref=f6e88]: ٠
+                - generic [ref=f6e95]:
+                  - generic [ref=f6e96]: الساعات المحجوزة
+                  - generic [ref=f6e97]: ١٥ س
+              - generic [ref=f6e98]:
+                - generic [ref=f6e99]:
+                  - generic [ref=f6e100]: ملخص الأخصائيات
+                  - generic [ref=f6e101]: الطلب متعدد الخدمات يُحسب زيارة واحدة، بينما الساعات تجمع مدة كل خدمة فعلية.
+                - table [ref=f6e104]:
+                  - rowgroup [ref=f6e105]:
+                    - row [ref=f6e106]:
+                      - columnheader "الاسم" [ref=f6e107]
+                      - columnheader "مسند" [ref=f6e108]
+                      - columnheader "مكتمل" [ref=f6e109]
+                      - columnheader "نسبة الإنجاز" [ref=f6e110]
+                      - columnheader "الساعات" [ref=f6e111]
+                  - rowgroup [ref=f6e112]:
+                    - row [ref=f6e113]:
+                      - cell "ايس" [ref=f6e114]
+                      - cell "٢" [ref=f6e115]
+                      - cell "٠" [ref=f6e116]
+                      - cell "٠٪" [ref=f6e117]
+                      - cell "٣ س" [ref=f6e118]
+                    - row [ref=f6e119]:
+                      - cell "ميرا" [ref=f6e120]
+                      - cell "٢" [ref=f6e121]
+                      - cell "٠" [ref=f6e122]
+                      - cell "٠٪" [ref=f6e123]
+                      - cell "٥٫٥ س" [ref=f6e124]
+                    - row [ref=f6e125]:
+                      - cell "أنيسه ركاز" [ref=f6e126]:
+                        - text: أنيسه
+                        - generic [ref=f6e127]: ركاز
+                      - cell "١" [ref=f6e128]
+                      - cell "٠" [ref=f6e129]
+                      - cell "٠٪" [ref=f6e130]
+                      - cell "٢ س" [ref=f6e131]
+                    - row [ref=f6e132]:
+                      - cell "ساره" [ref=f6e133]
+                      - cell "١" [ref=f6e134]
+                      - cell "٠" [ref=f6e135]
+                      - cell "٠٪" [ref=f6e136]
+                      - cell "١٫٥ س" [ref=f6e137]
+                    - row [ref=f6e138]:
+                      - cell "سيلا ركاز" [ref=f6e139]:
+                        - text: سيلا
+                        - generic [ref=f6e140]: ركاز
+                      - cell "١" [ref=f6e141]
+                      - cell "٠" [ref=f6e142]
+                      - cell "٠٪" [ref=f6e143]
+                      - cell "٢ س" [ref=f6e144]
+                    - row [ref=f6e145]:
+                      - cell "كوري ركاز" [ref=f6e146]:
+                        - text: كوري
+                        - generic [ref=f6e147]: ركاز
+                      - cell "١" [ref=f6e148]
+                      - cell "٠" [ref=f6e149]
+                      - cell "٠٪" [ref=f6e150]
+                      - cell "١ س" [ref=f6e151]
+                    - row [ref=f6e152]:
+                      - cell "روز" [ref=f6e153]
+                      - cell "٠" [ref=f6e154]
+                      - cell "٠" [ref=f6e155]
+                      - cell "٠٪" [ref=f6e156]
+                      - cell "٠ س" [ref=f6e157]
+                    - row [ref=f6e158]:
+                      - cell "وفاء" [ref=f6e159]
+                      - cell "٠" [ref=f6e160]
+                      - cell "٠" [ref=f6e161]
+                      - cell "٠٪" [ref=f6e162]
+                      - cell "٠ س" [ref=f6e163]
+              - generic [ref=f6e164]:
+                - generic [ref=f6e165]:
+                  - generic [ref=f6e166]:
+                    - generic [ref=f6e167]: جدول الحجوزات والطلبات
+                    - generic [ref=f6e168]: الثلاثاء، ٢٥ أغسطس ٢٠٢٦
+                  - generic [ref=f6e169]:
+                    - button "اليوم السابق" [disabled]
+                    - button "أول يوم" [ref=f6e170] [cursor=pointer]
+                    - button "اليوم التالي" [disabled]
+                - generic [ref=f6e173]:
+                  - generic [ref=f6e175]:
+                    - generic [ref=f6e176]: اي
+                    - paragraph [ref=f6e177]: ايس
+                    - paragraph [ref=f6e178]: ٢ مسند · ٣ س
+                  - generic [ref=f6e179]:
+                    - generic [ref=f6e180]: مي
+                    - paragraph [ref=f6e181]: ميرا
+                    - paragraph [ref=f6e182]: ٢ مسند · ٥٫٥ س
+                  - generic [ref=f6e183]:
+                    - generic [ref=f6e184]: أن
+                    - paragraph [ref=f6e185]: أنيسه
+                    - paragraph [ref=f6e186]: ١ مسند · ٢ س
+                  - generic [ref=f6e187]:
+                    - generic [ref=f6e188]: سا
+                    - paragraph [ref=f6e189]: ساره
+                    - paragraph [ref=f6e190]: ١ مسند · ١٫٥ س
+                  - generic [ref=f6e191]:
+                    - generic [ref=f6e192]: سي
+                    - paragraph [ref=f6e193]: سيلا
+                    - paragraph [ref=f6e194]: ١ مسند · ٢ س
+                  - generic [ref=f6e195]:
+                    - generic [ref=f6e196]: كو
+                    - paragraph [ref=f6e197]: كوري
+                    - paragraph [ref=f6e198]: ١ مسند · ١ س
+                  - generic [ref=f6e199]:
+                    - generic [ref=f6e200]: رو
+                    - paragraph [ref=f6e201]: روز
+                    - paragraph [ref=f6e202]: ٠ مسند · ٠ س
+                  - generic [ref=f6e203]:
+                    - generic [ref=f6e204]: وف
+                    - paragraph [ref=f6e205]: وفاء
+                    - paragraph [ref=f6e206]: ٠ مسند · ٠ س
+                  - generic [ref=f6e207]:
+                    - generic [ref=f6e208]: 08:00
+                    - generic [ref=f6e209]: 09:00
+                    - generic [ref=f6e210]: 10:00
+                    - generic [ref=f6e211]: 11:00
+                    - generic [ref=f6e212]: 12:00
+                    - generic [ref=f6e213]: 13:00
+                    - generic [ref=f6e214]: 14:00
+                    - generic [ref=f6e215]: 15:00
+                    - generic [ref=f6e216]: 16:00
+                    - generic [ref=f6e217]: 17:00
+                    - generic [ref=f6e218]: 18:00
+                    - generic [ref=f6e219]: 19:00
+                    - generic [ref=f6e220]: 20:00
+                    - generic [ref=f6e221]: 21:00
+                    - generic [ref=f6e222]: 22:00
+                  - generic [ref=f6e223]:
+                    - article "هاجر / الفيصلية💞 — مساج التصريف اللمفاوي🍃" [ref=f6e239]:
+                      - generic [ref=f6e240]: ١:٠٠ م
+                      - paragraph [ref=f6e242]: هاجر / الفيصلية💞
+                      - paragraph [ref=f6e243]: مساج التصريف اللمفاوي🍃
+                    - article "خديجه / الفهد الشمالي — بديكير و مناكير كلاسيكي🍃" [ref=f6e244]:
+                      - generic [ref=f6e245]: ٤:٠٠ م
+                      - paragraph [ref=f6e247]: خديجه / الفهد الشمالي
+                      - paragraph [ref=f6e248]: بديكير و مناكير كلاسيكي🍃
+                    - article "خديجه / الفهد الشمالي — بديكير و مناكير كلاسيكي🍃" [ref=f6e249]:
+                      - generic [ref=f6e250]: ٥:٠٠ م
+                      - paragraph [ref=f6e252]: خديجه / الفهد الشمالي
+                      - paragraph [ref=f6e253]: بديكير و مناكير كلاسيكي🍃
+                  - generic [ref=f6e254]:
+                    - article "ليما حسين / الاثايبه — بديكير و مناكير كلاسيكي🍃" [ref=f6e270]:
+                      - generic [ref=f6e271]: ٩:٠٠ ص
+                      - paragraph [ref=f6e273]: ليما حسين / الاثايبه
+                      - paragraph [ref=f6e274]: بديكير و مناكير كلاسيكي🍃
+                    - article "ليما حسين / الاثايبه — حف الوجه كامل 🍃" [ref=f6e275]:
+                      - generic [ref=f6e276]: ١٠:٠٠ ص
+                      - paragraph [ref=f6e278]: ليما حسين / الاثايبه
+                    - article "ليما حسين / الاثايبه — - حف حواجب بالخيط - 🍃" [ref=f6e279]:
+                      - paragraph [ref=f6e280]: ١٠:٣٠ ص · - حف حواجب بالخيط - 🍃
+                    - article "ليما حسين / الاثايبه — - حف حواجب بالخيط - 🍃" [ref=f6e281]:
+                      - paragraph [ref=f6e282]: ١٠:٤٥ ص · - حف حواجب بالخيط - 🍃
+                    - article "ليما حسين / الاثايبه — - حف حواجب بالخيط - 🍃" [ref=f6e283]:
+                      - paragraph [ref=f6e284]: ١١:٠٠ ص · - حف حواجب بالخيط - 🍃
+                    - article "هديل الاثايبه 🍀 — بديكير و مناكير كلاسيكي🍃" [ref=f6e285]:
+                      - generic [ref=f6e286]: ٣:٣٠ م
+                      - paragraph [ref=f6e288]: هديل الاثايبه 🍀
+                      - paragraph [ref=f6e289]: بديكير و مناكير كلاسيكي🍃
+                    - article "هديل الاثايبه 🍀 — بديكير و مناكير كلاسيكي🍃" [ref=f6e290]:
+                      - generic [ref=f6e291]: ٤:٣٠ م
+                      - paragraph [ref=f6e293]: هديل الاثايبه 🍀
+                      - paragraph [ref=f6e294]: بديكير و مناكير كلاسيكي🍃
+                    - article "هديل الاثايبه 🍀 — بديكير و مناكير كلاسيكي🍃" [ref=f6e295]:
+                      - generic [ref=f6e296]: ٥:٣٠ م
+                      - paragraph [ref=f6e298]: هديل الاثايبه 🍀
+                      - paragraph [ref=f6e299]: بديكير و مناكير كلاسيكي🍃
+                  - generic [ref=f6e300]:
+                    - article "هديل الاثايبه 🍀 — بديكير و مناكير كلاسيكي🍃" [ref=f6e316]:
+                      - generic [ref=f6e317]: ٣:٣٠ م
+                      - paragraph [ref=f6e319]: هديل الاثايبه 🍀
+                      - paragraph [ref=f6e320]: بديكير و مناكير كلاسيكي🍃
+                    - article "هديل الاثايبه 🍀 — بديكير و مناكير كلاسيكي🍃" [ref=f6e321]:
+                      - generic [ref=f6e322]: ٤:٣٠ م
+                      - paragraph [ref=f6e324]: هديل الاثايبه 🍀
+                      - paragraph [ref=f6e325]: بديكير و مناكير كلاسيكي🍃
+                  - article "+201279119364 — طلب خدمة" [ref=f6e342]:
+                    - generic [ref=f6e343]: ٢:٠٠ م
+                    - paragraph [ref=f6e345]: "+201279119364"
+                    - paragraph [ref=f6e346]: طلب خدمة
+                  - generic [ref=f6e347]:
+                    - article "خديجه / الفهد الشمالي — بديكير و مناكير كلاسيكي🍃" [ref=f6e363]:
+                      - generic [ref=f6e364]: ٤:٠٠ م
+                      - paragraph [ref=f6e366]: خديجه / الفهد الشمالي
+                      - paragraph [ref=f6e367]: بديكير و مناكير كلاسيكي🍃
+                    - article "خديجه / الفهد الشمالي — بديكير و مناكير كلاسيكي🍃" [ref=f6e368]:
+                      - generic [ref=f6e369]: ٥:٠٠ م
+                      - paragraph [ref=f6e371]: خديجه / الفهد الشمالي
+                      - paragraph [ref=f6e372]: بديكير و مناكير كلاسيكي🍃
+                  - article "اروى/ الجامعه — مساج التصريف اللمفاوي🍃" [ref=f6e389]:
+                    - generic [ref=f6e390]: ٣:٣٠ م
+                    - paragraph [ref=f6e392]: اروى/ الجامعه
+                    - paragraph [ref=f6e393]: مساج التصريف اللمفاوي🍃
+  - button "Open Next.js Dev Tools" [ref=f6e431] [cursor=pointer]
+  - alert [ref=f6e435]

@@ -1,0 +1,21 @@
+- generic [active] [ref=f5e1]:
+  - generic [ref=f5e3]:
+    - generic [ref=f5e4]:
+      - heading "Kiara Chat" [level=1] [ref=f5e5]
+      - paragraph [ref=f5e6]: تسجيل دخول الموظفين
+    - generic [ref=f5e7]:
+      - generic [ref=f5e8]:
+        - generic [ref=f5e9]: البريد الإلكتروني
+        - textbox [ref=f5e10]: hanan@kiara.com
+      - generic [ref=f5e11]:
+        - generic [ref=f5e12]: كلمة المرور
+        - textbox [ref=f5e13]: kiara@26
+      - button "جارٍ الدخول…" [disabled] [ref=f5e25]
+  - button "Open Next.js Dev Tools" [ref=f5e26] [cursor=pointer]:
+    - generic [ref=f5e29]:
+      - text: Compiling
+      - generic [ref=f5e30]:
+        - generic [ref=f5e31]: .
+        - generic [ref=f5e32]: .
+        - generic [ref=f5e33]: .
+  - alert [ref=f5e24]

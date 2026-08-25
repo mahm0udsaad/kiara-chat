@@ -95,6 +95,16 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Label>الطلبات</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
+      {bootstrap.data.session.role === "admin" ? (
+        <NativeTabs.Trigger name="reports">
+          <NativeTabs.Trigger.Icon
+            sf={{ default: "chart.bar", selected: "chart.bar.fill" }}
+            md="bar_chart"
+          />
+          <NativeTabs.Trigger.Label>التقارير</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
+      ) : null}
+
       <NativeTabs.Trigger name="account">
         <NativeTabs.Trigger.Icon
           sf={{ default: "person.crop.circle", selected: "person.crop.circle.fill" }}

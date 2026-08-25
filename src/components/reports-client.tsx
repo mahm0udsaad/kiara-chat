@@ -15,6 +15,9 @@ import { formatRelativeTime } from "@/lib/format";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import type { TeamReport, AgentReport, LabelCount } from "@/lib/analytics";
 import type { LabelColor } from "@/lib/types";
+import type { OperationsReport } from "@/lib/operations-report";
+import { OperationsReportClient } from "@/components/operations-report-client";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const LABEL_CLASSES: Record<LabelColor, string> = {
   slate: "bg-slate-100 text-slate-700 border-slate-300",
@@ -173,18 +176,28 @@ function AgentCard({ agent }: { agent: AgentReport }) {
   );
 }
 
-export function ReportsClient({ report }: { report: TeamReport }) {
+export function ReportsClient({ report, operationsReport }: { report: TeamReport; operationsReport: OperationsReport }) {
   const { agents, totals, labelTotals } = report;
   const activeAgents = useMemo(() => agents.filter((a) => a.isActive), [agents]);
 
   return (
-    <div className="dashboard-page max-w-4xl">
+    <div className="dashboard-page">
       <div className="dashboard-page-header">
         <div>
-          <h1>تقارير الموظفين</h1>
-          <p>توزيع المحادثات والأداء لكل موظف.</p>
+          <h1>التقارير</h1>
+          <p>إدارة عبء العمل والساعات وأداء فرق العمليات وخدمة العملاء.</p>
         </div>
       </div>
+
+      <Tabs defaultValue="operations" className="gap-5">
+        <TabsList className="h-10 w-full max-w-md" aria-label="نوع التقرير">
+          <TabsTrigger value="operations">العمليات الميدانية</TabsTrigger>
+          <TabsTrigger value="customer-service">خدمة العملاء</TabsTrigger>
+        </TabsList>
+        <TabsContent value="operations">
+          <OperationsReportClient initialReport={operationsReport} />
+        </TabsContent>
+        <TabsContent value="customer-service" className="max-w-4xl">
 
       <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         <Stat
@@ -268,6 +281,8 @@ export function ReportsClient({ report }: { report: TeamReport }) {
           ))}
         </ul>
       )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

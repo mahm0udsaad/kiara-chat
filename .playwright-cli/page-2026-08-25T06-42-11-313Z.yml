@@ -1,0 +1,132 @@
+- generic:
+  - generic [ref=f4e1]:
+    - banner [ref=f4e2]:
+      - generic [ref=f4e3]:
+        - generic [ref=f4e4]:
+          - generic [ref=f4e5]: Kiara Chat
+          - generic [ref=f4e6]: مدير
+        - generic [ref=f4e7]:
+          - generic [ref=f4e8]: hanan@kiara.com
+          - button "خروج" [ref=f4e9] [cursor=pointer]
+      - navigation [ref=f4e10]:
+        - link "المحادثات" [ref=f4e11] [cursor=pointer]:
+          - /url: /inbox
+        - link "طلبات اليوم" [ref=f4e14] [cursor=pointer]:
+          - /url: /orders
+        - link "التقارير" [ref=f4e17] [cursor=pointer]:
+          - /url: /reports
+        - link "الموظفون" [ref=f4e20] [cursor=pointer]:
+          - /url: /team
+        - link "ربط واتساب" [ref=f4e26] [cursor=pointer]:
+          - /url: /connect
+        - link "الإعدادات" [ref=f4e33] [cursor=pointer]:
+          - /url: /settings
+    - main [ref=f4e37]:
+      - generic [ref=f4e38]:
+        - generic [ref=f4e40]:
+          - heading "التقارير" [level=1] [ref=f4e41]
+          - paragraph [ref=f4e42]: إدارة عبء العمل والساعات وأداء فرق العمليات وخدمة العملاء.
+        - generic [ref=f4e43]:
+          - tablist "نوع التقرير" [ref=f4e44]:
+            - tab "العمليات الميدانية" [selected] [ref=f4e45] [cursor=pointer]
+            - tab "خدمة العملاء" [ref=f4e46] [cursor=pointer]
+          - tabpanel "العمليات الميدانية" [ref=f4e47]:
+            - generic [ref=f4e48]:
+              - generic [ref=f4e49]:
+                - generic [ref=f4e50]:
+                  - generic [ref=f4e51]: نطاق التقرير
+                  - generic [ref=f4e52]: التوقيت المعروض هو توقيت الرياض. الحد الأقصى ٣١ يوماً.
+                - generic [ref=f4e53]:
+                  - generic [ref=f4e54]:
+                    - text: من تاريخ
+                    - textbox "من تاريخ" [ref=f4e55]: 2026-08-21
+                  - generic [ref=f4e56]:
+                    - text: إلى تاريخ
+                    - textbox "إلى تاريخ" [ref=f4e57]: 2026-08-27
+                  - generic [ref=f4e58]:
+                    - text: من الساعة
+                    - textbox "من الساعة" [ref=f4e59]: 08:00
+                  - generic [ref=f4e60]:
+                    - text: إلى الساعة
+                    - textbox "إلى الساعة" [ref=f4e61]: 22:00
+                  - button "تطبيق" [ref=f4e62] [cursor=pointer]
+              - generic [ref=f4e63]:
+                - radiogroup "الفريق المعروض" [ref=f4e64]:
+                  - radio "الأخصائيات" [ref=f4e65] [cursor=pointer]
+                  - radio "السائقون" [checked] [active] [ref=f4e66] [cursor=pointer]
+                - paragraph [ref=f4e67]: يشمل حجوزات ركاز وطلبات واتساب دون تكرار الزيارة.
+              - generic [ref=f4e68]:
+                - generic [ref=f4e77]:
+                  - generic [ref=f4e78]: الطلبات المسندة
+                  - generic [ref=f4e79]: ٤
+                - generic [ref=f4e86]:
+                  - generic [ref=f4e87]: الطلبات المكتملة
+                  - generic [ref=f4e88]: ١
+                - generic [ref=f4e95]:
+                  - generic [ref=f4e96]: الساعات المحجوزة
+                  - generic [ref=f4e97]: ٥٫٤ س
+              - generic [ref=f4e98]:
+                - generic [ref=f4e99]:
+                  - generic [ref=f4e100]: ملخص السائقون
+                  - generic [ref=f4e101]: الطلب متعدد الخدمات يُحسب زيارة واحدة، بينما الساعات تجمع مدة كل خدمة فعلية.
+                - table [ref=f4e104]:
+                  - rowgroup [ref=f4e105]:
+                    - row [ref=f4e106]:
+                      - columnheader "الاسم" [ref=f4e107]
+                      - columnheader "مسند" [ref=f4e108]
+                      - columnheader "مكتمل" [ref=f4e109]
+                      - columnheader "نسبة الإنجاز" [ref=f4e110]
+                      - columnheader "الساعات" [ref=f4e111]
+                  - rowgroup [ref=f4e112]:
+                    - row [ref=f4e537]:
+                      - cell "محمود" [ref=f4e538]
+                      - cell "٤" [ref=f4e539]
+                      - cell "١" [ref=f4e540]
+                      - cell "٢٥٪" [ref=f4e541]
+                      - cell "٥٫٤ س" [ref=f4e542]
+                    - row [ref=f4e543]:
+                      - cell "طه" [ref=f4e544]
+                      - cell "٠" [ref=f4e545]
+                      - cell "٠" [ref=f4e546]
+                      - cell "٠٪" [ref=f4e547]
+                      - cell "٠ س" [ref=f4e548]
+              - generic [ref=f4e164]:
+                - generic [ref=f4e165]:
+                  - generic [ref=f4e166]:
+                    - generic [ref=f4e167]: جدول الحجوزات والطلبات
+                    - generic [ref=f4e168]: الثلاثاء، ٢٥ أغسطس ٢٠٢٦
+                  - generic [ref=f4e169]:
+                    - button "اليوم السابق" [ref=f4e495] [cursor=pointer]
+                    - button "أول يوم" [ref=f4e170] [cursor=pointer]
+                    - button "اليوم التالي" [ref=f4e496] [cursor=pointer]
+                - generic [ref=f4e173]:
+                  - generic [ref=f4e549]:
+                    - generic [ref=f4e550]: مح
+                    - paragraph [ref=f4e551]: محمود
+                    - paragraph [ref=f4e552]: ٤ مسند · ٥٫٤ س
+                  - generic [ref=f4e553]:
+                    - generic [ref=f4e554]: طه
+                    - paragraph [ref=f4e555]: طه
+                    - paragraph [ref=f4e556]: ٠ مسند · ٠ س
+                  - generic [ref=f4e207]:
+                    - generic [ref=f4e208]: 08:00
+                    - generic [ref=f4e209]: 09:00
+                    - generic [ref=f4e210]: 10:00
+                    - generic [ref=f4e211]: 11:00
+                    - generic [ref=f4e212]: 12:00
+                    - generic [ref=f4e213]: 13:00
+                    - generic [ref=f4e214]: 14:00
+                    - generic [ref=f4e215]: 15:00
+                    - generic [ref=f4e216]: 16:00
+                    - generic [ref=f4e217]: 17:00
+                    - generic [ref=f4e218]: 18:00
+                    - generic [ref=f4e219]: 19:00
+                    - generic [ref=f4e220]: 20:00
+                    - generic [ref=f4e221]: 21:00
+                    - generic [ref=f4e222]: 22:00
+                  - article "+201279119364 — مشوار عميلة" [ref=f4e573]:
+                    - generic [ref=f4e574]: ٢:٠٠ م
+                    - paragraph [ref=f4e576]: "+201279119364"
+                    - paragraph [ref=f4e577]: مشوار عميلة
+  - button "Open Next.js Dev Tools" [ref=f4e441] [cursor=pointer]
+  - alert [ref=f4e445]

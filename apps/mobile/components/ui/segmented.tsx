@@ -19,6 +19,7 @@ type Props<T extends string> = {
   accessibilityLabel: string;
   /** "fill" splits the width evenly; "scroll" keeps labels on one line. */
   layout?: "fill" | "scroll";
+  testIDPrefix?: string;
 };
 
 /**
@@ -31,6 +32,7 @@ export function Segmented<T extends string>({
   onChange,
   accessibilityLabel,
   layout = "fill",
+  testIDPrefix,
 }: Props<T>) {
   const { colors } = useTheme();
   const scroller = useRef<ScrollView>(null);
@@ -48,6 +50,7 @@ export function Segmented<T extends string>({
           option.count === undefined ? option.label : `${option.label}، ${option.count}`
         }
         accessibilityState={{ selected: active }}
+        testID={testIDPrefix ? `${testIDPrefix}-${option.value}` : undefined}
         onPress={() => {
           if (!active) tapFeedback();
           onChange(option.value);

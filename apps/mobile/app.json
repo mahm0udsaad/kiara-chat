@@ -2,7 +2,7 @@
   "expo": {
     "name": "كيارا للعمليات",
     "slug": "kiara-operations",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "kiara",
@@ -96,6 +96,12 @@
         "projectId": "6391b327-1f70-45aa-b57e-57ca947f939b"
       }
     },
-    "owner": "mahm0udsaad"
+    "owner": "mahm0udsaad",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/6391b327-1f70-45aa-b57e-57ca947f939b"
+    }
   }
 }

@@ -1,0 +1,12 @@
+- generic [ref=f5e3]:
+  - generic [ref=f5e4]:
+    - heading "Kiara Chat" [level=1] [ref=f5e5]
+    - paragraph [ref=f5e6]: تسجيل دخول الموظفين
+  - generic [ref=f5e7]:
+    - generic [ref=f5e8]:
+      - generic [ref=f5e9]: البريد الإلكتروني
+      - textbox [ref=f5e10]
+    - generic [ref=f5e11]:
+      - generic [ref=f5e12]: كلمة المرور
+      - textbox [ref=f5e13]
+    - button "دخول" [ref=f5e14] [cursor=pointer]

@@ -43,6 +43,7 @@ import type {
   OrderSummary,
   OrdersResponse,
   OrdersCalendarResponse,
+  OperationsReport,
   RekazCheckResponse,
   RekazPullResponse,
   SavedReply,
@@ -68,6 +69,8 @@ export const queryKeys = {
   conversation: (id: string) => ["conversation", id] as const,
   orders: (search: string) => ["orders", search] as const,
   ordersCalendar: (from: string, to: string) => ["orders-calendar", from, to] as const,
+  operationsReport: (from: string, to: string, startTime: string, endTime: string) =>
+    ["operations-report", from, to, startTime, endTime] as const,
   rekazCheck: ["rekaz-check"] as const,
   order: (id: string) => ["order", id] as const,
   dispatchOptions: ["dispatch-options"] as const,
@@ -415,6 +418,24 @@ export function useOrdersCalendar(from: string, to: string) {
     enabled: Boolean(from && to),
     staleTime: 30_000,
     refetchInterval: 60_000,
+  });
+}
+
+export function useOperationsReport(
+  from: string,
+  to: string,
+  startTime: string,
+  endTime: string,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.operationsReport(from, to, startTime, endTime),
+    queryFn: () => {
+      const params = new URLSearchParams({ from, to, startTime, endTime });
+      return apiRequest<OperationsReport>(`/reports/operations?${params.toString()}`);
+    },
+    enabled: enabled && Boolean(from && to && startTime && endTime),
+    staleTime: 30_000,
   });
 }
 
