@@ -14,6 +14,10 @@ export default function ReportsLayout() {
       }}
     >
       <Stack.Screen name="index" options={{ title: "تقارير العمليات" }} />
+      <Stack.Screen
+        name="[role]/[personId]"
+        options={{ title: "تفاصيل الأداء", headerBackButtonDisplayMode: "minimal" }}
+      />
     </Stack>
   );
 }

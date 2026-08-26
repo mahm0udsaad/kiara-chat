@@ -34,15 +34,18 @@ const views: SegmentOption<InboxView>[] = [
   { value: "new", label: "جديد" },
   { value: "mine", label: "محادثاتي" },
   { value: "unassigned", label: "غير مستلمة" },
+  { value: "specialists", label: "الأخصائيات" },
   { value: "danger", label: "خطر" },
 ];
 
 function ConversationRow({
   conversation,
   typing,
+  specialist,
 }: {
   conversation: ConversationSummary;
   typing: boolean;
+  specialist: boolean;
 }) {
   const { colors } = useTheme();
 
@@ -132,10 +135,12 @@ function ConversationRow({
               >
                 <CountBadge count={unread} />
                 {overdue ? <Badge tone="danger" icon="hourglass" label="تنتظر ردًا" /> : null}
-                {!conversation.assigned_to ? (
+                {specialist ? (
+                  <Badge tone="brand" icon="sparkles" label="أخصائية" />
+                ) : !conversation.assigned_to ? (
                   <Badge tone="warning" icon="person.crop.circle" label="غير مستلمة" />
                 ) : null}
-                {conversation.bookingStage ? (
+                {!specialist && conversation.bookingStage ? (
                   <Badge tone="neutral" label={bookingStageLabel[conversation.bookingStage]} />
                 ) : null}
               </View>
@@ -231,7 +236,11 @@ export default function InboxScreen() {
             exiting={FadeOut.duration(140)}
             layout={LinearTransition.duration(220)}
           >
-            <ConversationRow conversation={item} typing={isTyping(item.id)} />
+            <ConversationRow
+              conversation={item}
+              typing={isTyping(item.id)}
+              specialist={view === "specialists"}
+            />
           </Animated.View>
         )}
         contentContainerStyle={{
@@ -242,7 +251,7 @@ export default function InboxScreen() {
         keyboardDismissMode="on-drag"
         ListHeaderComponent={
           <View style={{ gap: spacing.md, paddingBottom: spacing.xs }}>
-            {/* The four views, plus the way into everything the web keeps in
+            {/* The inbox views, plus the way into everything the web keeps in
                 dropdowns next to its search box. */}
             <View
               style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}
@@ -356,7 +365,11 @@ export default function InboxScreen() {
             <EmptyState
               icon="tray"
               title="لا توجد محادثات"
-              detail="لا توجد محادثات مطابقة لهذا الفلتر حاليًا."
+              detail={
+                view === "specialists"
+                  ? "لا توجد محادثات لأرقام الأخصائيات المحفوظة."
+                  : "لا توجد محادثات مطابقة لهذا الفلتر حاليًا."
+              }
             />
           )
         }

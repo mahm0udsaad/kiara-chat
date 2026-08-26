@@ -117,6 +117,28 @@ export interface FieldSessionState {
 }
 
 /**
+ * The in-app field workflow's step machine for one order, as stored in
+ * `field_order_progress`.
+ *
+ * Distinct from {@link FieldSessionState}, which is the older two-timestamp
+ * mirror kept on the conversation for the magic-link flow. This is the real
+ * chain the driver and specialist advance through in the app:
+ *   confirm_ride → confirm_pickup → start_service → complete_order →
+ *   driver_return, with driver_arrived sitting beside it as a side event.
+ */
+export interface FieldOrderProgressState {
+  driverConfirmedAt: string | null;
+  driverArrivedAt: string | null;
+  specialistPickupAt: string | null;
+  serviceStartedAt: string | null;
+  completedAt: string | null;
+  driverReturnedAt: string | null;
+  lastActivityAt: string;
+  lastReminderAt: string | null;
+  version: number;
+}
+
+/**
  * A visit is one leg: the driver drops the specialist off ("one_way" — half a
  * trip) and often doesn't bring her back on the same order. "round_trip" is the
  * full there-and-back. Each is priced separately (see DispatchSettings).
@@ -171,6 +193,12 @@ export interface DriverOrderRow extends DriverOrder {
   updated_by_name: string | null;
   specialist_session?: FieldSessionState;
   driver_session?: FieldSessionState;
+  /**
+   * Where the visit actually stands in the app's step machine. Null when the
+   * order was never dispatched (no progress row) or the table is not readable
+   * — the orders screen renders either way.
+   */
+  field_progress?: FieldOrderProgressState | null;
 }
 
 /** Per-tenant dispatch pricing. Owner/manager-only (RLS blocks agents). */

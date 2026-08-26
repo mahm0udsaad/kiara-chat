@@ -1,6 +1,6 @@
 import { getConversationById } from "@/lib/inbox";
 import { releaseConversation } from "@/lib/interactions";
-import { toMobileConversation } from "@/lib/mobile/conversations";
+import { toClassifiedMobileConversation } from "@/lib/mobile/conversations";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -34,7 +34,9 @@ export async function POST(
       return mobileError(404, "CONVERSATION_NOT_FOUND", "Conversation not found");
     }
     if (!conversation.assigned_to) {
-      return mobileData({ conversation: toMobileConversation(conversation) });
+      return mobileData({
+        conversation: await toClassifiedMobileConversation(conversation),
+      });
     }
     if (!isAdmin && conversation.assigned_to !== auth.session.teamMemberId) {
       return mobileError(
@@ -47,7 +49,9 @@ export async function POST(
     await releaseConversation(id);
     const updated = await getConversationById(id, viewer);
     return mobileData({
-      conversation: toMobileConversation(updated ?? conversation),
+      conversation: await toClassifiedMobileConversation(
+        updated ?? conversation,
+      ),
     });
   } catch (error) {
     return mobileServerError(

@@ -1,6 +1,6 @@
 import { getConversationById } from "@/lib/inbox";
 import { setConversationRouting } from "@/lib/interactions";
-import { toMobileConversation } from "@/lib/mobile/conversations";
+import { toClassifiedMobileConversation } from "@/lib/mobile/conversations";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -63,7 +63,9 @@ export async function PUT(
 
     const updated = await setConversationRouting(id, target);
     return mobileData({
-      conversation: toMobileConversation(updated ?? conversation),
+      conversation: await toClassifiedMobileConversation(
+        updated ?? conversation,
+      ),
     });
   } catch (error) {
     return mobileServerError(

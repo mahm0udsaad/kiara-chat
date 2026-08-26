@@ -1,7 +1,11 @@
 import { bookingStageOf } from "@/lib/booking-stage";
 import { sectionOf } from "@/lib/conversation-meta";
-import { getLabelAssignments } from "@/lib/labels";
-import { listRosterContactPhones } from "@/lib/dispatch";
+import {
+  getConversationLabelIds,
+  getLabelAssignments,
+  listLabels,
+} from "@/lib/labels";
+import { listDrivers, listSpecialists } from "@/lib/dispatch";
 import { listConversations } from "@/lib/inbox";
 import {
   MOBILE_DANGER_AFTER_SECONDS,
@@ -10,6 +14,7 @@ import {
   type MobilePage,
 } from "@/lib/mobile/contracts";
 import { normalizePhone, phoneMatches } from "@/lib/phone";
+import { specialistConversationIdsFromLabels } from "@/lib/specialist-conversations";
 import type {
   Conversation,
   ConversationSection,
@@ -18,6 +23,7 @@ import type {
 
 const MAX_MOBILE_CONVERSATION_SCAN = 500;
 const EMPTY_PHONE_SET: ReadonlySet<string> = new Set();
+const EMPTY_CONVERSATION_ID_SET: ReadonlySet<string> = new Set();
 
 export function conversationCsStatus(
   conversation: Pick<Conversation, "metadata" | "status">
@@ -43,15 +49,20 @@ export function conversationDangerMinutes(
   conversation: Pick<
     Conversation,
     | "customer_phone"
+    | "id"
     | "last_inbound_at"
     | "last_message_at"
     | "metadata"
     | "status"
   >,
   now = Date.now(),
-  dangerExcludedPhoneSet: ReadonlySet<string> = EMPTY_PHONE_SET
+  dangerExcludedPhoneSet: ReadonlySet<string> = EMPTY_PHONE_SET,
+  dangerExcludedConversationIds: ReadonlySet<string> = EMPTY_CONVERSATION_ID_SET,
 ): number | null {
-  if (dangerExcludedPhoneSet.has(normalizePhone(conversation.customer_phone))) {
+  if (
+    dangerExcludedPhoneSet.has(normalizePhone(conversation.customer_phone)) ||
+    dangerExcludedConversationIds.has(conversation.id)
+  ) {
     return null;
   }
   if (
@@ -79,7 +90,8 @@ export function conversationDangerMinutes(
 export function toMobileConversation(
   conversation: Conversation,
   now = Date.now(),
-  dangerExcludedPhoneSet: ReadonlySet<string> = EMPTY_PHONE_SET
+  dangerExcludedPhoneSet: ReadonlySet<string> = EMPTY_PHONE_SET,
+  dangerExcludedConversationIds: ReadonlySet<string> = EMPTY_CONVERSATION_ID_SET,
 ): MobileConversation {
   return {
     id: conversation.id,
@@ -97,7 +109,8 @@ export function toMobileConversation(
     dangerMinutes: conversationDangerMinutes(
       conversation,
       now,
-      dangerExcludedPhoneSet
+      dangerExcludedPhoneSet,
+      dangerExcludedConversationIds,
     ),
   };
 }
@@ -117,8 +130,17 @@ function matchesView(
   view: MobileConversationView,
   now: number,
   dangerExcludedPhoneSet: ReadonlySet<string>,
+  specialistPhoneSet: ReadonlySet<string>,
+  specialistConversationIdSet: ReadonlySet<string>,
   teamMemberId: string | null
 ): boolean {
+  const isSpecialist =
+    specialistPhoneSet.has(normalizePhone(conversation.customer_phone)) ||
+    specialistConversationIdSet.has(conversation.id);
+  if (view === "specialists") return isSpecialist;
+  // Specialist threads live in one dedicated place. Keeping this guard in
+  // the shared matcher means they cannot leak into a normal tab or its count.
+  if (isSpecialist) return false;
   if (view === "new") return (conversation.unread_count ?? 0) > 0;
   if (view === "mine") {
     return Boolean(
@@ -127,12 +149,62 @@ function matchesView(
   }
   if (view === "unassigned") return !conversation.assigned_to;
   return (
-    conversationDangerMinutes(conversation, now, dangerExcludedPhoneSet) !== null
+    conversationDangerMinutes(
+      conversation,
+      now,
+      dangerExcludedPhoneSet,
+      specialistConversationIdSet,
+    ) !== null
+  );
+}
+
+async function loadMobileConversationClassification(conversationId?: string) {
+  const [specialists, drivers, labels, labelAssignments] = await Promise.all([
+    listSpecialists(),
+    listDrivers(),
+    listLabels(),
+    conversationId
+      ? getConversationLabelIds(conversationId).then((labelIds) => ({
+          [conversationId]: labelIds,
+        }))
+      : getLabelAssignments(),
+  ]);
+  return {
+    labelAssignments,
+    specialistPhoneSet: new Set(
+      specialists
+        .map((specialist) => normalizePhone(specialist.phone ?? ""))
+        .filter(Boolean),
+    ),
+    dangerExcludedPhoneSet: new Set(
+      [...specialists, ...drivers]
+        .map((person) => normalizePhone(person.phone ?? ""))
+        .filter(Boolean),
+    ),
+    specialistConversationIdSet: specialistConversationIdsFromLabels(
+      labels,
+      labelAssignments,
+    ),
+  };
+}
+
+/** One correctly classified row for detail and mutation responses. */
+export async function toClassifiedMobileConversation(
+  conversation: Conversation,
+): Promise<MobileConversation> {
+  const classification = await loadMobileConversationClassification(
+    conversation.id,
+  );
+  return toMobileConversation(
+    conversation,
+    Date.now(),
+    classification.dangerExcludedPhoneSet,
+    classification.specialistConversationIdSet,
   );
 }
 
 /**
- * The refinements that sit beside the four views, mirroring the web inbox's
+ * The refinements that sit beside the inbox views, mirroring the web inbox's
  * three dropdowns. They narrow whichever view is open rather than replacing
  * it, and they apply before the view counts are taken — so a tab's number is
  * exactly how many rows tapping it would show under the current filter, and
@@ -164,21 +236,19 @@ export async function listMobileConversations(options: {
 }> {
   const now = Date.now();
   const filters = options.filters ?? NO_FILTERS;
-  const [conversations, rosterPhones, labelAssignments] = await Promise.all([
+  const [conversations, classification] = await Promise.all([
     listConversations(MAX_MOBILE_CONVERSATION_SCAN, {
       isAdmin: options.isAdmin,
       teamMemberId: options.teamMemberId,
     }),
-    listRosterContactPhones(),
-    // Only the label filter needs the assignment map, and it is a full-table
-    // read — skip it whenever no label is selected.
-    filters.labelId
-      ? getLabelAssignments()
-      : Promise.resolve({} as Record<string, string[]>),
+    loadMobileConversationClassification(),
   ]);
-  const dangerExcludedPhoneSet = new Set(
-    rosterPhones.map(normalizePhone).filter(Boolean)
-  );
+  const {
+    dangerExcludedPhoneSet,
+    labelAssignments,
+    specialistConversationIdSet,
+    specialistPhoneSet,
+  } = classification;
   const searched = conversations
     .filter((conversation) => matchesSearch(conversation, options.search))
     .filter((conversation) => {
@@ -203,6 +273,8 @@ export async function listMobileConversations(options: {
         "new",
         now,
         dangerExcludedPhoneSet,
+        specialistPhoneSet,
+        specialistConversationIdSet,
         options.teamMemberId
       )
     ).length,
@@ -212,6 +284,8 @@ export async function listMobileConversations(options: {
         "mine",
         now,
         dangerExcludedPhoneSet,
+        specialistPhoneSet,
+        specialistConversationIdSet,
         options.teamMemberId
       )
     ).length,
@@ -221,6 +295,19 @@ export async function listMobileConversations(options: {
         "unassigned",
         now,
         dangerExcludedPhoneSet,
+        specialistPhoneSet,
+        specialistConversationIdSet,
+        options.teamMemberId
+      )
+    ).length,
+    specialists: searched.filter((conversation) =>
+      matchesView(
+        conversation,
+        "specialists",
+        now,
+        dangerExcludedPhoneSet,
+        specialistPhoneSet,
+        specialistConversationIdSet,
         options.teamMemberId
       )
     ).length,
@@ -230,6 +317,8 @@ export async function listMobileConversations(options: {
         "danger",
         now,
         dangerExcludedPhoneSet,
+        specialistPhoneSet,
+        specialistConversationIdSet,
         options.teamMemberId
       )
     ).length,
@@ -240,13 +329,20 @@ export async function listMobileConversations(options: {
       options.view,
       now,
       dangerExcludedPhoneSet,
+      specialistPhoneSet,
+      specialistConversationIdSet,
       options.teamMemberId
     )
   );
   const items = matching
     .slice(options.offset, options.offset + options.limit)
     .map((conversation) =>
-      toMobileConversation(conversation, now, dangerExcludedPhoneSet)
+      toMobileConversation(
+        conversation,
+        now,
+        dangerExcludedPhoneSet,
+        specialistConversationIdSet,
+      )
     );
   const nextOffset = options.offset + items.length;
 

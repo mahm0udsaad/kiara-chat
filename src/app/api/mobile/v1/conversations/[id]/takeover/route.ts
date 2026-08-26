@@ -1,6 +1,6 @@
 import { getConversationById } from "@/lib/inbox";
 import { takeOverConversation, TakeoverError } from "@/lib/interactions";
-import { toMobileConversation } from "@/lib/mobile/conversations";
+import { toClassifiedMobileConversation } from "@/lib/mobile/conversations";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -71,7 +71,7 @@ export async function POST(
       return mobileError(404, "CONVERSATION_NOT_FOUND", "Conversation not found");
     }
     return mobileData({
-      conversation: toMobileConversation(updated),
+      conversation: await toClassifiedMobileConversation(updated),
       previousAssignee,
     });
   } catch (error) {

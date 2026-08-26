@@ -3,6 +3,7 @@ import "server-only";
 import { routedToOf } from "@/lib/conversation-meta";
 import { conversationDangerMinutes } from "@/lib/mobile/conversations";
 import { normalizePhone } from "@/lib/phone";
+import { listSpecialistLabeledConversationIds } from "@/lib/specialist-conversations";
 import type { Conversation } from "@/lib/types";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
@@ -421,14 +422,24 @@ export async function sweepDangerConversations(): Promise<{
   if (error) throw new Error(error.message);
 
   const rows = data ?? [];
-  const excludedPhones = await rosterContactPhoneSet();
+  const [excludedPhones, specialistLabeledConversationIds] = await Promise.all([
+    rosterContactPhoneSet(),
+    listSpecialistLabeledConversationIds(
+      rows.map((row) => String(row.id)),
+    ),
+  ]);
   const now = Date.now();
   const team = await inboxTeamMemberIds();
 
   let danger = 0;
   let alerted = 0;
   for (const row of rows as DangerRow[]) {
-    const minutes = conversationDangerMinutes(row, now, excludedPhones);
+    const minutes = conversationDangerMinutes(
+      row,
+      now,
+      excludedPhones,
+      specialistLabeledConversationIds,
+    );
     if (minutes === null) continue;
     danger += 1;
 

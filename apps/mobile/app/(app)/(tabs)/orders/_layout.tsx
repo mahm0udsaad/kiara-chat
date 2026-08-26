@@ -18,6 +18,11 @@ export default function OrdersLayout() {
     >
       <Stack.Screen name="index" options={{ title: "الطلبات" }} />
       <Stack.Screen name="[id]/index" options={{ title: "تفاصيل الطلب" }} />
+      <Stack.Screen name="[id]/status" options={{ title: "حالة التنفيذ" }} />
+      <Stack.Screen
+        name="[id]/remind"
+        options={{ title: "إرسال تذكير", presentation: "modal" }}
+      />
       <Stack.Screen
         name="[id]/edit"
         options={{ title: "تعديل الطلب", presentation: "modal" }}

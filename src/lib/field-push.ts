@@ -229,6 +229,46 @@ async function activeTokensForRoster(
   return out;
 }
 
+/**
+ * A reminder an employee wrote and sent by hand from the order screen.
+ *
+ * Deliberately separate from {@link notifyNextFieldStep}: that one is the
+ * machine nudging whoever the step machine says is late, with wording it
+ * chose. This carries the text the employee approved, verbatim, to the person
+ * she picked — which is the whole point of her opening the composer.
+ */
+export async function notifyFieldStaffReminder(input: {
+  orderId: string;
+  role: FieldStaffRole;
+  rosterId: string;
+  title: string;
+  body: string;
+}): Promise<FieldPushDeliverySummary> {
+  const tokens = await activeTokensForRoster(input.role, [input.rosterId]);
+  return sendExpoMessages(
+    (tokens.get(input.rosterId) ?? []).map((to) =>
+      fieldMessage(to, {
+        title: input.title,
+        body: input.body,
+        data: {
+          type: "field_order",
+          orderId: input.orderId,
+          url: `/field/orders/${input.orderId}`,
+        },
+      }),
+    ),
+  );
+}
+
+/** Whether a roster member has at least one live device registered. */
+export async function fieldStaffHasPushTokens(
+  role: FieldStaffRole,
+  rosterId: string,
+): Promise<boolean> {
+  const tokens = await activeTokensForRoster(role, [rosterId]);
+  return (tokens.get(rosterId) ?? []).length > 0;
+}
+
 export async function notifyFieldOrderAssigned(input: {
   orderId: string;
   customerName: string | null;
