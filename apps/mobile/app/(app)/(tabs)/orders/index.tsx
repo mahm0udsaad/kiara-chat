@@ -1,5 +1,5 @@
 import { Link, Stack, useRouter } from "expo-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,16 +23,25 @@ import {
   dayKeyOf,
   mergeVisits,
   visitMatchesFilter,
+  visitMatchesSearch,
   type CalendarVisit,
   type VisitFilter,
 } from "@/lib/calendar";
+import {
+  executionIsStalled,
+  executionStateOf,
+  ROLE_LABEL,
+  stalledLabel,
+} from "@/lib/execution";
 import {
   durationLabel,
   formatters,
   orderStatusIcon,
   orderStatusLabel,
   orderStatusTone,
+  relativeDayLabel,
 } from "@/lib/format";
+import { tapFeedback } from "@/lib/haptics";
 import {
   useCreateOrderFromReservation,
   useOrdersCalendar,
@@ -50,6 +59,7 @@ const filters: SegmentOption<VisitFilter>[] = [
   { value: "all", label: "الكل" },
   { value: "today", label: "اليوم" },
   { value: "needs_driver", label: "بحاجة إلى تعيين" },
+  { value: "driver_requested", label: "تم طلب سائق" },
   { value: "exception", label: "استثناءات" },
 ];
 
@@ -300,17 +310,39 @@ function RekazBanner({ selectedDayVisible }: { selectedDayVisible: boolean }) {
   );
 }
 
-function VisitCard({ visit }: { visit: CalendarVisit }) {
+function VisitCard({
+  visit,
+  showDay = false,
+}: {
+  visit: CalendarVisit;
+  /** Search results leave the selected day behind, so each row names its own. */
+  showDay?: boolean;
+}) {
   const { colors } = useTheme();
   const router = useRouter();
   const createOrder = useCreateOrderFromReservation();
   const arrival = new Date(visit.arrivalAt);
   const order = visit.order;
 
+  // An order already out with a driver has a second kind of trouble the
+  // dispatch status cannot show: a step nobody has taken. Both colour the card.
+  const execution = order ? executionStateOf(order) : null;
+  const stalled = Boolean(execution && executionIsStalled(execution));
   const needsAttention =
-    order?.status === "failed" || order?.dispatch_state === "uncertain";
+    order?.status === "failed" ||
+    order?.dispatch_state === "uncertain" ||
+    stalled;
 
   const requestDriver = useCallback(() => {
+    // Raising the order row is not the commitment — the dispatch is. So an
+    // order left behind by an earlier tap that never reached the send is
+    // RESUMED, not raised again: the server refuses a second order for the
+    // same Rekaz visit (ORDER_ALREADY_LINKED), and the only way forward is
+    // the dispatch screen the employee backed out of.
+    if (order) {
+      router.push({ pathname: "/orders/[id]/dispatch", params: { id: order.id } });
+      return;
+    }
     if (!visit.reservation) return;
     createOrder.mutate(visit.reservation.id, {
       // Creating the visit is not the commit that matters. The employee lands
@@ -324,7 +356,7 @@ function VisitCard({ visit }: { visit: CalendarVisit }) {
       onError: (error) =>
         Alert.alert("تعذّر إنشاء الطلب", error.message),
     });
-  }, [createOrder, router, visit.reservation]);
+  }, [createOrder, order, router, visit.reservation]);
 
   const body = (
     <View
@@ -341,6 +373,14 @@ function VisitCard({ visit }: { visit: CalendarVisit }) {
     >
       <View style={{ flexDirection: "row-reverse", gap: spacing.md }}>
         <View style={{ alignItems: "center", gap: 2, minWidth: 62 }}>
+          {showDay ? (
+            <Text
+              numberOfLines={1}
+              style={{ ...type.caption, color: colors.brand, ...rtlText }}
+            >
+              {relativeDayLabel(visit.arrivalAt)}
+            </Text>
+          ) : null}
           <Text
             style={{
               ...type.title3,
@@ -489,18 +529,83 @@ function VisitCard({ visit }: { visit: CalendarVisit }) {
             {order?.dispatch_state === "uncertain" ? (
               <Badge label="يحتاج مراجعة" tone="danger" icon="exclamationmark.triangle" />
             ) : null}
+            {execution?.tracked ? (
+              <Badge
+                label={execution.label}
+                tone={stalled ? "danger" : execution.tone}
+                icon={execution.stage === "completed" ? "checkmark.circle" : "clock"}
+              />
+            ) : null}
           </View>
         </View>
       </View>
 
-      {/* An unlinked Rekaz visit gets its action in place — no detour through
-          another calendar step, per the operations plan. */}
-      {!order && visit.reservation ? (
+      {/* Once a driver is on it, the card's own question stops being "who takes
+          this?" and becomes "where has it got to?". That answer used to live
+          nowhere the office could reach, so it gets the card's action slot. */}
+      {order?.driver_id ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`متابعة تنفيذ طلب ${
+            visit.customerName || visit.customerPhone
+          }، ${execution?.label ?? "حالة التنفيذ"}`}
+          onPress={(event) => {
+            event.stopPropagation();
+            tapFeedback();
+            router.push({ pathname: "/orders/[id]/status", params: { id: order.id } });
+          }}
+          style={({ pressed }) => ({
+            minHeight: hitSize.comfortable,
+            flexDirection: "row-reverse",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: spacing.sm,
+            borderRadius: radius.md,
+            backgroundColor: stalled ? colors.dangerSoft : colors.brandSoft,
+            opacity: pressed ? 0.7 : 1,
+          })}
+        >
+          <IconSymbol
+            name={stalled ? "exclamationmark.triangle" : "figure.walk"}
+            size={16}
+            color={stalled ? colors.onDangerSoft : colors.onBrandSoft}
+          />
+          <Text
+            numberOfLines={1}
+            style={{
+              ...type.calloutStrong,
+              color: stalled ? colors.onDangerSoft : colors.onBrandSoft,
+              ...rtlText,
+            }}
+          >
+            {stalled && execution?.stalledMinutes != null && execution.pendingRole
+              ? `متابعة التنفيذ · ${ROLE_LABEL[execution.pendingRole]} متأخر ${stalledLabel(
+                  execution.stalledMinutes,
+                )}`
+              : "متابعة التنفيذ وإرسال تذكير"}
+          </Text>
+        </Pressable>
+      ) : null}
+
+      {/* Until a driver is actually on the visit, the card keeps offering to
+          put one there.
+          It used to disappear the moment the order ROW existed, which made
+          backing out of the dispatch screen strand the card with no action at
+          all: too late for "طلب سائق", too early for "متابعة التنفيذ". The
+          gate is the driver, not the row — which also covers a WhatsApp
+          booking that has an order but no Rekaz reservation behind it. */}
+      {!order?.driver_id && (order || visit.reservation) ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`طلب سائق لزيارة ${visit.customerName || visit.customerPhone}`}
           disabled={createOrder.isPending}
-          onPress={requestDriver}
+          onPress={(event) => {
+            // The whole card is a link once an order exists; this tap is the
+            // button's, not the card's.
+            event.stopPropagation();
+            tapFeedback();
+            requestDriver();
+          }}
           style={{
             minHeight: hitSize.comfortable,
             alignItems: "center",
@@ -542,6 +647,11 @@ export default function OrdersScreen() {
   const todayKey = dayKeyFromToday(0);
   const [selectedDay, setSelectedDay] = useState(todayKey);
   const [filter, setFilter] = useState<VisitFilter>("all");
+  const [search, setSearch] = useState("");
+  // Keeps typing responsive — the list re-filters a frame behind the keystroke.
+  const deferredSearch = useDeferredValue(search);
+  const query = deferredSearch.trim();
+  const searching = query.length > 0;
 
   const days = useMemo(
     () =>
@@ -577,30 +687,50 @@ export default function OrdersScreen() {
     return counts;
   }, [visits]);
 
-  const dayVisits = useMemo(
+  /**
+   * What the tabs and their counts are computed over.
+   *
+   * Normally the selected day — the strip is this screen's navigation. A
+   * search deliberately leaves that behind and looks across the whole loaded
+   * window: an employee typing a customer's number wants to find her visit,
+   * and "nothing today" is not an answer when it is booked for Thursday. Each
+   * row names its own day while the box is open.
+   */
+  const scopedVisits = useMemo(
     () =>
-      visits
-        .filter((visit) => dayKeyOf(visit.arrivalAt) === selectedDay)
-        .filter((visit) => visitMatchesFilter(visit, filter, todayKey)),
-    [visits, selectedDay, filter, todayKey],
+      searching
+        ? visits.filter((visit) => visitMatchesSearch(visit, query))
+        : visits.filter((visit) => dayKeyOf(visit.arrivalAt) === selectedDay),
+    [visits, searching, query, selectedDay],
   );
 
-  const counts = useMemo(() => {
-    const inDay = visits.filter(
-      (visit) => dayKeyOf(visit.arrivalAt) === selectedDay,
-    );
-    return {
-      all: inDay.length,
-      today: inDay.filter((visit) => visitMatchesFilter(visit, "today", todayKey))
-        .length,
-      needs_driver: inDay.filter((visit) =>
-        visitMatchesFilter(visit, "needs_driver", todayKey),
-      ).length,
-      exception: inDay.filter((visit) =>
-        visitMatchesFilter(visit, "exception", todayKey),
-      ).length,
-    } satisfies Record<VisitFilter, number>;
-  }, [visits, selectedDay, todayKey]);
+  const listVisits = useMemo(
+    () =>
+      scopedVisits.filter((visit) => visitMatchesFilter(visit, filter, todayKey)),
+    [scopedVisits, filter, todayKey],
+  );
+
+  // Every tab's number stays exactly how many rows tapping it would show, the
+  // query included — a count that ignored the search sends her to an empty list.
+  const counts = useMemo(
+    () =>
+      ({
+        all: scopedVisits.length,
+        today: scopedVisits.filter((visit) =>
+          visitMatchesFilter(visit, "today", todayKey),
+        ).length,
+        needs_driver: scopedVisits.filter((visit) =>
+          visitMatchesFilter(visit, "needs_driver", todayKey),
+        ).length,
+        driver_requested: scopedVisits.filter((visit) =>
+          visitMatchesFilter(visit, "driver_requested", todayKey),
+        ).length,
+        exception: scopedVisits.filter((visit) =>
+          visitMatchesFilter(visit, "exception", todayKey),
+        ).length,
+      }) satisfies Record<VisitFilter, number>,
+    [scopedVisits, todayKey],
+  );
 
   const showSkeleton = calendar.isLoading && visits.length === 0;
   const selectedDate = dayChipDate(selectedDay);
@@ -609,6 +739,12 @@ export default function OrdersScreen() {
     <>
       <Stack.Screen
         options={{
+          headerSearchBarOptions: {
+            placeholder: "بحث بالاسم أو رقم الجوال",
+            onChangeText: (event) => setSearch(event.nativeEvent.text),
+            onClose: () => setSearch(""),
+            hideWhenScrolling: false,
+          },
           headerRight: () =>
             selectedDay === todayKey ? null : (
               <Pressable
@@ -625,12 +761,16 @@ export default function OrdersScreen() {
 
       <View style={{ flex: 1 }}>
         <View style={{ paddingVertical: spacing.md, gap: spacing.md }}>
-          <DayStrip
-            days={days}
-            selected={selectedDay}
-            onSelect={setSelectedDay}
-            countsByDay={countsByDay}
-          />
+          {/* The strip picks a day; a search is not about one, so it steps
+              aside rather than leaving a highlighted day that means nothing. */}
+          {searching ? null : (
+            <DayStrip
+              days={days}
+              selected={selectedDay}
+              onSelect={setSelectedDay}
+              countsByDay={countsByDay}
+            />
+          )}
           <Text
             style={{
               ...type.subheadStrong,
@@ -639,14 +779,18 @@ export default function OrdersScreen() {
               ...rtlText,
             }}
           >
-            {formatters.weekdayDate.format(selectedDate)}
+            {searching
+              ? `نتائج البحث · ${formatters.shortDate.format(
+                  dayChipDate(from),
+                )} إلى ${formatters.shortDate.format(dayChipDate(to))}`
+              : formatters.weekdayDate.format(selectedDate)}
           </Text>
         </View>
 
         <FlatList
-          data={dayVisits}
+          data={listVisits}
           keyExtractor={(visit) => visit.key}
-          renderItem={({ item }) => <VisitCard visit={item} />}
+          renderItem={({ item }) => <VisitCard visit={item} showDay={searching} />}
           contentContainerStyle={{
             paddingHorizontal: spacing.lg,
             paddingBottom: spacing["3xl"],
@@ -658,7 +802,9 @@ export default function OrdersScreen() {
               <RekazBanner selectedDayVisible />
               <Segmented
                 layout="scroll"
-                accessibilityLabel="تصفية زيارات اليوم"
+                accessibilityLabel={
+                  searching ? "تصفية نتائج البحث" : "تصفية زيارات اليوم"
+                }
                 options={filters.map((option) => ({
                   ...option,
                   count: counts[option.value],
@@ -674,6 +820,24 @@ export default function OrdersScreen() {
               <ErrorState
                 message={calendar.error.message}
                 onRetry={() => void calendar.refetch()}
+              />
+            ) : searching ? (
+              // Naming the window is the point: the search covered what is
+              // loaded, not the whole calendar, and a visit further out is a
+              // real possibility rather than a bug she should chase.
+              <EmptyState
+                icon="magnifyingglass"
+                title="لا توجد زيارات مطابقة"
+                detail={`البحث يشمل الفترة من ${formatters.shortDate.format(
+                  dayChipDate(from),
+                )} إلى ${formatters.shortDate.format(
+                  dayChipDate(to),
+                )}. اختاري يومًا أبعد من الشريط لتوسيع النطاق.`}
+                action={
+                  filter === "all"
+                    ? undefined
+                    : { label: "عرض الكل", onPress: () => setFilter("all") }
+                }
               />
             ) : filter !== "all" ? (
               <EmptyState

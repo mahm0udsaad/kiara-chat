@@ -1,3 +1,4 @@
+import { phoneMatches } from "@/lib/phone";
 import type { OrderSummary, RekazReservation } from "@/types/api";
 
 /**
@@ -214,12 +215,20 @@ export function mergeVisits(
   return visits.sort((a, b) => a.arrivalAt.localeCompare(b.arrivalAt));
 }
 
-export type VisitFilter = "all" | "today" | "needs_driver" | "exception";
+export type VisitFilter =
+  | "all"
+  | "today"
+  | "needs_driver"
+  | "driver_requested"
+  | "exception";
 
 /**
  * `needs_driver` is the queue that actually drives the day: a visit with no
- * order yet, or an order with nobody assigned. `exception` is anything that
- * failed or stalled mid-dispatch.
+ * order yet, or an order with nobody assigned. `driver_requested` is the other
+ * side of that queue — a driver is on it, so the question has moved from "who
+ * takes this?" to "where has it got to?", which is exactly the set the
+ * follow-up button on the card opens. `exception` is anything that failed or
+ * stalled mid-dispatch.
  */
 export function visitMatchesFilter(
   visit: CalendarVisit,
@@ -233,6 +242,8 @@ export function visitMatchesFilter(
       return dayKeyOf(visit.arrivalAt) === todayKey;
     case "needs_driver":
       return !visit.order || !visit.order.driver_id || !visit.order.specialist_id;
+    case "driver_requested":
+      return Boolean(visit.order?.driver_id);
     case "exception":
       return (
         visit.order?.status === "failed" ||
@@ -241,4 +252,38 @@ export function visitMatchesFilter(
         visit.order?.dispatch_state === "processing"
       );
   }
+}
+
+/**
+ * Free-text match for the agenda's search box.
+ *
+ * Deliberately wider than the customer: an employee hunting for a visit knows
+ * it by whoever is on it just as often as by who booked it, so the assigned
+ * specialist and driver are searchable too. The phone rules come from
+ * {@link phoneMatches}, so `0502376231` and `+966502376231` behave the same
+ * here as they do in the chat list.
+ */
+export function visitMatchesSearch(
+  visit: CalendarVisit,
+  rawQuery: string,
+): boolean {
+  const query = rawQuery.trim().toLocaleLowerCase("ar");
+  if (!query) return true;
+  const haystack = [
+    visit.customerName,
+    visit.order?.customer_name,
+    visit.order?.specialist_name,
+    visit.order?.driver_name,
+    visit.location,
+    ...visit.providers,
+    ...visit.services,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase("ar");
+  return (
+    haystack.includes(query) ||
+    phoneMatches(visit.customerPhone, rawQuery) ||
+    phoneMatches(visit.order?.customer_phone, rawQuery)
+  );
 }

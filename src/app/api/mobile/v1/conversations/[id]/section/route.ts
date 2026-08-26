@@ -1,7 +1,7 @@
 import { isConversationSection } from "@/lib/conversation-meta";
 import { getConversationById } from "@/lib/inbox";
 import { setConversationSection } from "@/lib/interactions";
-import { toMobileConversation } from "@/lib/mobile/conversations";
+import { toClassifiedMobileConversation } from "@/lib/mobile/conversations";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -43,7 +43,9 @@ export async function PUT(
     }
     const updated = await setConversationSection(id, raw);
     return mobileData({
-      conversation: toMobileConversation(updated ?? conversation),
+      conversation: await toClassifiedMobileConversation(
+        updated ?? conversation,
+      ),
     });
   } catch (error) {
     return mobileServerError(

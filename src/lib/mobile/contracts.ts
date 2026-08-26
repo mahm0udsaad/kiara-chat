@@ -12,6 +12,7 @@ export const MOBILE_CONVERSATION_VIEWS = [
   "new",
   "mine",
   "unassigned",
+  "specialists",
   "danger",
 ] as const;
 

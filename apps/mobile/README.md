@@ -45,7 +45,7 @@ Every endpoint is under `/api/mobile/v1` and receives `Authorization: Bearer <Su
 
 ```text
 GET  /bootstrap
-GET  /conversations?view=new|mine|unassigned|danger
+GET  /conversations?view=new|mine|unassigned|specialists|danger
 GET  /conversations/:id
 POST /conversations/:id/take
 POST /conversations/:id/reply      { "body": "..." }

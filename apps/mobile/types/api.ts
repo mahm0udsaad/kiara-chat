@@ -63,7 +63,12 @@ export type SavedReply = {
   body: string;
 };
 
-export type InboxView = "new" | "mine" | "unassigned" | "danger";
+export type InboxView =
+  | "new"
+  | "mine"
+  | "unassigned"
+  | "specialists"
+  | "danger";
 
 export type ConversationSummary = {
   id: string;
@@ -235,6 +240,12 @@ export type OrderSummary = {
   dispatch_state: "idle" | "processing" | "sent" | "failed" | "uncertain";
   specialist_session?: FieldSessionState;
   driver_session?: FieldSessionState;
+  /**
+   * Where the visit stands in the app's step machine. Null when the order was
+   * never dispatched, and absent on older API builds — the screens fall back
+   * to `specialist_session`/`driver_session` rather than blanking.
+   */
+  field_progress?: FieldOrderProgress | null;
   /** Set when the order was raised from a Rekaz visit; the merge key. */
   rekaz_source_id?: string | null;
 };
@@ -557,6 +568,65 @@ export type FieldOrderProgress = {
   lastActivityAt: string;
   lastReminderAt: string | null;
   version: number;
+};
+
+/** One person the reminder composer can address. */
+export type OrderReminderRecipient = {
+  role: FieldSessionRole;
+  rosterId: string | null;
+  name: string | null;
+  phone: string | null;
+  /** A live app account with at least one registered device. */
+  canPush: boolean;
+  /** A roster phone plus a connected WhatsApp engine. */
+  canWhatsapp: boolean;
+  /** True when the chain is currently waiting on this person. */
+  isPending: boolean;
+  pendingAction: FieldOrderAction | null;
+  pendingLabel: string | null;
+  /** The suggested text; fully editable before it is sent. */
+  message: string;
+};
+
+export type OrderReminderContext = {
+  orderId: string;
+  customerName: string | null;
+  customerPhone: string;
+  arrivalAt: string;
+  customerLocation: string;
+  progress: FieldOrderProgress | null;
+  pendingRole: FieldSessionRole | null;
+  pendingAction: FieldOrderAction | null;
+  pendingLabel: string | null;
+  lastReminderAt: string | null;
+  /** Minutes since anyone last touched the order. */
+  stalledMinutes: number | null;
+  whatsappConfigured: boolean;
+  recipients: OrderReminderRecipient[];
+};
+
+export type OrderReminderChannel = "push" | "whatsapp";
+
+export type SendOrderReminderInput = {
+  role: FieldSessionRole;
+  message: string;
+  channels: OrderReminderChannel[];
+};
+
+export type OrderReminderDelivery = {
+  role: FieldSessionRole;
+  remindedAt: string;
+  push: {
+    attempted: number;
+    accepted: number;
+    delivered: number;
+    pending: number;
+    failed: number;
+    errors: string[];
+  } | null;
+  whatsapp: { sent: boolean; error: string | null } | null;
+  /** At least one requested channel actually left the building. */
+  delivered: boolean;
 };
 
 export type FieldOrder = {

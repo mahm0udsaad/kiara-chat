@@ -7,7 +7,7 @@ import {
   fieldOrderStepCommand,
   type FieldLocationEvidence,
 } from "@/lib/operational-commands";
-import type { TripType } from "@/lib/types";
+import type { FieldOrderProgressState, TripType } from "@/lib/types";
 
 export type FieldStaffRole = "specialist" | "driver";
 export type FieldOrderAction =
@@ -36,17 +36,8 @@ export interface FieldStaffSession {
   phone: string | null;
 }
 
-export interface FieldOrderProgress {
-  driverConfirmedAt: string | null;
-  driverArrivedAt: string | null;
-  specialistPickupAt: string | null;
-  serviceStartedAt: string | null;
-  completedAt: string | null;
-  driverReturnedAt: string | null;
-  lastActivityAt: string;
-  lastReminderAt: string | null;
-  version: number;
-}
+/** One definition, shared with the operations app's order payload. */
+export type FieldOrderProgress = FieldOrderProgressState;
 
 export interface FieldOrder {
   id: string;

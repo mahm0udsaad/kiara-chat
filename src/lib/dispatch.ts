@@ -30,6 +30,7 @@ import type {
   DriverOrderRow,
   DriverOrderStatus,
   DispatchSettings,
+  FieldOrderProgressState,
   TripType,
 } from "@/lib/types";
 
@@ -1144,11 +1145,12 @@ async function withNames(
     ...new Set(values.filter((v): v is string => Boolean(v))),
   ];
 
-  const [specialists, drivers, customers, editors] = await Promise.all([
+  const [specialists, drivers, customers, editors, progress] = await Promise.all([
     rosterNames(supabase, "specialists", uniq(orders.map((o) => o.specialist_id))),
     rosterNames(supabase, "drivers", uniq(orders.map((o) => o.driver_id))),
     customerDetails(supabase, uniq(orders.map((o) => o.conversation_id))),
     teamMemberNames(supabase, uniq(orders.map((o) => o.updated_by))),
+    fieldProgressFor(orders.map((o) => o.id)),
   ]);
 
   return orders.map((o) => {
@@ -1171,8 +1173,60 @@ async function withNames(
         o.id,
         "driver"
       ),
+      field_progress: progress.get(o.id) ?? null,
     };
   });
+}
+
+/**
+ * The in-app step machine for a page of orders.
+ *
+ * Read with the admin client on purpose: `field_order_progress` is revoked
+ * from `authenticated` — only the field app's service-role routes write it —
+ * so the RLS client used for the rest of the enrichment would come back empty
+ * rather than forbidden, which is the worse failure. The rows are operational
+ * timestamps, no different in sensitivity from the schedule itself, and the
+ * orders list is already visible to every employee.
+ *
+ * A failure here never fails the read: an order with no progress row (never
+ * dispatched) and an unreadable table both render as "not started".
+ */
+async function fieldProgressFor(
+  orderIds: string[]
+): Promise<Map<string, FieldOrderProgressState>> {
+  const out = new Map<string, FieldOrderProgressState>();
+  if (!orderIds.length) return out;
+  // getAdminSupabaseClient() throws outright when the service key is absent,
+  // and the query throws on a table an older database does not have yet.
+  // Either would take the whole orders screen down over a decoration.
+  let data: Record<string, unknown>[] | null = null;
+  try {
+    const result = await getAdminSupabaseClient()
+      .from("field_order_progress")
+      .select("*")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .in("order_id", orderIds);
+    if (result.error) return out;
+    data = result.data as Record<string, unknown>[] | null;
+  } catch {
+    return out;
+  }
+  if (!data) return out;
+  for (const row of data) {
+    out.set(row.order_id as string, {
+      driverConfirmedAt: (row.driver_confirmed_at as string | null) ?? null,
+      driverArrivedAt: (row.driver_arrived_at as string | null) ?? null,
+      specialistPickupAt: (row.specialist_pickup_at as string | null) ?? null,
+      serviceStartedAt: (row.service_started_at as string | null) ?? null,
+      completedAt: (row.completed_at as string | null) ?? null,
+      driverReturnedAt: (row.driver_returned_at as string | null) ?? null,
+      lastActivityAt:
+        (row.last_activity_at as string | null) ?? new Date().toISOString(),
+      lastReminderAt: (row.last_reminder_at as string | null) ?? null,
+      version: Number(row.version ?? 1),
+    });
+  }
+  return out;
 }
 
 /** Team-member display names, for "عُدّل بواسطة …". */

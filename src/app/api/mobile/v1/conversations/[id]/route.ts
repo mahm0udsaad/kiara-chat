@@ -4,7 +4,7 @@ import {
   MESSAGE_PAGE_SIZE,
 } from "@/lib/inbox";
 import { bookingReceiptOf } from "@/lib/booking-receipt";
-import { toMobileConversation } from "@/lib/mobile/conversations";
+import { toClassifiedMobileConversation } from "@/lib/mobile/conversations";
 import { mobileReminderConfirmationFor } from "@/lib/mobile/reminders";
 import {
   bookingRequestOf,
@@ -52,18 +52,20 @@ export async function GET(
       );
     }
 
-    const [page, reminderConfirmation, labelIds] = await Promise.all([
-      getConversationMessages(id, { limit: MESSAGE_PAGE_SIZE }),
-      mobileReminderConfirmationFor({
-        customerPhone: conversation.customer_phone,
-        metadata: conversation.metadata,
-      }),
-      getConversationLabelIds(id),
-    ]);
+    const [page, reminderConfirmation, labelIds, mobileConversation] =
+      await Promise.all([
+        getConversationMessages(id, { limit: MESSAGE_PAGE_SIZE }),
+        mobileReminderConfirmationFor({
+          customerPhone: conversation.customer_phone,
+          metadata: conversation.metadata,
+        }),
+        getConversationLabelIds(id),
+        toClassifiedMobileConversation(conversation),
+      ]);
 
     return mobileData({
       conversation: {
-        ...toMobileConversation(conversation),
+        ...mobileConversation,
         reminderConfirmation,
         labelIds,
         // Detail-only: the actions sheet shows and edits these, the inbox list

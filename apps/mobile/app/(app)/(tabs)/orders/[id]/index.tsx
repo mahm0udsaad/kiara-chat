@@ -12,6 +12,13 @@ import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
+  executionIsStalled,
+  executionStateOf,
+  ROLE_LABEL,
+  stalledLabel,
+  type ExecutionStep,
+} from "@/lib/execution";
+import {
   durationLabel,
   formatPhone,
   formatters,
@@ -106,6 +113,45 @@ function QuickAction({
   );
 }
 
+/** Five dots and their labels — the whole chain at a glance. */
+function StepRail({ steps }: { steps: ExecutionStep[] }) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ flexDirection: "row-reverse", alignItems: "flex-start", gap: spacing.xs }}>
+      {steps.map((step) => (
+        <View key={step.id} style={{ flex: 1, alignItems: "center", gap: spacing.xs }}>
+          <View
+            style={{
+              width: 22,
+              height: 22,
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: radius.full,
+              borderWidth: step.done ? 0 : step.current ? 2 : 1,
+              borderColor: step.current ? colors.brand : colors.borderStrong,
+              backgroundColor: step.done ? colors.success : colors.surface,
+            }}
+          >
+            {step.done ? (
+              <IconSymbol name="checkmark" size={12} color={colors.onBrand} />
+            ) : null}
+          </View>
+          <Text
+            numberOfLines={2}
+            style={{
+              ...type.caption,
+              textAlign: "center",
+              color: step.done || step.current ? colors.text : colors.textTertiary,
+            }}
+          >
+            {step.label}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 /** Assignment card — shows who is booked, or that nobody is. */
 function AssignmentCard({
   role,
@@ -182,6 +228,8 @@ export default function OrderDetailScreen() {
   const arrival = new Date(order.arrival_at);
   const ready = Boolean(order.specialist_id && order.driver_id);
   const driverLate = isDriverLate(order.arrival_at, order.driver_id, order.driver_session);
+  const execution = executionStateOf(order);
+  const stalled = executionIsStalled(execution);
   const edited = wasEdited(order.created_at, order.updated_at);
   const canViewPrice = bootstrap.data?.capabilities.canViewOrderPrices === true;
 
@@ -362,7 +410,9 @@ export default function OrderDetailScreen() {
           ) : null}
         </View>
 
-        {/* Field progress mirrors the execution badges shown on the web card. */}
+        {/* Field progress. The two legacy session rows stay — they are the
+            coarse truth for orders raised before the in-app workflow — but the
+            live step machine leads, and both open the full timeline. */}
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title="حالة التنفيذ" />
           {driverLate ? (
@@ -382,6 +432,45 @@ export default function OrderDetailScreen() {
               </Text>
             </View>
           ) : null}
+          <Card style={{ gap: spacing.md }}>
+            <View
+              style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}
+            >
+              <Text style={{ flex: 1, ...type.headline, color: colors.text, ...rtlText }}>
+                {execution.label}
+              </Text>
+              <Badge
+                label={
+                  execution.tracked
+                    ? execution.pendingRole
+                      ? `بانتظار ${ROLE_LABEL[execution.pendingRole]}`
+                      : "مكتمل"
+                    : "لم يبدأ"
+                }
+                tone={stalled ? "danger" : execution.tone}
+                icon={execution.stage === "completed" ? "checkmark.circle" : "clock"}
+              />
+            </View>
+            {execution.pendingLabel ? (
+              <Text
+                selectable
+                style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}
+              >
+                {`الخطوة المطلوبة: ${execution.pendingLabel}` +
+                  (execution.stalledMinutes != null
+                    ? ` · بدون تحديث منذ ${stalledLabel(execution.stalledMinutes)}`
+                    : "")}
+              </Text>
+            ) : null}
+            <StepRail steps={execution.steps} />
+            <PrimaryButton
+              label="متابعة التنفيذ وإرسال تذكير"
+              icon="figure.walk"
+              variant="outline"
+              silent
+              onPress={() => router.push({ pathname: "/orders/[id]/status", params: { id } })}
+            />
+          </Card>
           <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
             <DetailRow
               icon="car"

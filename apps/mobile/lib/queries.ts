@@ -40,6 +40,8 @@ import type {
   InternalNote,
   OrderDetailResponse,
   OrderPatch,
+  OrderReminderContext,
+  OrderReminderDelivery,
   OrderSummary,
   OrdersResponse,
   OrdersCalendarResponse,
@@ -47,6 +49,7 @@ import type {
   RekazCheckResponse,
   RekazPullResponse,
   SavedReply,
+  SendOrderReminderInput,
   TripType,
 } from "@/types/api";
 import { publicApiRequest } from "@/lib/api";
@@ -73,6 +76,7 @@ export const queryKeys = {
     ["operations-report", from, to, startTime, endTime] as const,
   rekazCheck: ["rekaz-check"] as const,
   order: (id: string) => ["order", id] as const,
+  orderReminder: (id: string) => ["order-reminder", id] as const,
   dispatchOptions: ["dispatch-options"] as const,
   fieldSession: (token: string) => ["field-session", token] as const,
   fieldOrders: (view?: FieldOrderListView, dayStart?: string) =>
@@ -127,9 +131,18 @@ export function useConversations(
     getNextPageParam: (lastPage) =>
       lastPage.conversations.nextOffset ?? undefined,
     enabled: options.enabled ?? true,
-    // Keeps the previous page on screen while a new search resolves, so the
-    // list never blanks out between keystrokes.
-    placeholderData: (previous) => previous,
+    // Keep results while only the search text changes. Reusing one tab's rows
+    // after the employee switches views would briefly put ordinary customers
+    // under the specialist tab (or vice versa) while the new request resolves.
+    placeholderData: (previous, previousQuery) => {
+      const previousKey = previousQuery?.queryKey;
+      const sameViewAndFilters =
+        previousKey?.[1] === view &&
+        previousKey?.[3] === (filters.status ?? "") &&
+        previousKey?.[4] === (filters.section ?? "") &&
+        previousKey?.[5] === (filters.labelId ?? "");
+      return sameViewAndFilters ? previous : undefined;
+    },
     refetchInterval: 30_000,
   });
 }
@@ -677,6 +690,12 @@ export function useUpdateOrder(id: string) {
         }),
       }),
     onSuccess: async () => {
+      // The agenda reads `orders-calendar`, which is a different key from
+      // `orders` and is NOT covered by invalidating it — react-query matches
+      // key arrays element by element, so "orders" never prefixes
+      // "orders-calendar". Leaving it out is what let a card keep offering
+      // "طلب سائق" for a minute after a driver had been assigned.
+      void queryClient.invalidateQueries({ queryKey: ["orders-calendar"] });
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
       await queryClient.invalidateQueries({ queryKey: queryKeys.order(id) });
     },
@@ -711,7 +730,45 @@ export function useDispatchOrder(id: string) {
     // Same reason as above: the screen closes on send, and holding it open
     // for the refetches only makes a finished action look unfinished.
     onSuccess: () => {
+      // The agenda's own key — see useUpdateOrder. Without it the card the
+      // employee returns to still says "طلب سائق" after she has just sent one.
+      void queryClient.invalidateQueries({ queryKey: ["orders-calendar"] });
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.order(id) });
+    },
+  });
+}
+
+/**
+ * Where the visit stands plus the reminder text to open the composer with.
+ *
+ * Polled on the same cadence as the order itself: a field step confirmed on
+ * the driver's phone should change what this screen says one refresh later,
+ * not when the employee thinks to pull down.
+ */
+export function useOrderReminder(id: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.orderReminder(id),
+    queryFn: () =>
+      apiRequest<{ reminder: OrderReminderContext }>(`/orders/${id}/reminders`),
+    enabled: Boolean(id) && enabled,
+    refetchInterval: 20_000,
+  });
+}
+
+export function useSendOrderReminder(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: SendOrderReminderInput) =>
+      apiRequest<{ delivery: OrderReminderDelivery }>(`/orders/${id}/reminders`, {
+        method: "POST",
+        // A WhatsApp send sits inside this one, and the server — not the
+        // phone — decides when it has failed.
+        timeoutMs: SEND_TIMEOUT_MS,
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.orderReminder(id) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.order(id) });
     },
   });
