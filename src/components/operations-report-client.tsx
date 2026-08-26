@@ -28,14 +28,17 @@ const roleLabels: Record<OperationsRole, string> = {
   driver: "السائقون",
 };
 
-const dateFormatter = new Intl.DateTimeFormat("ar-SA", {
+const REPORT_LOCALE = "en-US-u-ca-gregory-nu-latn";
+const numberFormatter = new Intl.NumberFormat(REPORT_LOCALE);
+const decimalFormatter = new Intl.NumberFormat(REPORT_LOCALE, { maximumFractionDigits: 1 });
+const dateFormatter = new Intl.DateTimeFormat(REPORT_LOCALE, {
   timeZone: "Asia/Riyadh",
   weekday: "long",
   day: "numeric",
   month: "long",
   year: "numeric",
 });
-const timeFormatter = new Intl.DateTimeFormat("ar-SA", {
+const timeFormatter = new Intl.DateTimeFormat(REPORT_LOCALE, {
   timeZone: "Asia/Riyadh",
   hour: "numeric",
   minute: "2-digit",
@@ -109,7 +112,7 @@ function shiftDay(day: string, amount: number) {
 }
 
 function hoursLabel(minutes: number) {
-  return (minutes / 60).toLocaleString("ar-SA", { maximumFractionDigits: 1 });
+  return decimalFormatter.format(minutes / 60);
 }
 
 function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
@@ -159,7 +162,7 @@ function Timeline({ report, role, selectedDay }: { report: OperationsReport; rol
             </div>
             <p className="max-w-[220px] truncate text-base font-semibold">{person.name}</p>
             <p className="text-xs text-muted-foreground">
-              {person.assignedCount.toLocaleString("ar-SA")} مسند · {hoursLabel(person.scheduledMinutes)} س
+              {numberFormatter.format(person.assignedCount)} مسند · {hoursLabel(person.scheduledMinutes)} س
             </p>
           </div>
         ))}
@@ -288,24 +291,24 @@ export function OperationsReportClient({ initialReport }: { initialReport: Opera
       <Card>
         <CardHeader>
           <CardTitle>نطاق التقرير</CardTitle>
-          <CardDescription>التوقيت المعروض هو توقيت الرياض. الحد الأقصى ٣١ يوماً.</CardDescription>
+          <CardDescription>التوقيت المعروض هو توقيت الرياض. الحد الأقصى 31 يوماً.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_0.8fr_0.8fr_auto]">
           <label className="space-y-1 text-xs text-muted-foreground">
             من تاريخ
-            <Input aria-label="من تاريخ" dir="ltr" type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
+            <Input aria-label="من تاريخ" dir="ltr" lang="en-US" type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
           </label>
           <label className="space-y-1 text-xs text-muted-foreground">
             إلى تاريخ
-            <Input aria-label="إلى تاريخ" dir="ltr" type="date" value={to} onChange={(event) => setTo(event.target.value)} />
+            <Input aria-label="إلى تاريخ" dir="ltr" lang="en-US" type="date" value={to} onChange={(event) => setTo(event.target.value)} />
           </label>
           <label className="space-y-1 text-xs text-muted-foreground">
             من الساعة
-            <Input aria-label="من الساعة" dir="ltr" type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} />
+            <Input aria-label="من الساعة" dir="ltr" lang="en-US" type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} />
           </label>
           <label className="space-y-1 text-xs text-muted-foreground">
             إلى الساعة
-            <Input aria-label="إلى الساعة" dir="ltr" type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} />
+            <Input aria-label="إلى الساعة" dir="ltr" lang="en-US" type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} />
           </label>
           <Button className="self-end" onClick={() => void applyFilters()} disabled={loading || !from || !to}>
             <RefreshCw className={cn(loading && "animate-spin")} />
@@ -332,8 +335,8 @@ export function OperationsReportClient({ initialReport }: { initialReport: Opera
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <Metric icon={<Users className="size-4" />} label="الطلبات المسندة" value={totals.assigned.toLocaleString("ar-SA")} />
-        <Metric icon={<CheckCircle2 className="size-4" />} label="الطلبات المكتملة" value={totals.completed.toLocaleString("ar-SA")} />
+        <Metric icon={<Users className="size-4" />} label="الطلبات المسندة" value={numberFormatter.format(totals.assigned)} />
+        <Metric icon={<CheckCircle2 className="size-4" />} label="الطلبات المكتملة" value={numberFormatter.format(totals.completed)} />
         <Metric icon={<Clock3 className="size-4" />} label="الساعات المحجوزة" value={`${hoursLabel(totals.minutes)} س`} />
       </div>
 
@@ -361,10 +364,10 @@ export function OperationsReportClient({ initialReport }: { initialReport: Opera
                     {person.source === "rekaz" ? <Badge variant="secondary" className="mr-2">ركاز</Badge> : null}
                     {!person.isActive ? <Badge variant="outline" className="mr-2">موقوف</Badge> : null}
                   </TableCell>
-                  <TableCell className="text-center tabular-nums">{person.assignedCount.toLocaleString("ar-SA")}</TableCell>
-                  <TableCell className="text-center tabular-nums">{person.completedCount.toLocaleString("ar-SA")}</TableCell>
+                  <TableCell className="text-center tabular-nums">{numberFormatter.format(person.assignedCount)}</TableCell>
+                  <TableCell className="text-center tabular-nums">{numberFormatter.format(person.completedCount)}</TableCell>
                   <TableCell className="text-center tabular-nums">
-                    {person.assignedCount ? Math.round((person.completedCount / person.assignedCount) * 100).toLocaleString("ar-SA") : "٠"}٪
+                    {person.assignedCount ? numberFormatter.format(Math.round((person.completedCount / person.assignedCount) * 100)) : "0"}%
                   </TableCell>
                   <TableCell className="text-center tabular-nums">{hoursLabel(person.scheduledMinutes)} س</TableCell>
                 </TableRow>

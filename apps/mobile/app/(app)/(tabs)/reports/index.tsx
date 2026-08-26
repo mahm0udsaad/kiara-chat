@@ -1,15 +1,16 @@
 import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
-import { Redirect } from "expo-router";
+import { Link, Redirect } from "expo-router";
 import { useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { PrimaryButton } from "@/components/primary-button";
 import { ErrorState } from "@/components/screen-state";
-import { Card, Divider } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { addDays, dayKeyFromToday } from "@/lib/calendar";
+import { REPORT_LOCALE, reportDecimal, reportInteger } from "@/lib/operations-report";
 import { useBootstrap, useOperationsReport } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { OperationsPerson, OperationsRole } from "@/types/api";
@@ -20,13 +21,8 @@ const roleOptions: SegmentOption<OperationsRole>[] = [
 ];
 
 type PickerField = "from" | "to" | "startTime" | "endTime";
-const dateLabel = new Intl.DateTimeFormat("ar-SA", { day: "numeric", month: "short", year: "numeric" });
-const timeLabel = new Intl.DateTimeFormat("ar-SA", { hour: "numeric", minute: "2-digit" });
-const eventTime = new Intl.DateTimeFormat("ar-SA", {
-  timeZone: "Asia/Riyadh",
-  hour: "numeric",
-  minute: "2-digit",
-});
+const dateLabel = new Intl.DateTimeFormat(REPORT_LOCALE, { day: "numeric", month: "short", year: "numeric" });
+const timeLabel = new Intl.DateTimeFormat(REPORT_LOCALE, { hour: "numeric", minute: "2-digit" });
 
 function dayToDate(day: string) {
   return new Date(`${day}T12:00:00+03:00`);
@@ -86,7 +82,6 @@ export default function ReportsScreen() {
   const [draft, setDraft] = useState({ from: today, to: addDays(today, 6), startTime: "08:00", endTime: "22:00" });
   const [applied, setApplied] = useState(draft);
   const [picker, setPicker] = useState<PickerField | null>(null);
-  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
   const report = useOperationsReport(applied.from, applied.to, applied.startTime, applied.endTime, bootstrap.data?.session.role === "admin");
 
   if (bootstrap.isSuccess && bootstrap.data.session.role !== "admin") return <Redirect href="/inbox" />;
@@ -95,11 +90,6 @@ export default function ReportsScreen() {
   }
 
   const people = report.data?.people[role] ?? [];
-  const activePersonId = selectedPersonId && people.some((person) => person.id === selectedPersonId)
-    ? selectedPersonId
-    : people[0]?.id ?? null;
-  const selectedPerson = people.find((person) => person.id === activePersonId);
-  const events = (report.data?.events[role] ?? []).filter((event) => activePersonId && event.personIds.includes(activePersonId));
   const totals = people.reduce(
       (value, person) => ({
         assigned: value.assigned + person.assignedCount,
@@ -131,7 +121,7 @@ export default function ReportsScreen() {
       <Segmented
         options={roleOptions}
         value={role}
-        onChange={(value) => { setRole(value); setSelectedPersonId(null); }}
+        onChange={setRole}
         accessibilityLabel="اختيار فريق التقرير"
         testIDPrefix="reports-role"
       />
@@ -139,7 +129,7 @@ export default function ReportsScreen() {
       <Card>
         <View style={{ gap: spacing.xs }}>
           <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>نطاق التقرير</Text>
-          <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>التوقيت حسب مدينة الرياض، والحد الأقصى ٣١ يوماً.</Text>
+          <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>التوقيت حسب مدينة الرياض، والحد الأقصى 31 يوماً.</Text>
         </View>
         <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
           <FilterButton testID="reports-from-date" label="من تاريخ" value={dateLabel.format(dayToDate(draft.from))} onPress={() => setPicker("from")} />
@@ -161,6 +151,7 @@ export default function ReportsScreen() {
           testID="reports-date-time-picker"
           value={pickerValue(picker, values)}
           mode={picker === "from" || picker === "to" ? "date" : "time"}
+          locale="en_US"
           minuteInterval={15}
           onChange={onPickerChange}
         />
@@ -171,69 +162,85 @@ export default function ReportsScreen() {
       {report.data ? (
         <>
           <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
-            <Metric icon="person.2" label="مسند" value={totals.assigned.toLocaleString("ar-SA")} />
-            <Metric icon="checkmark.circle" label="مكتمل" value={totals.completed.toLocaleString("ar-SA")} />
-            <Metric icon="clock" label="ساعات" value={(totals.minutes / 60).toLocaleString("ar-SA", { maximumFractionDigits: 1 })} />
+            <Metric icon="person.2" label="مسند" value={reportInteger.format(totals.assigned)} />
+            <Metric icon="checkmark.circle" label="مكتمل" value={reportInteger.format(totals.completed)} />
+            <Metric icon="clock" label="ساعات" value={reportDecimal.format(totals.minutes / 60)} />
           </View>
 
           <Card padded={false}>
-            <View style={{ padding: spacing.lg, gap: spacing.xs }}>
+            <View
+              style={{
+                marginHorizontal: spacing.lg,
+                paddingVertical: spacing.lg,
+                gap: spacing.xs,
+              }}
+            >
               <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>الفريق</Text>
-              <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>اختاري اسماً لعرض حجوزاته وطلباته بالتوقيت.</Text>
+              <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>اضغطي على الاسم لعرض الأداء والحجوزات مجمّعة حسب زيارة العميلة.</Text>
             </View>
             {people.map((person: OperationsPerson, index) => {
-              const active = person.id === activePersonId;
               return (
                 <View key={person.id}>
-                  {index ? <Divider inset={spacing.lg} /> : null}
-                  <Pressable
-                    testID={`reports-person-${person.id}`}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                    onPress={() => setSelectedPersonId(person.id)}
-                    style={({ pressed }) => ({
-                      minHeight: hitSize.control,
-                      padding: spacing.lg,
-                      flexDirection: "row-reverse",
-                      alignItems: "center",
-                      gap: spacing.md,
-                      backgroundColor: active ? colors.brandSoft : colors.surface,
-                      opacity: pressed ? 0.65 : 1,
-                    })}
+                  {index ? (
+                    <View
+                      style={{
+                        height: StyleSheet.hairlineWidth,
+                        marginHorizontal: spacing.lg,
+                        backgroundColor: colors.border,
+                      }}
+                    />
+                  ) : null}
+                  <Link
+                    href={{
+                      pathname: "/reports/[role]/[personId]",
+                      params: { role, personId: person.id, name: person.name },
+                    }}
+                    asChild
                   >
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ ...type.bodyStrong, ...rtlText, color: colors.text }}>{person.name}</Text>
-                      <Text style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
-                        {person.assignedCount.toLocaleString("ar-SA")} مسند · {person.completedCount.toLocaleString("ar-SA")} مكتمل · {(person.scheduledMinutes / 60).toLocaleString("ar-SA", { maximumFractionDigits: 1 })} ساعة
-                      </Text>
-                    </View>
-                    <IconSymbol name={active ? "checkmark.circle" : "chevron.left"} size={20} color={active ? colors.brand : colors.textTertiary} />
-                  </Pressable>
+                    <Pressable
+                      testID={`reports-person-${person.id}`}
+                      accessibilityRole="button"
+                      accessibilityLabel={`تفاصيل أداء ${person.name}`}
+                      accessibilityHint="يفتح تقرير الموظف الأسبوعي والشهري"
+                      style={({ pressed }) => ({
+                        backgroundColor: colors.surface,
+                        opacity: pressed ? 0.65 : 1,
+                      })}
+                    >
+                      <View
+                        style={{
+                          minHeight: hitSize.control,
+                          marginHorizontal: spacing.lg,
+                          paddingVertical: spacing.md,
+                          justifyContent: "center",
+                        }}
+                      >
+                        <View style={{ marginLeft: hitSize.min + spacing.sm, gap: spacing.xs }}>
+                          <Text selectable style={{ ...type.bodyStrong, ...rtlText, color: colors.text }}>{person.name}</Text>
+                          <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
+                            {reportInteger.format(person.assignedCount)} مسند · {reportInteger.format(person.completedCount)} مكتمل · {reportDecimal.format(person.scheduledMinutes / 60)} ساعة
+                          </Text>
+                        </View>
+                        <View
+                          pointerEvents="none"
+                          style={{
+                            position: "absolute",
+                            left: spacing.none,
+                            top: spacing.none,
+                            bottom: spacing.none,
+                            width: hitSize.min,
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <IconSymbol name="chevron.left" size={20} color={colors.textTertiary} />
+                        </View>
+                      </View>
+                    </Pressable>
+                  </Link>
                 </View>
               );
             })}
-          </Card>
-
-          <Card>
-            <View style={{ gap: spacing.xs }}>
-              <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>حجوزات وطلبات {selectedPerson?.name ?? "الفريق"}</Text>
-              <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>مرتبة زمنياً خلال النطاق المختار.</Text>
-            </View>
-            {events.length ? events.map((event, index) => (
-              <View key={`${event.id}-${index}`} style={{ flexDirection: "row-reverse", gap: spacing.md }}>
-                <View style={{ alignItems: "center" }}>
-                  <View style={{ width: 12, height: 12, borderRadius: radius.full, backgroundColor: event.completed ? colors.success : colors.brand }} />
-                  {index < events.length - 1 ? <View style={{ width: 2, flex: 1, minHeight: spacing["3xl"], backgroundColor: colors.border }} /> : null}
-                </View>
-                <View style={{ flex: 1, paddingBottom: spacing.md }}>
-                  <Text style={{ ...type.caption, ...numeric, ...rtlText, color: colors.brand }}>{eventTime.format(new Date(event.arrivalAt))} · {event.durationMinutes.toLocaleString("ar-SA")} د</Text>
-                  <Text style={{ ...type.bodyStrong, ...rtlText, color: colors.text }}>{event.customerName || event.customerPhone}</Text>
-                  <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>{event.service} · {event.sourceLabel}{event.completed ? " · مكتمل" : ""}</Text>
-                </View>
-              </View>
-            )) : (
-              <Text style={{ ...type.body, ...rtlText, color: colors.textSecondary }}>لا توجد حجوزات أو طلبات لهذا الاسم ضمن الفلاتر.</Text>
-            )}
           </Card>
         </>
       ) : null}
