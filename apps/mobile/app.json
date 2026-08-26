@@ -2,7 +2,7 @@
   "expo": {
     "name": "كيارا للعمليات",
     "slug": "kiara-operations",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "kiara",
@@ -27,7 +27,8 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.kiara.operations",
-      "versionCode": 1
+      "versionCode": 1,
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "bundler": "metro",

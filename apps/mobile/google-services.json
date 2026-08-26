@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "29361688778",
+    "project_id": "kiara-operations",
+    "storage_bucket": "kiara-operations.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:29361688778:android:02c41057e3059300f22433",
+        "android_client_info": {
+          "package_name": "com.kiara.operations"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB901x0MJXMRrZMj3H16WdguZYPi3W-BfE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
