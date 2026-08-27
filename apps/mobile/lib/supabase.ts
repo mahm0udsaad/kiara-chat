@@ -49,15 +49,19 @@ const secureStorage = {
     if (!manifest.startsWith(CHUNK_MANIFEST_PREFIX)) return manifest;
     const count = Number.parseInt(manifest.slice(CHUNK_MANIFEST_PREFIX.length), 10);
     if (!Number.isInteger(count) || count <= 0) return null;
-    const parts: string[] = [];
-    for (let i = 0; i < count; i += 1) {
-      const shard = await SecureStore.getItemAsync(`${key}.${i}`);
-      // A missing shard means a torn write — report the whole value as absent so
-      // Supabase re-authenticates cleanly instead of loading half a session.
-      if (shard == null) return null;
-      parts.push(shard);
-    }
-    return parts.join("");
+    // The shards are independent keychain entries, so they are read together.
+    // This read sits inside supabase-js's session lock and runs on every API
+    // call, so N serial round trips here is latency every request pays and time
+    // the lock is held against everything else waiting on a session.
+    const shards = await Promise.all(
+      Array.from({ length: count }, (_, i) =>
+        SecureStore.getItemAsync(`${key}.${i}`),
+      ),
+    );
+    // A missing shard means a torn write — report the whole value as absent so
+    // Supabase re-authenticates cleanly instead of loading half a session.
+    if (shards.some((shard) => shard == null)) return null;
+    return shards.join("");
   },
   setItem: async (key: string, value: string) => {
     const count = Math.max(1, Math.ceil(value.length / CHUNK_SIZE));

@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from "@/lib/http-timeout";
 import type { WaPresence } from "@/lib/transport/types";
 
 /**
@@ -33,7 +34,7 @@ export async function broadcastTyping(payload: TypingBroadcast): Promise<void> {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return;
 
-  await fetch(`${url}/realtime/v1/api/broadcast`, {
+  await fetchWithTimeout(`${url}/realtime/v1/api/broadcast`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

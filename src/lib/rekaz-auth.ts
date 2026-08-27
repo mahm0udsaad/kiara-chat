@@ -33,6 +33,8 @@
  * `src/lib/rekaz.ts`.
  */
 
+import { fetchWithTimeout } from "@/lib/http-timeout";
+
 const PLATFORM = "https://platform.rekaz.io";
 const TOKEN_URL = `${PLATFORM}/connect/token`;
 const LOGIN_URL = `${PLATFORM}/api/account/login`;
@@ -187,7 +189,7 @@ async function tokenGrant(
 
   let response: Response;
   try {
-    response = await fetch(TOKEN_URL, {
+    response = await fetchWithTimeout(TOKEN_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -250,7 +252,7 @@ async function cookieLogin(
 ): Promise<RekazCredential> {
   let response: Response;
   try {
-    response = await fetch(LOGIN_URL, {
+    response = await fetchWithTimeout(LOGIN_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

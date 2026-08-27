@@ -1,5 +1,6 @@
 import "server-only";
 
+import { fetchWithTimeout } from "@/lib/http-timeout";
 import { routedToOf } from "@/lib/conversation-meta";
 import { conversationDangerMinutes } from "@/lib/mobile/conversations";
 import { normalizePhone } from "@/lib/phone";
@@ -235,7 +236,7 @@ async function sendPush(input: {
   // alert on a floor of shared phones can pass that on its own.
   for (let start = 0; start < messages.length; start += 100) {
     const chunk = messages.slice(start, start + 100);
-    const response = await fetch("https://exp.host/--/api/v2/push/send", {
+    const response = await fetchWithTimeout("https://exp.host/--/api/v2/push/send", {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -273,7 +274,7 @@ async function broadcastLiveRefresh(input: {
   if (!url || !key) return;
   const topic = `${INBOX_TOPIC_PREFIX}${input.teamMemberId}`;
   const endpoint = `${url}/realtime/v1/api/broadcast/${encodeURIComponent(topic)}/events/${INBOX_EVENT}?private=true`;
-  const response = await fetch(endpoint, {
+  const response = await fetchWithTimeout(endpoint, {
     method: "POST",
     headers: {
       apikey: key,

@@ -1,6 +1,7 @@
+import type { ErrorBoundaryProps } from "expo-router";
 import { Stack } from "expo-router/stack";
 import { StatusBar } from "expo-status-bar";
-import { I18nManager } from "react-native";
+import { I18nManager, Pressable, ScrollView, Text } from "react-native";
 import * as Updates from "expo-updates";
 
 import { AppProviders } from "@/providers/app-providers";
@@ -48,6 +49,73 @@ function RootNavigator() {
         <Stack.Screen name="session/[token]" options={{ title: "جلسات اليوم" }} />
       </Stack>
     </>
+  );
+}
+
+/**
+ * Last line of defence for a render that throws.
+ *
+ * Expo Router picks this up by name. Without it a thrown render error unmounts
+ * the tree and leaves a blank screen — from the outside indistinguishable from a
+ * frozen app, and with nothing on screen to report or retry from. During a test
+ * pass that difference is the whole story: a message and a button say which
+ * screen broke, a white rectangle says nothing.
+ *
+ * Deliberately provider-free. This stands in for the entire tree *including*
+ * `AppProviders`, so reaching for the theme or query client here would simply be
+ * the second crash. The few colours are inlined from `app.json` on purpose.
+ */
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  return (
+    <ScrollView
+      style={{ flex: 1, backgroundColor: "#F4F6FB" }}
+      contentContainerStyle={{
+        flexGrow: 1,
+        gap: 16,
+        padding: 24,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 20,
+          fontWeight: "600",
+          color: "#11181C",
+          textAlign: "center",
+          writingDirection: "rtl",
+        }}
+      >
+        حدث خطأ غير متوقع
+      </Text>
+      <Text
+        selectable
+        accessibilityRole="alert"
+        style={{
+          fontSize: 15,
+          color: "#5B6570",
+          textAlign: "center",
+          writingDirection: "rtl",
+        }}
+      >
+        {error.message || "تعذر عرض هذه الشاشة."}
+      </Text>
+      <Pressable
+        onPress={() => void retry()}
+        accessibilityRole="button"
+        style={{
+          marginTop: 8,
+          paddingVertical: 12,
+          paddingHorizontal: 28,
+          borderRadius: 12,
+          backgroundColor: "#2B3FB0",
+        }}
+      >
+        <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "600" }}>
+          إعادة المحاولة
+        </Text>
+      </Pressable>
+    </ScrollView>
   );
 }
 

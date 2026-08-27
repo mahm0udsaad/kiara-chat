@@ -164,11 +164,17 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   // cold start does not reopen the same order.
   useEffect(() => {
     let active = true;
-    void Notifications.getLastNotificationResponseAsync().then(async (response) => {
-      if (!active || !response) return;
-      openNotification(response);
-      await Notifications.clearLastNotificationResponseAsync();
-    });
+    void Notifications.getLastNotificationResponseAsync()
+      .then(async (response) => {
+        if (!active || !response) return;
+        openNotification(response);
+        await Notifications.clearLastNotificationResponseAsync();
+      })
+      // A cold start must not be brought down by the notification that opened
+      // it: failing to read or clear the response is worth a log, never a crash.
+      .catch((error: unknown) => {
+        console.warn("[notifications] cold-start response failed", error);
+      });
     return () => {
       active = false;
     };
