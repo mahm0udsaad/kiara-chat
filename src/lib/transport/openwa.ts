@@ -11,19 +11,65 @@ export function isOpenWaConfigured(): boolean {
   return Boolean(BASE && TOKEN);
 }
 
-async function post(path: string, body: unknown): Promise<Response> {
+/**
+ * Every call to the engine is bounded.
+ *
+ * The engine runs on a VPS that can be reachable at the TCP level while far too
+ * busy to answer — the worst shape of failure, because a bare `fetch` then waits
+ * far longer than any caller intended. That wait is not confined to WhatsApp
+ * features: dispatching an order awaits a notification send, so an engine that
+ * is merely unwell would hang the order screen and burn the whole function
+ * budget before returning nothing useful.
+ *
+ * A fast, explicit failure lets each caller decide what to do without one — and
+ * every caller here already has that branch.
+ */
+const ENGINE_TIMEOUT_MS = 8_000;
+
+/** A send crosses to WhatsApp itself, so it gets more room than a status poll. */
+const ENGINE_SEND_TIMEOUT_MS = 15_000;
+
+async function engineFetch(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal, cache: "no-store" });
+  } catch (cause) {
+    throw new Error(
+      controller.signal.aborted
+        ? `OpenWA engine did not respond within ${timeoutMs}ms`
+        : "OpenWA engine unreachable",
+      { cause },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function post(
+  path: string,
+  body: unknown,
+  timeoutMs = ENGINE_TIMEOUT_MS,
+): Promise<Response> {
   if (!BASE || !TOKEN) {
     throw new Error("OpenWA not configured: set OPENWA_URL and OPENWA_SEND_TOKEN");
   }
-  return fetch(`${BASE.replace(/\/+$/, "")}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${TOKEN}`,
+  return engineFetch(
+    `${BASE.replace(/\/+$/, "")}${path}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${TOKEN}`,
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
+    timeoutMs,
+  );
 }
 
 async function parse(res: Response): Promise<SendResult> {
@@ -37,10 +83,14 @@ async function parse(res: Response): Promise<SendResult> {
 
 export const openWaTransport: MessageTransport = {
   async sendText(toE164, body) {
-    return parse(await post("/messages", { to: toE164, body }));
+    return parse(
+      await post("/messages", { to: toE164, body }, ENGINE_SEND_TIMEOUT_MS),
+    );
   },
   async sendMedia(toE164, media) {
-    return parse(await post("/messages", { to: toE164, media }));
+    return parse(
+      await post("/messages", { to: toE164, media }, ENGINE_SEND_TIMEOUT_MS),
+    );
   },
 };
 
@@ -71,8 +121,8 @@ export async function getEngineState(): Promise<EngineState> {
   const headers = { Authorization: `Bearer ${TOKEN}` };
   try {
     const [statusRes, qrRes] = await Promise.all([
-      fetch(`${base}/status`, { headers, cache: "no-store" }),
-      fetch(`${base}/qr`, { headers, cache: "no-store" }),
+      engineFetch(`${base}/status`, { headers }, ENGINE_TIMEOUT_MS),
+      engineFetch(`${base}/qr`, { headers }, ENGINE_TIMEOUT_MS),
     ]);
     const status = statusRes.ok ? await statusRes.json() : {};
     const qr = qrRes.ok ? await qrRes.json() : {};

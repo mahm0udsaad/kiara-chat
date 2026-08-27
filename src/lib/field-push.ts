@@ -1,5 +1,6 @@
 import "server-only";
 
+import { fetchWithTimeout } from "@/lib/http-timeout";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import {
@@ -75,7 +76,7 @@ async function receiptsFor(
   const receipts = new Map<string, PushReceipt>();
   for (let attempt = 0; attempt < 3 && remaining.size; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 2_000));
-    const response = await fetch("https://exp.host/--/api/v2/push/getReceipts", {
+    const response = await fetchWithTimeout("https://exp.host/--/api/v2/push/getReceipts", {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({ ids: [...remaining] }),
@@ -108,7 +109,7 @@ async function sendExpoMessages(
   const targets: TicketTarget[] = [];
   for (let index = 0; index < messages.length; index += 100) {
     const chunk = messages.slice(index, index + 100);
-    const response = await fetch("https://exp.host/--/api/v2/push/send", {
+    const response = await fetchWithTimeout("https://exp.host/--/api/v2/push/send", {
       method: "POST",
       headers: {
         Accept: "application/json",

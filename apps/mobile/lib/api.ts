@@ -44,6 +44,26 @@ export const AI_TIMEOUT_MS = 45_000;
  */
 export const SEND_TIMEOUT_MS = 65_000;
 
+/**
+ * Rejects as soon as `signal` aborts, giving an otherwise untimed await the
+ * caller's deadline. Used for work that must finish before the request starts
+ * but has no cancellation of its own.
+ */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      if (signal.aborted) {
+        reject(new Error("aborted"));
+        return;
+      }
+      signal.addEventListener("abort", () => reject(new Error("aborted")), {
+        once: true,
+      });
+    }),
+  ]);
+}
+
 export type ApiRequestOptions = RequestInit & {
   /** Override the default deadline for a route known to take longer. */
   timeoutMs?: number;
@@ -57,14 +77,35 @@ export async function apiRequest<T>(
     throw new ApiError("أضيفي EXPO_PUBLIC_API_URL في ملف .env", 0, "NO_API_URL");
   }
 
-  const { data, error } = await supabase.auth.getSession();
-  if (error || !data.session?.access_token) {
-    throw new ApiError("انتهت الجلسة. سجّلي الدخول مرة أخرى.", 401, "NO_SESSION");
-  }
-
   const { timeoutMs = TIMEOUT_MS, ...requestInit } = init;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  /**
+   * The deadline covers the session read, not just the fetch.
+   *
+   * This await used to sit above the timer, outside the deadline it claims to
+   * have. That is not a theoretical gap: supabase-js serialises session access
+   * behind a lock, and the keychain-backed storage reads a sharded value one
+   * await at a time, so a token refresh stalling on salon wifi holds the lock
+   * and every later read queues behind it with no upper bound. A "20 second"
+   * request then hangs forever — the spinner the timeout exists to prevent.
+   */
+  let accessToken: string;
+  try {
+    const { data, error } = await untilAborted(
+      supabase.auth.getSession(),
+      controller.signal,
+    );
+    if (error || !data.session?.access_token) {
+      throw new ApiError("انتهت الجلسة. سجّلي الدخول مرة أخرى.", 401, "NO_SESSION");
+    }
+    accessToken = data.session.access_token;
+  } catch (cause) {
+    clearTimeout(timer);
+    if (cause instanceof ApiError) throw cause;
+    throw new ApiError("الخادم تأخر في الرد. حاولي مرة أخرى.", 0, "TIMEOUT");
+  }
 
   let response: Response;
   try {
@@ -75,7 +116,7 @@ export async function apiRequest<T>(
         Accept: "application/json",
         ...(requestInit.body ? { "Content-Type": "application/json" } : {}),
         ...requestInit.headers,
-        Authorization: `Bearer ${data.session.access_token}`,
+        Authorization: `Bearer ${accessToken}`,
       },
     });
   } catch {

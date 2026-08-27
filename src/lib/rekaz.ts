@@ -13,6 +13,7 @@
  * downstream still consumes `RekazReservation` and did not change.
  */
 import type { RekazReservation } from "@/lib/reservations";
+import { fetchWithTimeout } from "@/lib/http-timeout";
 import {
   invalidateRekazAuth,
   RekazAuthError,
@@ -167,7 +168,7 @@ async function fetchPage(
 
   const read = async () => {
     const auth = await rekazAuthHeaders();
-    return fetch(url, {
+    return fetchWithTimeout(url, {
       headers: {
         "X-Requested-With": "XMLHttpRequest",
         __tenant: REKAZ_TENANT_ID,
