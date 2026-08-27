@@ -93,7 +93,17 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   // employee to restart or sign in again.
   useEffect(() => {
     if (!register) return;
-    const subscription = Notifications.addPushTokenListener(() => {
+    let lastSeen: string | null = null;
+    const subscription = Notifications.addPushTokenListener((token) => {
+      // Acquiring a token can itself emit this event, so re-registering on every
+      // emission feeds itself: register → getExpoPushTokenAsync → event →
+      // register → … Each turn of that loop is another upload, which is how a
+      // single rotation became a burst of identical POSTs. Only a token that
+      // genuinely differs from the last one seen is worth acting on.
+      const next =
+        typeof token.data === "string" ? token.data : JSON.stringify(token.data);
+      if (next === lastSeen) return;
+      lastSeen = next;
       void register().then(setRegistration).catch((error: unknown) => {
         setRegistration({
           state: "failed",

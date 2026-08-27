@@ -4,6 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
+/** Long enough for a slow sign-in, short enough to report a dead service. */
+const SIGN_IN_TIMEOUT_MS = 20_000;
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -16,8 +19,27 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
+
+    let result: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>;
+    try {
+      result = await Promise.race([
+        supabase.auth.signInWithPassword({ email, password }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("timeout")), SIGN_IN_TIMEOUT_MS),
+        ),
+      ]);
+    } catch {
+      // Auth can accept the connection and then never answer — the project
+      // wedges and every request that needs the database simply stops coming
+      // back. Without a deadline the button just stayed on "جارٍ الدخول…"
+      // forever, which is indistinguishable from a wrong password, so nobody
+      // could tell a bad credential from a service that was down.
+      setError("تعذر الوصول إلى الخادم. حاولي المحاولة بعد قليل.");
+      setLoading(false);
+      return;
+    }
+
+    if (result.error) {
       setError("بيانات الدخول غير صحيحة.");
       setLoading(false);
       return;
