@@ -76,6 +76,77 @@ export const notificationStateLabel: Record<
 
 type Identity = { expoToken: string; deviceId: string };
 
+/**
+ * What was last accepted by the server, so an unchanged token is not re-sent.
+ *
+ * Registration is triggered from several places — mount, the account screen's
+ * retry, and the OS rotating the native token — and none of them knew whether
+ * the value had actually changed. Combined with the fact that acquiring a token
+ * can itself emit a token event, that turned one rotation into a burst of
+ * identical uploads.
+ */
+const SENT_SUFFIX = ".sent";
+
+/**
+ * Collapses concurrent registrations of the same kind into one call.
+ *
+ * The listener path and the mount path can fire in the same tick, and each was
+ * an independent round trip uploading the same token.
+ */
+const inFlight = new Map<string, Promise<NotificationRegistration>>();
+
+function once(
+  key: string,
+  run: () => Promise<NotificationRegistration>,
+): Promise<NotificationRegistration> {
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+  const started = run().finally(() => inFlight.delete(key));
+  inFlight.set(key, started);
+  return started;
+}
+
+/**
+ * Shared body of both registrations: resolve the device's identity, skip the
+ * upload when the server already has exactly this token, otherwise send it and
+ * remember what was accepted.
+ */
+async function registerPush(
+  keys: { device: string; token: string },
+  path: string,
+  extra: Record<string, string> = {},
+): Promise<NotificationRegistration> {
+  return once(path, async () => {
+    const identity = await notificationIdentity(true, keys);
+    if (!isIdentity(identity)) return identity;
+
+    const fingerprint = `${identity.expoToken}|${identity.deviceId}`;
+    const sentKey = `${keys.token}${SENT_SUFFIX}`;
+    // Only a previously *accepted* upload short-circuits, so the account
+    // screen's retry after a failure still reaches the server.
+    if ((await SecureStore.getItemAsync(sentKey)) === fingerprint) {
+      return { state: "registered" };
+    }
+
+    try {
+      await apiRequest<{ registered: true }>(path, {
+        method: "POST",
+        body: JSON.stringify({ ...identity, ...extra }),
+      });
+      await SecureStore.setItemAsync(sentKey, fingerprint);
+      return { state: "registered" };
+    } catch (error) {
+      // A rejected upload must not be remembered as sent, or a genuinely
+      // unregistered device would never try again.
+      await SecureStore.deleteItemAsync(sentKey).catch(() => {});
+      return {
+        state: "failed",
+        message: error instanceof Error ? error.message : "تعذّر تفعيل الإشعارات",
+      };
+    }
+  });
+}
+
 async function notificationIdentity(
   requestPermission: boolean,
   keys: { device: string; token: string },
@@ -106,23 +177,10 @@ function isIdentity(
 }
 
 export async function registerFieldNotifications(): Promise<NotificationRegistration> {
-  const identity = await notificationIdentity(true, {
-    device: FIELD_DEVICE_ID_KEY,
-    token: FIELD_REGISTERED_TOKEN_KEY,
-  });
-  if (!isIdentity(identity)) return identity;
-  try {
-    await apiRequest<{ registered: true }>("/field/push-token", {
-      method: "POST",
-      body: JSON.stringify(identity),
-    });
-    return { state: "registered" };
-  } catch (error) {
-    return {
-      state: "failed",
-      message: error instanceof Error ? error.message : "تعذّر تفعيل الإشعارات",
-    };
-  }
+  return registerPush(
+    { device: FIELD_DEVICE_ID_KEY, token: FIELD_REGISTERED_TOKEN_KEY },
+    "/field/push-token",
+  );
 }
 
 export async function unregisterFieldNotifications(): Promise<void> {
@@ -134,6 +192,7 @@ export async function unregisterFieldNotifications(): Promise<void> {
     body: JSON.stringify({ deviceId: storedDeviceId }),
   });
   await SecureStore.deleteItemAsync(FIELD_REGISTERED_TOKEN_KEY);
+  await SecureStore.deleteItemAsync(`${FIELD_REGISTERED_TOKEN_KEY}${SENT_SUFFIX}`);
 }
 
 export async function fieldNotificationDeviceId(): Promise<string | null> {
@@ -141,24 +200,11 @@ export async function fieldNotificationDeviceId(): Promise<string | null> {
 }
 
 export async function registerInboxNotifications(): Promise<NotificationRegistration> {
-  const identity = await notificationIdentity(true, {
-    device: INBOX_DEVICE_ID_KEY,
-    token: INBOX_REGISTERED_TOKEN_KEY,
-  });
-  if (!isIdentity(identity)) return identity;
-  const platform = process.env.EXPO_OS === "ios" ? "ios" : "android";
-  try {
-    await apiRequest<{ registered: true }>("/push-token", {
-      method: "POST",
-      body: JSON.stringify({ ...identity, platform }),
-    });
-    return { state: "registered" };
-  } catch (error) {
-    return {
-      state: "failed",
-      message: error instanceof Error ? error.message : "تعذّر تفعيل الإشعارات",
-    };
-  }
+  return registerPush(
+    { device: INBOX_DEVICE_ID_KEY, token: INBOX_REGISTERED_TOKEN_KEY },
+    "/push-token",
+    { platform: process.env.EXPO_OS === "ios" ? "ios" : "android" },
+  );
 }
 
 export async function unregisterInboxNotifications(): Promise<void> {
@@ -170,4 +216,5 @@ export async function unregisterInboxNotifications(): Promise<void> {
     body: JSON.stringify({ deviceId: storedDeviceId }),
   });
   await SecureStore.deleteItemAsync(INBOX_REGISTERED_TOKEN_KEY);
+  await SecureStore.deleteItemAsync(`${INBOX_REGISTERED_TOKEN_KEY}${SENT_SUFFIX}`);
 }
