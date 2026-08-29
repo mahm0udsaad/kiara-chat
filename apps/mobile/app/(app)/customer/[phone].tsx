@@ -1,5 +1,5 @@
 import { Link, Stack, useLocalSearchParams } from "expo-router";
-import { useMemo } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 
 import { CustomerAnalysisView } from "@/components/customer-analysis-view";
@@ -177,7 +177,7 @@ function ServiceRow({
 }
 
 /** One Rekaz order: the date, everything booked on it, and what it came to. */
-function VisitCard({
+const VisitCard = memo(function VisitCard({
   visit,
   upcomingFrom,
 }: {
@@ -295,10 +295,10 @@ function VisitCard({
       </View>
     </View>
   );
-}
+});
 
 /** A driver dispatch or an internal note, kept because both explain a visit. */
-function OtherRow({ event }: { event: TimelineEvent }) {
+const OtherRow = memo(function OtherRow({ event }: { event: TimelineEvent }) {
   const { colors } = useTheme();
   if (event.kind !== "driver" && event.kind !== "note") return null;
 
@@ -349,7 +349,9 @@ function OtherRow({ event }: { event: TimelineEvent }) {
       </View>
     </View>
   );
-}
+});
+
+const keyOfEntry = (entry: { key: string }) => entry.key;
 
 export default function CustomerProfileScreen() {
   const { colors } = useTheme();
@@ -364,6 +366,7 @@ export default function CustomerProfileScreen() {
   const customer = timeline.data?.customer;
   const revenue = timeline.data?.revenue;
   const insights = timeline.data?.insights ?? EMPTY_INSIGHTS;
+  const nextVisitAt = insights.nextVisitAt;
   const displayName = customer?.name || name || formatPhone(phone);
 
   /**
@@ -371,6 +374,18 @@ export default function CustomerProfileScreen() {
    * Messages are dropped — the thread is one tap away and this screen is the
    * record of what she bought.
    */
+  // Hoisted so the list keeps one renderItem identity; the upcoming-visit
+  // marker is the only screen state a row reads.
+  const renderEntry = useCallback(
+    ({ item }: { item: ProfileEntry }) =>
+      item.kind === "visit" ? (
+        <VisitCard visit={item} upcomingFrom={nextVisitAt} />
+      ) : (
+        <OtherRow event={item.event} />
+      ),
+    [nextVisitAt],
+  );
+
   const entries = useMemo<ProfileEntry[]>(() => {
     const visits = new Map<string, Extract<ProfileEntry, { kind: "visit" }>>();
     const others: ProfileEntry[] = [];
@@ -412,21 +427,20 @@ export default function CustomerProfileScreen() {
       <Stack.Screen options={{ title: displayName }} />
 
       <FlatList
+        contentInsetAdjustmentBehavior="automatic"
         data={entries}
-        keyExtractor={(entry) => entry.key}
+        keyExtractor={keyOfEntry}
         contentContainerStyle={{
           padding: spacing.lg,
           paddingBottom: spacing["3xl"],
           gap: spacing.sm,
           flexGrow: 1,
         }}
-        renderItem={({ item }) =>
-          item.kind === "visit" ? (
-            <VisitCard visit={item} upcomingFrom={insights.nextVisitAt} />
-          ) : (
-            <OtherRow event={item.event} />
-          )
-        }
+        renderItem={renderEntry}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews={process.env.EXPO_OS === "android"}
         ListHeaderComponent={
           <View style={{ gap: spacing.lg, paddingBottom: spacing.md }}>
             {/* Identity */}

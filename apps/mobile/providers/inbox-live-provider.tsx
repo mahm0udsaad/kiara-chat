@@ -1,5 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { createContext, type PropsWithChildren, use, useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  type PropsWithChildren,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 
 import { apiRequest } from "@/lib/api";
 import { queryKeys, useBootstrap } from "@/lib/queries";
@@ -21,8 +30,21 @@ type InboxPayload = {
   conversationId?: string;
 };
 
+/**
+ * A subscription, deliberately, rather than a value.
+ *
+ * Typing is the highest-frequency signal in the app — every keystroke in any of
+ * the salon's conversations broadcasts one. Exposing it as a context *value*
+ * meant every one of those re-rendered every consumer, and the inbox consumer
+ * is a FlatList: one customer typing rebuilt every visible row on screen.
+ *
+ * So the context never changes identity. A row subscribes to the single
+ * conversation it renders, through `useIsTyping`, and only that row re-renders
+ * when that conversation starts or stops typing.
+ */
 type InboxLiveContextValue = {
-  isTyping: (conversationId: string) => boolean;
+  subscribe: (conversationId: string, listener: () => void) => () => void;
+  getSnapshot: (conversationId: string) => boolean;
 };
 
 const InboxLiveContext = createContext<InboxLiveContextValue | null>(null);
@@ -38,20 +60,62 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
   const role = bootstrap.data?.session.role;
   const teamMemberId = bootstrap.data?.session.teamMemberId ?? null;
   const operationsStaff = role === "admin" || role === "agent";
-  const [typing, setTyping] = useState<Record<string, number>>({});
+  // Typing lives in a ref, not state: a re-render of this provider would give
+  // every consumer below it new work, and the only thing that actually needs to
+  // change on screen is the one row that started or stopped typing.
+  const typing = useRef(new Set<string>());
+  const listeners = useRef(new Map<string, Set<() => void>>());
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
-  const clearTyping = useCallback((conversationId: string) => {
-    const timer = timers.current.get(conversationId);
-    if (timer) clearTimeout(timer);
-    timers.current.delete(conversationId);
-    setTyping((current) => {
-      if (!(conversationId in current)) return current;
-      const next = { ...current };
-      delete next[conversationId];
-      return next;
-    });
+  const notify = useCallback((conversationId: string) => {
+    const subscribers = listeners.current.get(conversationId);
+    if (!subscribers) return;
+    for (const listener of subscribers) listener();
   }, []);
+
+  const markTyping = useCallback(
+    (conversationId: string) => {
+      if (!typing.current.has(conversationId)) {
+        typing.current.add(conversationId);
+        notify(conversationId);
+      }
+    },
+    [notify],
+  );
+
+  const clearTyping = useCallback(
+    (conversationId: string) => {
+      const timer = timers.current.get(conversationId);
+      if (timer) clearTimeout(timer);
+      timers.current.delete(conversationId);
+      if (typing.current.delete(conversationId)) notify(conversationId);
+    },
+    [notify],
+  );
+
+  const subscribe = useCallback((conversationId: string, listener: () => void) => {
+    const existing = listeners.current.get(conversationId);
+    if (existing) existing.add(listener);
+    else listeners.current.set(conversationId, new Set([listener]));
+    return () => {
+      const subscribers = listeners.current.get(conversationId);
+      if (!subscribers) return;
+      subscribers.delete(listener);
+      if (!subscribers.size) listeners.current.delete(conversationId);
+    };
+  }, []);
+
+  const getSnapshot = useCallback(
+    (conversationId: string) => typing.current.has(conversationId),
+    [],
+  );
+
+  // Stable for the life of the provider — every callback above is itself stable,
+  // so no consumer ever re-renders because of this value.
+  const contextValue = useMemo(
+    () => ({ subscribe, getSnapshot }),
+    [subscribe, getSnapshot],
+  );
 
   useEffect(() => {
     if (!operationsStaff) return;
@@ -72,10 +136,7 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
           clearTyping(event.conversationId);
           return;
         }
-        setTyping((current) => ({
-          ...current,
-          [event.conversationId!]: Date.now(),
-        }));
+        markTyping(event.conversationId);
         const existing = timers.current.get(event.conversationId);
         if (existing) clearTimeout(existing);
         timers.current.set(
@@ -90,7 +151,7 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
       pendingTimers.clear();
       void supabase.removeChannel(presence);
     };
-  }, [clearTyping, operationsStaff]);
+  }, [clearTyping, markTyping, operationsStaff]);
 
   useEffect(() => {
     if (!operationsStaff || !teamMemberId || !session?.access_token) return;
@@ -124,20 +185,28 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
     };
   }, [clearTyping, operationsStaff, queryClient, session?.access_token, teamMemberId]);
 
-  const isTyping = useCallback(
-    (conversationId: string) => Boolean(typing[conversationId]),
-    [typing],
-  );
-
   return (
-    <InboxLiveContext.Provider value={{ isTyping }}>
+    <InboxLiveContext.Provider value={contextValue}>
       {children}
     </InboxLiveContext.Provider>
   );
 }
 
-export function useInboxLive() {
+/**
+ * Whether one conversation is currently typing.
+ *
+ * Call it in the row that renders that conversation, not in the list above it:
+ * the whole point is that a keystroke wakes one row rather than the screen.
+ */
+export function useIsTyping(conversationId: string): boolean {
   const value = use(InboxLiveContext);
-  if (!value) throw new Error("useInboxLive must be used inside InboxLiveProvider");
-  return value;
+  if (!value) throw new Error("useIsTyping must be used inside InboxLiveProvider");
+  const { subscribe, getSnapshot } = value;
+  return useSyncExternalStore(
+    useCallback(
+      (onChange: () => void) => subscribe(conversationId, onChange),
+      [subscribe, conversationId],
+    ),
+    useCallback(() => getSnapshot(conversationId), [getSnapshot, conversationId]),
+  );
 }

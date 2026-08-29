@@ -1,5 +1,5 @@
 import { Link, Stack, useRouter } from "expo-router";
-import { useCallback, useDeferredValue, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -62,6 +62,8 @@ const filters: SegmentOption<VisitFilter>[] = [
   { value: "driver_requested", label: "تم طلب سائق" },
   { value: "exception", label: "استثناءات" },
 ];
+
+const keyOfVisit = (visit: CalendarVisit) => visit.key;
 
 const weekdayFormatter = new Intl.DateTimeFormat("ar-EG", { weekday: "short" });
 const dayNumberFormatter = new Intl.DateTimeFormat("ar-EG", { day: "numeric" });
@@ -310,7 +312,12 @@ function RekazBanner({ selectedDayVisible }: { selectedDayVisible: boolean }) {
   );
 }
 
-function VisitCard({
+/** Module-level: an inline arrow here is a brand-new component type per render. */
+function VisitSeparator() {
+  return <View style={{ height: spacing.md }} />;
+}
+
+const VisitCard = memo(function VisitCard({
   visit,
   showDay = false,
 }: {
@@ -640,7 +647,7 @@ function VisitCard({
       </Pressable>
     </Link>
   );
-}
+});
 
 export default function OrdersScreen() {
   const { colors } = useTheme();
@@ -735,6 +742,15 @@ export default function OrdersScreen() {
   const showSkeleton = calendar.isLoading && visits.length === 0;
   const selectedDate = dayChipDate(selectedDay);
 
+  // Hoisted so the memo on VisitCard holds; `searching` is the only thing the
+  // row reads from this screen, so it is the only dependency.
+  const renderVisit = useCallback(
+    ({ item }: { item: CalendarVisit }) => (
+      <VisitCard visit={item} showDay={searching} />
+    ),
+    [searching],
+  );
+
   return (
     <>
       <Stack.Screen
@@ -788,15 +804,20 @@ export default function OrdersScreen() {
         </View>
 
         <FlatList
+          contentInsetAdjustmentBehavior="automatic"
           data={listVisits}
-          keyExtractor={(visit) => visit.key}
-          renderItem={({ item }) => <VisitCard visit={item} showDay={searching} />}
+          keyExtractor={keyOfVisit}
+          renderItem={renderVisit}
+          initialNumToRender={6}
+          maxToRenderPerBatch={6}
+          windowSize={7}
+          removeClippedSubviews={process.env.EXPO_OS === "android"}
           contentContainerStyle={{
             paddingHorizontal: spacing.lg,
             paddingBottom: spacing["3xl"],
             flexGrow: 1,
           }}
-          ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+          ItemSeparatorComponent={VisitSeparator}
           ListHeaderComponent={
             <View style={{ gap: spacing.md, paddingBottom: spacing.md }}>
               <RekazBanner selectedDayVisible />

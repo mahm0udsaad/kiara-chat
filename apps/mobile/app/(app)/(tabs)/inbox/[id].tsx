@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -41,7 +41,7 @@ import {
   useUpdateConversationActions,
 } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
-import { useInboxLive } from "@/providers/inbox-live-provider";
+import { useIsTyping } from "@/providers/inbox-live-provider";
 import type { ConversationMessage } from "@/types/api";
 
 /** A message, or the date chip that introduces the messages below it. */
@@ -94,7 +94,7 @@ function DaySeparator({ label }: { label: string }) {
   );
 }
 
-function MessageBubble({ message }: { message: ConversationMessage }) {
+const MessageBubble = memo(function MessageBubble({ message }: { message: ConversationMessage }) {
   const { colors } = useTheme();
 
   // System notes are the app talking about the conversation, not a party in it,
@@ -197,11 +197,25 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
       </Text>
     </View>
   );
+});
+
+const keyOfChatItem = (item: ChatItem) =>
+  item.kind === "day" ? item.id : item.message.id;
+
+/**
+ * Module scope on purpose: neither branch reads anything from the screen, so
+ * hoisting it out keeps one stable function identity for the list's whole life.
+ */
+function renderChatItem({ item }: { item: ChatItem }) {
+  return item.kind === "day" ? (
+    <DaySeparator label={item.label} />
+  ) : (
+    <MessageBubble message={item.message} />
+  );
 }
 
 export default function ConversationScreen() {
   const { colors } = useTheme();
-  const { isTyping } = useInboxLive();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string | string[] }>();
@@ -209,6 +223,9 @@ export default function ConversationScreen() {
     () => (Array.isArray(params.id) ? (params.id[0] ?? "") : (params.id ?? "")),
     [params.id],
   );
+
+  // One conversation, one subscription — the thread only cares about its own.
+  const typing = useIsTyping(id);
 
   const conversation = useConversation(id);
   const bootstrap = useBootstrap();
@@ -504,15 +521,16 @@ export default function ConversationScreen() {
       <FlatList
         // Inverted so new messages land at the bottom without manual scrolling.
         inverted
+        contentInsetAdjustmentBehavior="automatic"
         data={chatItems}
-        keyExtractor={(item) => (item.kind === "day" ? item.id : item.message.id)}
-        renderItem={({ item }) =>
-          item.kind === "day" ? (
-            <DaySeparator label={item.label} />
-          ) : (
-            <MessageBubble message={item.message} />
-          )
-        }
+        keyExtractor={keyOfChatItem}
+        renderItem={renderChatItem}
+        // A long thread is the one list here that really can reach hundreds of
+        // rows, so it gets the tightest window of any list in the app.
+        initialNumToRender={12}
+        maxToRenderPerBatch={10}
+        windowSize={9}
+        removeClippedSubviews={process.env.EXPO_OS === "android"}
         contentContainerStyle={{
           padding: spacing.lg,
           gap: spacing.sm + 2,
@@ -522,7 +540,7 @@ export default function ConversationScreen() {
         keyboardDismissMode="interactive"
       />
 
-      {isTyping(id) ? (
+      {typing ? (
         <View
           style={{
             alignSelf: "flex-end",

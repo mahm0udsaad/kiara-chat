@@ -1,10 +1,9 @@
 import { Link, Stack } from "expo-router";
-import { useDeferredValue, useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
 import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
 import Animated, {
   FadeIn,
   FadeOut,
-  LinearTransition,
 } from "react-native-reanimated";
 
 import {
@@ -23,7 +22,7 @@ import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { bookingStageLabel, csStatusLabel, relativeTimeLabel } from "@/lib/format";
 import { EMPTY_CONVERSATION_FILTERS, useBootstrap, useConversations } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
-import { useInboxLive } from "@/providers/inbox-live-provider";
+import { useIsTyping } from "@/providers/inbox-live-provider";
 import type {
   ConversationFilters,
   ConversationSummary,
@@ -38,16 +37,19 @@ const views: SegmentOption<InboxView>[] = [
   { value: "danger", label: "خطر" },
 ];
 
-function ConversationRow({
+const keyOfConversation = (item: ConversationSummary) => item.id;
+
+const ConversationRow = memo(function ConversationRow({
   conversation,
-  typing,
   specialist,
 }: {
   conversation: ConversationSummary;
-  typing: boolean;
   specialist: boolean;
 }) {
   const { colors } = useTheme();
+  // Subscribed here rather than passed down, so a keystroke in one chat wakes
+  // that chat's row and leaves the other fifteen on screen untouched.
+  const typing = useIsTyping(conversation.id);
 
   const overdue = conversation.dangerMinutes !== null && conversation.dangerMinutes >= 6;
   const unread = conversation.unread_count ?? 0;
@@ -150,11 +152,10 @@ function ConversationRow({
       </Pressable>
     </Link>
   );
-}
+});
 
 export default function InboxScreen() {
   const { colors } = useTheme();
-  const { isTyping } = useInboxLive();
   const [view, setView] = useState<InboxView>("new");
   const [search, setSearch] = useState("");
   // The web inbox's status/section/label dropdowns, folded into one sheet.
@@ -212,6 +213,29 @@ export default function InboxScreen() {
   }, [conversations.data?.pages]);
   const total = firstPage?.conversations.total ?? items.length;
   const showSkeleton = conversations.isLoading && items.length === 0;
+  const specialistView = view === "specialists";
+
+  /**
+   * Hoisted so the memo on ConversationRow actually holds — an arrow declared
+   * in JSX is a new function on every render, which makes every row prop
+   * "changed" no matter what memo does.
+   *
+   * The rows keep their entrance fade but no longer carry
+   * `layout={LinearTransition}`: a layout transition re-measures every row on
+   * every list change, and this list changes on a 15-second poll, so the
+   * animation was running constantly to express a reorder nobody asked to see.
+   */
+  const renderRow = useCallback(
+    ({ item, index }: { item: ConversationSummary; index: number }) => (
+      <Animated.View
+        entering={FadeIn.delay(Math.min(index, 8) * 24).duration(200)}
+        exiting={FadeOut.duration(140)}
+      >
+        <ConversationRow conversation={item} specialist={specialistView} />
+      </Animated.View>
+    ),
+    [specialistView],
+  );
 
   return (
     <>
@@ -229,20 +253,12 @@ export default function InboxScreen() {
       <FlatList
         contentInsetAdjustmentBehavior="automatic"
         data={items}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item, index }) => (
-          <Animated.View
-            entering={FadeIn.delay(Math.min(index, 8) * 24).duration(200)}
-            exiting={FadeOut.duration(140)}
-            layout={LinearTransition.duration(220)}
-          >
-            <ConversationRow
-              conversation={item}
-              typing={isTyping(item.id)}
-              specialist={view === "specialists"}
-            />
-          </Animated.View>
-        )}
+        keyExtractor={keyOfConversation}
+        renderItem={renderRow}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews={process.env.EXPO_OS === "android"}
         contentContainerStyle={{
           padding: spacing.lg,
           gap: spacing.md,
