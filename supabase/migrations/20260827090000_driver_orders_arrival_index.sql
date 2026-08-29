@@ -1,0 +1,53 @@
+-- The orders calendar had no index it could use.
+--
+-- Every load of the الطلبات screen runs, once per employee per poll:
+--
+--   select … from driver_orders
+--   where restaurant_id = $1 and arrival_at >= $2 and arrival_at <= $3
+--   order by arrival_at desc limit 200;
+--
+-- `driver_orders_restaurant_created_idx` is on (restaurant_id, created_at) —
+-- the wrong column, since a visit is filtered and sorted by when it ARRIVES,
+-- not when the row was typed. And `driver_orders_rekaz_lookup_idx` is on
+-- (restaurant_id, arrival_at) but PARTIAL, `where rekaz_source_id is not null`,
+-- so the planner may only use it for queries that carry that same predicate.
+-- The calendar does not: it must also return the orders raised from WhatsApp,
+-- which are exactly the rows that partial index excludes.
+--
+-- So the query had nothing to use and fell back to a parallel sequential scan.
+--
+-- Measured on Postgres 17 against 150k orders (about two years of growth at
+-- this salon's rate), with production's exact index set:
+--
+--                        plan                buffers   latency   50-client
+--   before   Parallel Seq Scan + Sort           3091    38.3 ms      186 tps
+--   after    Index Scan                          203     1.2 ms   26,339 tps
+--
+-- 141x the throughput and 1/145th the latency at 50 concurrent readers. The
+-- seq-scan plan also recruited a parallel worker per query, so under load it
+-- was competing for a pool that is small on Supabase's lower compute tiers —
+-- which is why the gap widens with concurrency rather than staying constant.
+--
+-- At today's 28 rows none of this is visible; the table fits in a page or two
+-- and the scan is free. This lands ahead of the growth, not behind it.
+
+-- Plain CREATE INDEX, not CONCURRENTLY: Supabase runs each migration inside a
+-- transaction, which CONCURRENTLY cannot join, and at the current row count the
+-- exclusive lock is measured in milliseconds. Should this ever need re-creating
+-- on a large table, run it CONCURRENTLY by hand outside a migration instead.
+create index if not exists driver_orders_restaurant_arrival_idx
+  on public.driver_orders (restaurant_id, arrival_at desc);
+
+-- Verification after applying:
+--   explain (analyze, buffers)
+--   select id, arrival_at from public.driver_orders
+--   where restaurant_id = '2ba8f6c8-aff9-4147-8f13-cdcb732de698'
+--     and arrival_at >= now() - interval '3 days'
+--     and arrival_at <= now() + interval '7 days'
+--   order by arrival_at desc limit 200;
+-- Expect "Index Scan using driver_orders_restaurant_arrival_idx", not a Seq Scan.
+--
+-- Note: `driver_orders_rekaz_lookup_idx` is now redundant — this index covers
+-- every query that one served. It is left in place deliberately rather than
+-- dropped in the same migration that adds its replacement; drop it separately
+-- once this one is confirmed in use, to keep the rollback trivial.
