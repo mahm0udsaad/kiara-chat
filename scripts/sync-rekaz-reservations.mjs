@@ -30,8 +30,12 @@ function normalizePhone(value) {
   return digits.replace(/^0+/, "");
 }
 
-/** Rekaz stamps Riyadh wall clock with a fake Z — rewrite it as +03:00. */
-const riyadhIso = (fakeZ) => fakeZ.replace(/Z$/, "+03:00");
+/**
+ * Rekaz's `date` is a true UTC instant — an 11:00 Riyadh booking exports as
+ * `08:00:00Z` — so it is kept as it comes. It used to be rewritten as +03:00
+ * on the theory that the Z was a label on wall clock, which moved every
+ * booking three hours early.
+ */
 
 /** "HH:MM:SS" pair → minutes, wrapping past midnight ("23:00" → "00:00"). */
 function minutesBetween(startAt, endAt) {
@@ -51,7 +55,7 @@ for (const line of readFileSync(new URL("./rekaz-reservations.txt", import.meta.
   const [lat, lng, ...label] = (loc ?? "").split(",");
   rows.push({
     id: rn.trim(),
-    arrivalAt: riyadhIso(date.trim()),
+    arrivalAt: date.trim(),
     durationMinutes: minutesBetween(startAt.trim(), endAt.trim()),
     service: priceName.trim() || product.trim(),
     customerName: customerName.trim(),

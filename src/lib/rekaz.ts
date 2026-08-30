@@ -46,20 +46,25 @@ const RIYADH_DAY_FMT = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Riyadh",
 });
 
-/**
- * Rekaz stamps Riyadh wall clock with a fake `Z` — `17:00:00Z` means 5pm in
- * Riyadh, not UTC. Every date in the payload carries the same lie, so the
- * window is expressed in that same shape and compared as a plain string: no
- * Date math, and therefore no chance of the server's own timezone leaking in.
- */
+/** The Riyadh calendar day `offsetDays` from today, as `YYYY-MM-DD`. */
 function riyadhDayKey(offsetDays: number): string {
   const base = new Date(`${RIYADH_DAY_FMT.format(new Date())}T12:00:00Z`);
   base.setUTCDate(base.getUTCDate() + offsetDays);
   return base.toISOString().slice(0, 10);
 }
 
-/** The fake `Z` rewritten as the offset it actually meant. */
-const riyadhIso = (fakeZ: string) => fakeZ.replace(/Z$/, "+03:00");
+/**
+ * A Riyadh wall-clock boundary as the real instant it names.
+ *
+ * `date` in the payload is a true UTC stamp — an 11:00 Riyadh booking arrives
+ * as `08:00:00Z` — so a window built from Riyadh midnights has to be converted
+ * rather than stamped with a `Z` and hoped for. This used to read the `Z` as a
+ * label on Riyadh wall clock and rewrite it as `+03:00`, which moved every
+ * booking three hours earlier than the salon had actually booked it.
+ */
+function riyadhBoundary(dayKey: string, wallClock: string): string {
+  return new Date(`${dayKey}T${wallClock}+03:00`).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
 
 interface RekazApiReservation {
   reservationNumber: number;
@@ -104,8 +109,7 @@ function minutesBetween(startAt: string, endAt: string): number {
 function durationOf(item: RekazApiReservation): number {
   const start = Date.parse(item.date);
   const end = item.toDate ? Date.parse(item.toDate) : NaN;
-  // Both stamps carry the same fake Z, so the difference between them is the
-  // real duration even though neither instant is real.
+  // Both stamps are real instants, so their difference is the real duration.
   if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
     return Math.round((end - start) / 60_000);
   }
@@ -116,7 +120,7 @@ function toReservation(item: RekazApiReservation): RekazReservation {
   const location = item.customerLocation;
   return {
     id: String(item.reservationNumber),
-    arrivalAt: riyadhIso(item.date),
+    arrivalAt: item.date,
     durationMinutes: durationOf(item),
     // The price name is the variant the customer actually booked ("حمام مغربي
     // عادي"); the product name is the family it belongs to. Prefer the variant.
@@ -140,8 +144,7 @@ function toReservation(item: RekazApiReservation): RekazReservation {
     source: item.source ?? "",
     // Absent on a customer's own online booking — nobody on staff entered it.
     createdBy: item.creatorName?.trim() ?? "",
-    // Unlike every other stamp in the payload, `creationTime` is a true UTC
-    // instant, so it must not be rewritten as +03:00 the way `date` is.
+    // `creationTime` is a true UTC instant, like `date`.
     bookedAt: item.creationTime ?? "",
     order: {
       id: item.orderId ?? "",
@@ -202,7 +205,7 @@ async function fetchPage(
   return body.items ?? [];
 }
 
-/** The bounds a fetch actually covered, as real +03:00 instants. */
+/** The bounds a fetch actually covered, as real UTC instants. */
 export interface RekazFetchWindow {
   start: string;
   end: string;
@@ -234,8 +237,10 @@ export const isCancelledReservation = (reservation: RekazReservation): boolean =
  * inflate the visit total and its time span.
  */
 export async function fetchRekazReservations(): Promise<RekazFetchResult> {
-  const windowStart = `${riyadhDayKey(-DAYS_BACK)}T00:00:00Z`;
-  const windowEnd = `${riyadhDayKey(DAYS_AHEAD)}T23:59:59Z`;
+  const windowStart = riyadhBoundary(riyadhDayKey(-DAYS_BACK), "00:00:00");
+  const windowEnd = riyadhBoundary(riyadhDayKey(DAYS_AHEAD), "23:59:59");
+  const startMs = Date.parse(windowStart);
+  const endMs = Date.parse(windowEnd);
 
   const collected: RekazReservation[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -243,20 +248,24 @@ export async function fetchRekazReservations(): Promise<RekazFetchResult> {
     if (items.length === 0) break;
 
     for (const item of items) {
-      if (item.date > windowEnd) continue; // further out than we care about
-      if (item.date < windowStart) continue;
+      // Compared as instants, not strings: the boundaries are Riyadh midnights
+      // converted to UTC, so they no longer share the payload's shape.
+      const at = Date.parse(item.date);
+      if (!Number.isFinite(at)) continue;
+      if (at > endMs) continue; // further out than we care about
+      if (at < startMs) continue;
       collected.push(toReservation(item));
     }
 
     // Sorted descending, so once a page ends before the window starts every
     // later page does too.
-    if (items[items.length - 1].date < windowStart) break;
+    if (Date.parse(items[items.length - 1].date) < startMs) break;
     if (items.length < PAGE_SIZE) break;
   }
 
   return {
     reservations: collected.sort((a, b) => a.arrivalAt.localeCompare(b.arrivalAt)),
-    window: { start: riyadhIso(windowStart), end: riyadhIso(windowEnd) },
+    window: { start: windowStart, end: windowEnd },
   };
 }
 
@@ -273,8 +282,8 @@ export interface CustomerRevenue {
 export interface CustomerRekazHistory {
   reservations: RekazReservation[]; // newest arrival first
   revenue: CustomerRevenue;
-  firstBookingAt: string | null; // earliest arrivalAt, ISO +03:00
-  lastBookingAt: string | null; // latest arrivalAt, ISO +03:00
+  firstBookingAt: string | null; // earliest arrivalAt, UTC ISO
+  lastBookingAt: string | null; // latest arrivalAt, UTC ISO
 }
 
 /**
