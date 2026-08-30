@@ -11,6 +11,7 @@ import {
 } from "react-native";
 
 import { ApiError } from "@/lib/api";
+import { ScheduleGrid } from "@/components/orders/schedule-grid";
 import { EmptyState, ErrorState } from "@/components/screen-state";
 import { Badge } from "@/components/ui/badge";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -19,6 +20,7 @@ import { SkeletonList } from "@/components/ui/skeleton";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   addDays,
+  buildDaySchedule,
   dayKeyFromToday,
   dayKeyOf,
   mergeVisits,
@@ -64,6 +66,17 @@ const filters: SegmentOption<VisitFilter>[] = [
 ];
 
 const keyOfVisit = (visit: CalendarVisit) => visit.key;
+
+type OrdersView = "list" | "grid";
+
+/**
+ * The agenda answers "what is next"; the grid answers "who is where at 11".
+ * Both read the same day, so the toggle carries no other state.
+ */
+const views: SegmentOption<OrdersView>[] = [
+  { value: "list", label: "قائمة" },
+  { value: "grid", label: "جدول" },
+];
 
 const weekdayFormatter = new Intl.DateTimeFormat("ar-EG", { weekday: "short" });
 const dayNumberFormatter = new Intl.DateTimeFormat("ar-EG", { day: "numeric" });
@@ -654,6 +667,7 @@ export default function OrdersScreen() {
   const todayKey = dayKeyFromToday(0);
   const [selectedDay, setSelectedDay] = useState(todayKey);
   const [filter, setFilter] = useState<VisitFilter>("all");
+  const [view, setView] = useState<OrdersView>("list");
   const [search, setSearch] = useState("");
   // Keeps typing responsive — the list re-filters a frame behind the keystroke.
   const deferredSearch = useDeferredValue(search);
@@ -739,6 +753,27 @@ export default function OrdersScreen() {
     [scopedVisits, todayKey],
   );
 
+  /**
+   * One card per service, in its specialist's column.
+   *
+   * Built from the reservations rather than from `visits` on purpose: the
+   * merge that makes the agenda readable is exactly what the grid must undo,
+   * since two specialists working the same customer at the same hour need a
+   * column each.
+   */
+  const schedule = useMemo(
+    () =>
+      buildDaySchedule(
+        calendar.data?.reservations ?? [],
+        calendar.data?.orders ?? [],
+        selectedDay,
+      ),
+    [calendar.data, selectedDay],
+  );
+
+  // A search looks across the whole window, which the grid — a single day —
+  // cannot show; it steps aside rather than answering the wrong question.
+  const gridView = view === "grid" && !searching;
   const showSkeleton = calendar.isLoading && visits.length === 0;
   const selectedDate = dayChipDate(selectedDay);
 
@@ -787,22 +822,58 @@ export default function OrdersScreen() {
               countsByDay={countsByDay}
             />
           )}
-          <Text
+          <View
             style={{
-              ...type.subheadStrong,
-              color: colors.textSecondary,
+              flexDirection: "row-reverse",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: spacing.md,
               paddingHorizontal: spacing.lg,
-              ...rtlText,
             }}
           >
-            {searching
-              ? `نتائج البحث · ${formatters.shortDate.format(
-                  dayChipDate(from),
-                )} إلى ${formatters.shortDate.format(dayChipDate(to))}`
-              : formatters.weekdayDate.format(selectedDate)}
-          </Text>
+            <Text
+              style={{
+                ...type.subheadStrong,
+                color: colors.textSecondary,
+                flexShrink: 1,
+                ...rtlText,
+              }}
+            >
+              {searching
+                ? `نتائج البحث · ${formatters.shortDate.format(
+                    dayChipDate(from),
+                  )} إلى ${formatters.shortDate.format(dayChipDate(to))}`
+                : formatters.weekdayDate.format(selectedDate)}
+            </Text>
+            {searching ? null : (
+              <View style={{ width: 150 }}>
+                <Segmented
+                  accessibilityLabel="طريقة عرض اليوم"
+                  options={views}
+                  value={view}
+                  onChange={setView}
+                />
+              </View>
+            )}
+          </View>
         </View>
 
+        {gridView ? (
+          calendar.isError ? (
+            <ErrorState
+              message={calendar.error.message}
+              onRetry={() => void calendar.refetch()}
+            />
+          ) : schedule.slots.length === 0 ? (
+            <EmptyState
+              icon="calendar"
+              title="لا توجد حجوزات في هذا اليوم"
+              detail="اختاري يومًا آخر من الشريط، أو اسحبي تحديثات ركاز من القائمة."
+            />
+          ) : (
+            <ScheduleGrid schedule={schedule} dayKey={selectedDay} />
+          )
+        ) : (
         <FlatList
           contentInsetAdjustmentBehavior="automatic"
           data={listVisits}
@@ -883,6 +954,7 @@ export default function OrdersScreen() {
             />
           }
         />
+        )}
       </View>
     </>
   );

@@ -287,3 +287,165 @@ export function visitMatchesSearch(
     phoneMatches(visit.order?.customer_phone, rawQuery)
   );
 }
+
+/* ------------------------------------------------------------------ *
+ * The day grid: one column per specialist, one row per hour.
+ *
+ * The agenda merges a customer's services into one card, which is right for
+ * work done back to back and wrong for work done at once: two specialists on
+ * the same customer at 08:00 collapsed onto a single line with room for one
+ * assignment. The grid places every service in its own specialist's column
+ * instead, the way the salon reads its schedule in Rekaz.
+ * ------------------------------------------------------------------ */
+
+/** A booking with no one on it yet still has to appear somewhere. */
+export const UNASSIGNED_COLUMN = "__unassigned__";
+
+export type ScheduleColumn = {
+  id: string;
+  name: string;
+  slotCount: number;
+};
+
+export type ScheduleSlot = {
+  key: string;
+  columnId: string;
+  /** Minutes from Riyadh midnight, which is what the grid measures in. */
+  startMinutes: number;
+  endMinutes: number;
+  /** Side-by-side placement when one specialist is double-booked. */
+  lane: number;
+  lanes: number;
+  reservation: RekazReservation;
+  order: OrderSummary | null;
+};
+
+export type DaySchedule = {
+  columns: ScheduleColumn[];
+  slots: ScheduleSlot[];
+  /** The hours the grid draws, widened to whole hours around the day's work. */
+  startHour: number;
+  endHour: number;
+};
+
+const clockFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: RIYADH_TZ,
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/** Minutes from Riyadh midnight — never the device's, which may be anywhere. */
+export function riyadhMinutesOf(iso: string): number {
+  const [hour, minute] = clockFormatter.format(new Date(iso)).split(":");
+  return Number(hour) * 60 + Number(minute);
+}
+
+const isCancelled = (reservation: RekazReservation) =>
+  reservation.status === "Cancelled";
+
+/**
+ * Lay overlapping slots side by side inside one column.
+ *
+ * A specialist booked twice at 17:00 is either a data entry the salon wants to
+ * see or a genuine double-booking she has to resolve. Stacking the two cards
+ * would hide one of them; splitting the column width shows both.
+ */
+function assignLanes(slots: ScheduleSlot[]): void {
+  const byStart = [...slots].sort((a, b) => a.startMinutes - b.startMinutes);
+  let cluster: ScheduleSlot[] = [];
+  let clusterEnd = -1;
+
+  const close = () => {
+    for (const slot of cluster) slot.lanes = cluster.length;
+    cluster = [];
+    clusterEnd = -1;
+  };
+
+  for (const slot of byStart) {
+    if (cluster.length && slot.startMinutes >= clusterEnd) close();
+    slot.lane = cluster.length;
+    cluster.push(slot);
+    clusterEnd = Math.max(clusterEnd, slot.endMinutes);
+  }
+  if (cluster.length) close();
+}
+
+export function buildDaySchedule(
+  reservations: RekazReservation[],
+  orders: OrderSummary[],
+  dayKey: string,
+): DaySchedule {
+  const ordersBySource = new Map<string, OrderSummary>();
+  for (const order of orders) {
+    if (order.rekaz_source_id) ordersBySource.set(order.rekaz_source_id, order);
+  }
+
+  const byColumn = new Map<string, ScheduleSlot[]>();
+  const names = new Map<string, string>();
+
+  for (const reservation of reservations) {
+    if (isCancelled(reservation)) continue;
+    if (dayKeyOf(reservation.arrivalAt) !== dayKey) continue;
+
+    const start = riyadhMinutesOf(reservation.arrivalAt);
+    const end = start + Math.max(reservation.durationMinutes || 0, 15);
+    const order =
+      ordersBySource.get(reservation.id) ??
+      orders.find(
+        (candidate) =>
+          !candidate.rekaz_source_id &&
+          digitsOf(candidate.customer_phone) ===
+            digitsOf(reservation.customerPhone) &&
+          dayKeyOf(candidate.arrival_at) === dayKey,
+      ) ??
+      null;
+
+    // A service Rekaz lists under two providers is worked by both, so it is
+    // drawn in both columns rather than arbitrarily assigned to one.
+    const providers = reservation.providers.map((p) => p.trim()).filter(Boolean);
+    const columns = providers.length ? providers : [UNASSIGNED_COLUMN];
+    for (const columnId of columns) {
+      names.set(columnId, columnId === UNASSIGNED_COLUMN ? "بدون مقدمة" : columnId);
+      const bucket = byColumn.get(columnId) ?? [];
+      bucket.push({
+        key: `${reservation.id}:${columnId}`,
+        columnId,
+        startMinutes: start,
+        endMinutes: end,
+        lane: 0,
+        lanes: 1,
+        reservation,
+        order,
+      });
+      byColumn.set(columnId, bucket);
+    }
+  }
+
+  const slots: ScheduleSlot[] = [];
+  for (const bucket of byColumn.values()) {
+    assignLanes(bucket);
+    slots.push(...bucket);
+  }
+
+  const columns = [...byColumn.entries()]
+    .map(([id, bucket]) => ({ id, name: names.get(id) ?? id, slotCount: bucket.length }))
+    .sort((a, b) => {
+      // The unnamed column is where the day's unassigned work sits; it belongs
+      // at the end, not sorted in among the specialists by its label.
+      if (a.id === UNASSIGNED_COLUMN) return 1;
+      if (b.id === UNASSIGNED_COLUMN) return -1;
+      return b.slotCount - a.slotCount || a.name.localeCompare(b.name, "ar");
+    });
+
+  // Whole hours around the work, with a floor so an empty or one-booking day
+  // still looks like a day rather than a single stripe.
+  const starts = slots.map((slot) => slot.startMinutes);
+  const ends = slots.map((slot) => slot.endMinutes);
+  const startHour = slots.length ? Math.floor(Math.min(...starts) / 60) : 10;
+  const endHour = slots.length
+    ? Math.min(24, Math.ceil(Math.max(...ends) / 60))
+    : 22;
+
+  return { columns, slots, startHour, endHour: Math.max(endHour, startHour + 4) };
+}
