@@ -786,6 +786,61 @@ export default function OrdersScreen() {
     [searching],
   );
 
+  /**
+   * Rendered INSIDE the list and the grid, never beside them. iOS hands its
+   * automatic content inset to the scroll view alone, so this block sat under
+   * the large header and the search bar when it was their sibling — the day
+   * strip was on screen the whole time, just behind the chrome.
+   */
+  const dayHeader = (
+    <View style={{ paddingVertical: spacing.md, gap: spacing.md }}>
+      {/* The strip picks a day; a search is not about one, so it steps aside
+          rather than leaving a highlighted day that means nothing. */}
+      {searching ? null : (
+        <DayStrip
+          days={days}
+          selected={selectedDay}
+          onSelect={setSelectedDay}
+          countsByDay={countsByDay}
+        />
+      )}
+      <View
+        style={{
+          flexDirection: "row-reverse",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: spacing.md,
+          paddingHorizontal: spacing.lg,
+        }}
+      >
+        <Text
+          style={{
+            ...type.subheadStrong,
+            color: colors.textSecondary,
+            flexShrink: 1,
+            ...rtlText,
+          }}
+        >
+          {searching
+            ? `نتائج البحث · ${formatters.shortDate.format(
+                dayChipDate(from),
+              )} إلى ${formatters.shortDate.format(dayChipDate(to))}`
+            : formatters.weekdayDate.format(selectedDate)}
+        </Text>
+        {searching ? null : (
+          <View testID="orders-view-toggle" style={{ width: 150 }}>
+            <Segmented
+              accessibilityLabel="طريقة عرض اليوم"
+              options={views}
+              value={view}
+              onChange={setView}
+            />
+          </View>
+        )}
+      </View>
+    </View>
+  );
+
   return (
     <>
       <Stack.Screen
@@ -811,67 +866,18 @@ export default function OrdersScreen() {
       />
 
       <View style={{ flex: 1 }}>
-        <View style={{ paddingVertical: spacing.md, gap: spacing.md }}>
-          {/* The strip picks a day; a search is not about one, so it steps
-              aside rather than leaving a highlighted day that means nothing. */}
-          {searching ? null : (
-            <DayStrip
-              days={days}
-              selected={selectedDay}
-              onSelect={setSelectedDay}
-              countsByDay={countsByDay}
-            />
-          )}
-          <View
-            style={{
-              flexDirection: "row-reverse",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: spacing.md,
-              paddingHorizontal: spacing.lg,
-            }}
-          >
-            <Text
-              style={{
-                ...type.subheadStrong,
-                color: colors.textSecondary,
-                flexShrink: 1,
-                ...rtlText,
-              }}
-            >
-              {searching
-                ? `نتائج البحث · ${formatters.shortDate.format(
-                    dayChipDate(from),
-                  )} إلى ${formatters.shortDate.format(dayChipDate(to))}`
-                : formatters.weekdayDate.format(selectedDate)}
-            </Text>
-            {searching ? null : (
-              <View style={{ width: 150 }}>
-                <Segmented
-                  accessibilityLabel="طريقة عرض اليوم"
-                  options={views}
-                  value={view}
-                  onChange={setView}
-                />
-              </View>
-            )}
-          </View>
-        </View>
-
         {gridView ? (
           calendar.isError ? (
             <ErrorState
               message={calendar.error.message}
               onRetry={() => void calendar.refetch()}
             />
-          ) : schedule.slots.length === 0 ? (
-            <EmptyState
-              icon="calendar"
-              title="لا توجد حجوزات في هذا اليوم"
-              detail="اختاري يومًا آخر من الشريط، أو اسحبي تحديثات ركاز من القائمة."
-            />
           ) : (
-            <ScheduleGrid schedule={schedule} dayKey={selectedDay} />
+            <ScheduleGrid
+              schedule={schedule}
+              dayKey={selectedDay}
+              header={dayHeader}
+            />
           )
         ) : (
         <FlatList
@@ -891,6 +897,9 @@ export default function OrdersScreen() {
           ItemSeparatorComponent={VisitSeparator}
           ListHeaderComponent={
             <View style={{ gap: spacing.md, paddingBottom: spacing.md }}>
+              {/* The list pads its rows; the day header carries its own and
+                  runs edge to edge, so that padding is given back here. */}
+              <View style={{ marginHorizontal: -spacing.lg }}>{dayHeader}</View>
               <RekazBanner selectedDayVisible />
               <Segmented
                 layout="scroll"

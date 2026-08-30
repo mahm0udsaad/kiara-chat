@@ -305,6 +305,8 @@ export type ScheduleColumn = {
   id: string;
   name: string;
   slotCount: number;
+  /** Widest overlap in this column; the grid widens it to keep cards legible. */
+  maxLanes: number;
 };
 
 export type ScheduleSlot = {
@@ -316,7 +318,11 @@ export type ScheduleSlot = {
   /** Side-by-side placement when one specialist is double-booked. */
   lane: number;
   lanes: number;
+  /** The first service of the card; the rest are named in `services`. */
   reservation: RekazReservation;
+  /** Every service this card stands for, repeats folded into a count. */
+  services: string[];
+  serviceCount: number;
   order: OrderSummary | null;
 };
 
@@ -343,6 +349,67 @@ export function riyadhMinutesOf(iso: string): number {
 
 const isCancelled = (reservation: RekazReservation) =>
   reservation.status === "Cancelled";
+
+/**
+ * One specialist, one customer, one card.
+ *
+ * A customer's services under the same specialist are one stretch of work, and
+ * Rekaz lists them as separate reservations minutes apart. Placed individually
+ * they overlap, each takes a lane, and the column splits four ways into
+ * slivers too narrow to read — which is how bookings went missing on the grid.
+ * Runs that touch or overlap are merged into the span they really occupy. Work
+ * by a DIFFERENT specialist is never merged in: keeping that apart is the
+ * whole point of the grid.
+ */
+function mergeRuns(slots: ScheduleSlot[]): ScheduleSlot[] {
+  const byCustomer = new Map<string, ScheduleSlot[]>();
+  for (const slot of slots) {
+    const key =
+      digitsOf(slot.reservation.customerPhone) || slot.reservation.customerName;
+    const bucket = byCustomer.get(key) ?? [];
+    bucket.push(slot);
+    byCustomer.set(key, bucket);
+  }
+
+  const merged: ScheduleSlot[] = [];
+  for (const bucket of byCustomer.values()) {
+    let run: ScheduleSlot[] = [];
+    const flush = () => {
+      if (!run.length) return;
+      const first = run[0]!;
+      const counts = new Map<string, number>();
+      for (const slot of run) {
+        for (const name of slot.services) {
+          counts.set(name, (counts.get(name) ?? 0) + 1);
+        }
+      }
+      merged.push({
+        ...first,
+        endMinutes: Math.max(...run.map((slot) => slot.endMinutes)),
+        serviceCount: run.reduce((total, slot) => total + slot.serviceCount, 0),
+        services: [...counts].map(([name, count]) =>
+          count > 1 ? `${name} ×${count}` : name,
+        ),
+        // Whichever of the run already has an order: a merged card still
+        // opens the visit it belongs to.
+        order: run.find((slot) => slot.order)?.order ?? null,
+      });
+      run = [];
+    };
+
+    for (const slot of [...bucket].sort((a, b) => a.startMinutes - b.startMinutes)) {
+      const runEnd = run.length
+        ? Math.max(...run.map((item) => item.endMinutes))
+        : null;
+      // Touching counts as continuous: 10:00-10:20 then 10:20-10:40 is one
+      // sitting, not two cards stacked on the same minute.
+      if (runEnd !== null && slot.startMinutes > runEnd) flush();
+      run.push(slot);
+    }
+    flush();
+  }
+  return merged;
+}
 
 /**
  * Lay overlapping slots side by side inside one column.
@@ -416,6 +483,8 @@ export function buildDaySchedule(
         lane: 0,
         lanes: 1,
         reservation,
+        services: [reservation.service?.trim()].filter(Boolean) as string[],
+        serviceCount: 1,
         order,
       });
       byColumn.set(columnId, bucket);
@@ -423,13 +492,20 @@ export function buildDaySchedule(
   }
 
   const slots: ScheduleSlot[] = [];
-  for (const bucket of byColumn.values()) {
-    assignLanes(bucket);
-    slots.push(...bucket);
+  for (const [columnId, bucket] of byColumn) {
+    const cards = mergeRuns(bucket);
+    assignLanes(cards);
+    byColumn.set(columnId, cards);
+    slots.push(...cards);
   }
 
   const columns = [...byColumn.entries()]
-    .map(([id, bucket]) => ({ id, name: names.get(id) ?? id, slotCount: bucket.length }))
+    .map(([id, bucket]) => ({
+      id,
+      name: names.get(id) ?? id,
+      slotCount: bucket.length,
+      maxLanes: bucket.reduce((widest, slot) => Math.max(widest, slot.lanes), 1),
+    }))
     .sort((a, b) => {
       // The unnamed column is where the day's unassigned work sits; it belongs
       // at the end, not sorted in among the specialists by its label.

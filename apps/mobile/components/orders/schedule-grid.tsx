@@ -1,39 +1,77 @@
 import { useRouter } from "expo-router";
-import { memo, useMemo } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from "react-native";
 
 import { radius, rtlText, spacing, type } from "@/constants/theme";
 import {
+  RIYADH_TZ,
   UNASSIGNED_COLUMN,
+  dayKeyOf,
   riyadhMinutesOf,
   type DaySchedule,
+  type ScheduleColumn,
   type ScheduleSlot,
 } from "@/lib/calendar";
-import { formatters } from "@/lib/format";
 import { tapFeedback } from "@/lib/haptics";
 import { useCreateOrderFromReservation } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 
 /** One hour of the day, in points. Tuned so a 20 minute service is tappable. */
 const HOUR_HEIGHT = 88;
-const COLUMN_WIDTH = 156;
 const GUTTER_WIDTH = 52;
+const HEADER_HEIGHT = 40;
 const MIN_SLOT_HEIGHT = 34;
+/** A card narrower than this cannot be read, so the column widens instead. */
+const MIN_LANE_WIDTH = 132;
+const MAX_LANE_WIDTH = 172;
+
+/**
+ * Every clock face in the grid is Riyadh's.
+ *
+ * The shared `formatters.time` renders in the device's zone — right for a
+ * phone in the salon, wrong for one that is not, and flatly wrong on the hour
+ * ruler, where a UTC instant formatted locally printed "٤:٠٠ م" against the
+ * 1:00 م row. The zone is pinned here rather than hoped for.
+ */
+const riyadhClock = new Intl.DateTimeFormat("ar-EG", {
+  timeZone: RIYADH_TZ,
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+/** The ruler labels whole hours, which are numbers rather than instants. */
+const hourClock = new Intl.DateTimeFormat("ar-EG", {
+  timeZone: "UTC",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+const hourLabel = (hour: number) =>
+  hourClock.format(new Date(Date.UTC(2000, 0, 1, hour, 0)));
+
+/** Wide enough to read; a double-booked column grows instead of splitting. */
+const laneWidthOf = (column: ScheduleColumn) =>
+  Math.max(MIN_LANE_WIDTH, Math.min(MAX_LANE_WIDTH, 340 / column.maxLanes));
 
 const minuteOffset = (minutes: number, startHour: number) =>
   ((minutes - startHour * 60) / 60) * HOUR_HEIGHT;
 
-/** `١١:٠٠ ص` from minutes past midnight, without inventing a Date in the tz. */
-function hourLabel(hour: number): string {
-  return formatters.time.format(new Date(Date.UTC(2000, 0, 1, hour, 0)));
-}
-
 const SlotCard = memo(function SlotCard({
   slot,
   startHour,
+  laneWidth,
 }: {
   slot: ScheduleSlot;
   startHour: number;
+  laneWidth: number;
 }) {
   const { colors } = useTheme();
   const router = useRouter();
@@ -45,8 +83,6 @@ const SlotCard = memo(function SlotCard({
     minuteOffset(slot.endMinutes, startHour) - top - 2,
     MIN_SLOT_HEIGHT,
   );
-  const laneWidth = 1 / slot.lanes;
-
   /**
    * Tapping is the same journey the agenda offers, in the same order: an
    * existing order opens, and a booking with none is raised and handed to the
@@ -71,23 +107,23 @@ const SlotCard = memo(function SlotCard({
   };
 
   const needsDriver = !order?.driver_id;
+  const time = riyadhClock.format(new Date(reservation.arrivalAt));
+  const roomForServices = height > 56;
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${reservation.customerName || reservation.customerPhone}، ${
-        reservation.service
-      }، ${formatters.time.format(new Date(reservation.arrivalAt))}${
-        needsDriver ? "، بحاجة إلى سائق" : ""
-      }`}
+      accessibilityLabel={`${reservation.customerName || reservation.customerPhone}، ${slot.services.join(
+        "، ",
+      )}، ${time}${needsDriver ? "، بحاجة إلى سائق" : ""}`}
       onPress={open}
       style={{
         position: "absolute",
         top,
         height,
-        // Overlapping bookings split the column rather than hiding each other.
-        right: `${slot.lane * laneWidth * 100}%`,
-        width: `${laneWidth * 100}%`,
+        // Lanes run right to left, the way the day itself is read here.
+        right: slot.lane * laneWidth,
+        width: laneWidth,
         paddingHorizontal: 2,
         opacity: createOrder.isPending ? 0.6 : 1,
       }}
@@ -117,7 +153,12 @@ const SlotCard = memo(function SlotCard({
             ...rtlText,
           }}
         >
-          {formatters.time.format(new Date(reservation.arrivalAt))}
+          {time}
+          {/* The services are named below when there is room; the count is
+              for the short card, where naming them would not fit. */}
+          {slot.serviceCount > 1 && !roomForServices
+            ? ` (${slot.serviceCount} خدمات)`
+            : ""}
         </Text>
         <Text
           numberOfLines={1}
@@ -130,7 +171,7 @@ const SlotCard = memo(function SlotCard({
         >
           {reservation.customerName || reservation.customerPhone}
         </Text>
-        {height > 52 ? (
+        {roomForServices ? (
           <Text
             numberOfLines={2}
             style={{
@@ -140,13 +181,59 @@ const SlotCard = memo(function SlotCard({
               ...rtlText,
             }}
           >
-            {reservation.service}
+            {slot.services.join(" · ")}
+          </Text>
+        ) : null}
+        {/* The column names scroll away with the grid, so the card names its
+            own specialist rather than leaving her to be counted off the top
+            of the screen. */}
+        {height > 84 && slot.columnId !== UNASSIGNED_COLUMN ? (
+          <Text
+            numberOfLines={1}
+            style={{
+              ...type.caption,
+              fontWeight: "400",
+              marginTop: "auto",
+              color: needsDriver ? colors.textTertiary : colors.onBrandSoft,
+              ...rtlText,
+            }}
+          >
+            {slot.columnId}
           </Text>
         ) : null}
       </View>
     </Pressable>
   );
 });
+
+function ColumnName({ column, width }: { column: ScheduleColumn; width: number }) {
+  const { colors } = useTheme();
+  return (
+    <View
+      style={{
+        width,
+        height: HEADER_HEIGHT,
+        justifyContent: "center",
+        paddingHorizontal: spacing.sm,
+        borderLeftWidth: 1,
+        borderColor: colors.border,
+      }}
+    >
+      <Text
+        numberOfLines={1}
+        style={{
+          ...type.footnote,
+          fontWeight: "700",
+          color:
+            column.id === UNASSIGNED_COLUMN ? colors.textTertiary : colors.text,
+          textAlign: "center",
+        }}
+      >
+        {column.name}
+      </Text>
+    </View>
+  );
+}
 
 /**
  * The day as the salon reads it: specialists across, hours down.
@@ -158,9 +245,17 @@ const SlotCard = memo(function SlotCard({
 export function ScheduleGrid({
   schedule,
   dayKey,
+  header,
 }: {
   schedule: DaySchedule;
   dayKey: string;
+  /**
+   * The day picker and the view toggle ride inside this scroller on purpose.
+   * iOS gives its automatic content inset to the scroll view, so a sibling
+   * above it lands underneath the large header and the search bar — which is
+   * exactly where the day strip had been hiding.
+   */
+  header?: ReactNode;
 }) {
   const { colors } = useTheme();
   const { columns, slots, startHour, endHour } = schedule;
@@ -180,17 +275,26 @@ export function ScheduleGrid({
     return map;
   }, [slots]);
 
+  /**
+   * The names row is sticky, so it cannot sit inside the horizontal scroller
+   * the body uses. It gets its own, driven from the body's offset: a column
+   * whose title has slid away from it is worse than no title at all.
+   */
+  const namesRef = useRef<ScrollView>(null);
+  const onBodyScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      namesRef.current?.scrollTo({
+        x: event.nativeEvent.contentOffset.x,
+        animated: false,
+      });
+    },
+    [],
+  );
+
   // The "now" line only means something on the day being looked at.
   const nowOffset = useMemo(() => {
     const now = new Date();
-    if (dayKey !== new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Riyadh",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(now)) {
-      return null;
-    }
+    if (dayKeyOf(now) !== dayKey) return null;
     const offset = minuteOffset(riyadhMinutesOf(now.toISOString()), startHour);
     return offset >= 0 && offset <= bodyHeight ? offset : null;
   }, [dayKey, startHour, bodyHeight]);
@@ -198,13 +302,53 @@ export function ScheduleGrid({
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
+      stickyHeaderIndices={header ? [1] : [0]}
       contentContainerStyle={{ paddingBottom: spacing["3xl"] }}
     >
+      {header}
+
+      <View
+        style={{
+          flexDirection: "row-reverse",
+          backgroundColor: colors.background,
+          borderBottomWidth: 1,
+          borderColor: colors.border,
+        }}
+      >
+        <View style={{ width: GUTTER_WIDTH }} />
+        <ScrollView
+          ref={namesRef}
+          horizontal
+          scrollEnabled={false}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ flexDirection: "row-reverse" }}
+        >
+          {columns.map((column) => (
+            <ColumnName
+              key={column.id}
+              column={column}
+              width={laneWidthOf(column) * column.maxLanes}
+            />
+          ))}
+        </ScrollView>
+      </View>
+
+      {columns.length === 0 ? (
+        <Text
+          style={{
+            ...type.subhead,
+            color: colors.textTertiary,
+            textAlign: "center",
+            paddingVertical: spacing["3xl"],
+          }}
+        >
+          لا توجد حجوزات في هذا اليوم
+        </Text>
+      ) : null}
       <View style={{ flexDirection: "row-reverse" }}>
         {/* Hour ruler. Outside the horizontal scroller so the times stay put
             while the specialists slide past them. */}
         <View style={{ width: GUTTER_WIDTH }}>
-          <View style={{ height: 44 }} />
           {hours.map((hour) => (
             <View key={hour} style={{ height: HOUR_HEIGHT }}>
               <Text
@@ -225,37 +369,17 @@ export function ScheduleGrid({
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          onScroll={onBodyScroll}
+          scrollEventThrottle={16}
           contentContainerStyle={{ flexDirection: "row-reverse" }}
         >
-          {columns.map((column) => (
-            <View key={column.id} style={{ width: COLUMN_WIDTH }}>
+          {columns.map((column) => {
+            const laneWidth = laneWidthOf(column);
+            return (
               <View
+                key={column.id}
                 style={{
-                  height: 44,
-                  justifyContent: "center",
-                  paddingHorizontal: spacing.sm,
-                  borderBottomWidth: 1,
-                  borderColor: colors.border,
-                }}
-              >
-                <Text
-                  numberOfLines={1}
-                  style={{
-                    ...type.footnote,
-                    fontWeight: "700",
-                    color:
-                      column.id === UNASSIGNED_COLUMN
-                        ? colors.textTertiary
-                        : colors.text,
-                    textAlign: "center",
-                  }}
-                >
-                  {column.name}
-                </Text>
-              </View>
-
-              <View
-                style={{
+                  width: laneWidth * column.maxLanes,
                   height: bodyHeight,
                   borderLeftWidth: 1,
                   borderColor: colors.border,
@@ -288,11 +412,16 @@ export function ScheduleGrid({
                   />
                 )}
                 {(slotsByColumn.get(column.id) ?? []).map((slot) => (
-                  <SlotCard key={slot.key} slot={slot} startHour={startHour} />
+                  <SlotCard
+                    key={slot.key}
+                    slot={slot}
+                    startHour={startHour}
+                    laneWidth={laneWidth}
+                  />
                 ))}
               </View>
-            </View>
-          ))}
+            );
+          })}
         </ScrollView>
       </View>
     </ScrollView>
