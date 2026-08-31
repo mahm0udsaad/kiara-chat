@@ -84,6 +84,8 @@ export type ConversationSummary = {
   csStatus: CsStatus;
   bookingStage: BookingStage | null;
   dangerMinutes: number | null;
+  /** Every label currently assigned to the conversation. */
+  labels?: ConversationLabel[];
   /**
    * The last line of the thread, for the list row. Absent on older API builds
    * — the row falls back to the number rather than showing an empty line.

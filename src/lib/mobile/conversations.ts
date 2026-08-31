@@ -115,6 +115,8 @@ export function toMobileConversation(
       dangerExcludedPhoneSet,
       dangerExcludedConversationIds,
     ),
+    // Classification attaches the assigned labels at the list/detail boundary.
+    labels: [],
   };
 }
 
@@ -198,6 +200,7 @@ async function loadMobileConversationClassification(conversationId?: string) {
       labels,
       labelAssignments,
     ),
+    labels,
   };
 }
 
@@ -263,12 +266,16 @@ export async function toClassifiedMobileConversation(
   const classification = await loadMobileConversationClassification(
     conversation.id,
   );
-  return toMobileConversation(
-    conversation,
-    Date.now(),
-    classification.dangerExcludedPhoneSet,
-    classification.specialistConversationIdSet,
-  );
+  const assigned = new Set(classification.labelAssignments[conversation.id] ?? []);
+  return {
+    ...toMobileConversation(
+      conversation,
+      Date.now(),
+      classification.dangerExcludedPhoneSet,
+      classification.specialistConversationIdSet,
+    ),
+    labels: classification.labels.filter((label) => assigned.has(label.id)),
+  };
 }
 
 /**
@@ -317,6 +324,7 @@ export async function listMobileConversations(options: {
   const {
     dangerExcludedPhoneSet,
     labelAssignments,
+    labels,
     driverPhoneSet,
     specialistConversationIdSet,
     specialistPhoneSet,
@@ -369,15 +377,19 @@ export async function listMobileConversations(options: {
   const matching = inView(options.view);
   const page = matching.slice(options.offset, options.offset + options.limit);
   const previews = await lastMessagesFor(page);
-  const items = page.map((conversation) => ({
-    ...toMobileConversation(
-      conversation,
-      now,
-      dangerExcludedPhoneSet,
-      specialistConversationIdSet,
-    ),
-    lastMessage: previews.get(conversation.id) ?? null,
-  }));
+  const items = page.map((conversation) => {
+    const assigned = new Set(labelAssignments[conversation.id] ?? []);
+    return {
+      ...toMobileConversation(
+        conversation,
+        now,
+        dangerExcludedPhoneSet,
+        specialistConversationIdSet,
+      ),
+      labels: labels.filter((label) => assigned.has(label.id)),
+      lastMessage: previews.get(conversation.id) ?? null,
+    };
+  });
   const nextOffset = options.offset + items.length;
 
   return {

@@ -13,13 +13,18 @@ import {
 import { PrimaryButton } from "@/components/primary-button";
 import { EmptyState, ErrorState, InlineAlert } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
-import { Badge, CountBadge } from "@/components/ui/badge";
+import { Badge, CountBadge, type BadgeTone } from "@/components/ui/badge";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { TypingIndicator } from "@/components/typing-indicator";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
-import { bookingStageLabel, conversationListTimeLabel, csStatusLabel } from "@/lib/format";
+import {
+  bookingStageLabel,
+  conversationListTimeLabel,
+  csStatusLabel,
+  csStatusTone,
+} from "@/lib/format";
 import { EMPTY_CONVERSATION_FILTERS, useBootstrap, useConversations } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import { useIsTyping } from "@/providers/inbox-live-provider";
@@ -27,6 +32,7 @@ import type {
   ConversationFilters,
   ConversationSummary,
   InboxView,
+  LabelColor,
 } from "@/types/api";
 
 const views: SegmentOption<InboxView>[] = [
@@ -52,6 +58,17 @@ const MEDIA_PREVIEW: Record<string, { label: string; icon: IconName }> = {
   location: { label: "موقع", icon: "mappin.and.ellipse" },
   locationMessage: { label: "موقع", icon: "mappin.and.ellipse" },
   liveLocationMessage: { label: "موقع مباشر", icon: "mappin.and.ellipse" },
+};
+
+const LABEL_TONE: Record<LabelColor, BadgeTone> = {
+  slate: "neutral",
+  red: "danger",
+  amber: "warning",
+  emerald: "success",
+  blue: "info",
+  indigo: "brand",
+  fuchsia: "brand",
+  rose: "danger",
 };
 
 /** WhatsApp-style delivery ticks for the latest outbound message. */
@@ -110,6 +127,7 @@ const ConversationRow = memo(function ConversationRow({
     // children inside a <Text>, which drops the flex layout.
     <Link href={{ pathname: "/inbox/[id]", params: { id: conversation.id } }} asChild>
       <Pressable
+        testID={`conversation-row-${conversation.id}`}
         accessibilityRole="button"
         accessibilityLabel={`محادثة ${displayName}${unread ? `، ${unread} رسائل غير مقروءة` : ""}${
           overdue ? "، تنتظر ردًا" : ""
@@ -206,19 +224,45 @@ const ConversationRow = memo(function ConversationRow({
 
                 {unread ? (
                   <CountBadge count={unread} />
-                ) : overdue ? (
-                  <View accessibilityLabel="تنتظر ردًا">
-                    <IconSymbol name="hourglass" color={colors.danger} size={15} />
-                  </View>
-                ) : !staff && !conversation.assigned_to ? (
-                  <View accessibilityLabel="غير مستلمة">
-                    <IconSymbol
-                      name="person.crop.circle"
-                      color={colors.warning}
-                      size={16}
-                    />
-                  </View>
                 ) : null}
+              </View>
+
+              <View
+                style={{
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: spacing.xs,
+                  paddingTop: spacing.xs,
+                }}
+              >
+                <Badge
+                  label={csStatusLabel[conversation.csStatus]}
+                  tone={csStatusTone[conversation.csStatus]}
+                />
+                {conversation.bookingStage ? (
+                  <Badge
+                    label={bookingStageLabel[conversation.bookingStage]}
+                    tone="neutral"
+                  />
+                ) : null}
+                {staff === "specialist" ? (
+                  <Badge tone="brand" icon="sparkles" label="أخصائية" />
+                ) : staff === "driver" ? (
+                  <Badge tone="brand" icon="car" label="سائق" />
+                ) : !conversation.assigned_to ? (
+                  <Badge tone="warning" icon="person.crop.circle" label="غير مستلمة" />
+                ) : null}
+                {overdue ? (
+                  <Badge tone="danger" icon="hourglass" label="تنتظر ردًا" />
+                ) : null}
+                {conversation.labels?.map((label) => (
+                  <Badge
+                    key={label.id}
+                    label={label.name}
+                    tone={LABEL_TONE[label.color]}
+                  />
+                ))}
               </View>
             </View>
 
@@ -347,6 +391,7 @@ export default function InboxScreen() {
       />
 
       <FlatList
+        testID="conversation-list"
         contentInsetAdjustmentBehavior="automatic"
         data={items}
         keyExtractor={keyOfConversation}

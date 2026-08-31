@@ -3,6 +3,7 @@ import type {
   Conversation,
   CsStatus,
   DriverOrderRow,
+  Label,
 } from "@/lib/types";
 import type { FieldStaffSession } from "@/lib/field-staff";
 
@@ -50,6 +51,8 @@ export interface MobileConversation
   csStatus: CsStatus;
   bookingStage: BookingStage | null;
   dangerMinutes: number | null;
+  /** Every label currently assigned to the conversation, for inbox chips. */
+  labels: Label[];
   lastMessage?: MobileConversationPreview | null;
 }
 
