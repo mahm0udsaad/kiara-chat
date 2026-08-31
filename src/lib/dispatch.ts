@@ -9,6 +9,7 @@ import { formatDuration, TRIP_TYPE_LABEL } from "@/lib/format";
 import { fieldSessionStateOf } from "@/lib/field-session";
 import { ensureFieldOrderProgress } from "@/lib/field-staff";
 import { notifyFieldOrderAssigned } from "@/lib/field-push";
+import { findSharedLocationInConversation } from "@/lib/location";
 import { nationalityOf } from "@/lib/nationalities";
 import { normalizePhone } from "@/lib/phone";
 import {
@@ -466,7 +467,7 @@ export async function createBookingFromReservation(
 
   const payload = (reservation.payload ?? {}) as {
     durationMinutes?: number;
-    location?: { label?: string } | null;
+    location?: { label?: string; lat?: number; lng?: number } | null;
     service?: string;
     order?: { id?: string } | null;
   };
@@ -519,8 +520,18 @@ export async function createBookingFromReservation(
       customer_phone: phone,
     };
 
+  // Where she actually is — never what she booked.
+  //
+  // This used to fall back to the service name, and since almost no Rekaz
+  // booking carries a location that is what nearly every raised order got:
+  // "📍 موقع الزبونة: مساج اخشاب 60د" went out to the driver over WhatsApp as
+  // if it were an address. Rekaz's own labels are no better on their own —
+  // "المنزل", "الشقه رقم واحد" — so the coordinates beside them, which this
+  // code used to discard, are the part that gets a car to the door.
   const location =
-    payload.location?.label?.trim() || payload.service?.trim() || "—";
+    rekazLocationValue(payload.location) ??
+    (await findSharedLocationInConversation(admin, conversation.id))?.value ??
+    LOCATION_UNSET;
   const durationMinutes = Math.min(Math.max(visit.minutes, 5), 480);
 
   const { data: created, error: insErr } = await admin
@@ -553,6 +564,32 @@ export async function createBookingFromReservation(
 
   await clearBookingRequest(conversation.id).catch(() => {});
   return created as unknown as DriverOrder;
+}
+
+/**
+ * What the order says when nobody has given us an address yet.
+ *
+ * Deliberately not "—": this text reaches the employee on the order screen and
+ * the driver in the dispatch message, and it has to read as a missing field
+ * she must fill, not as a place.
+ */
+export const LOCATION_UNSET = "لم يُحدد الموقع — حدّديه قبل الإرسال";
+
+/**
+ * A Rekaz booking's location as one line: her label plus a maps link built
+ * from the coordinates, in the "label — url" shape the rest of the app already
+ * uses for a location shared over WhatsApp.
+ */
+function rekazLocationValue(
+  location: { label?: string; lat?: number; lng?: number } | null | undefined,
+): string | null {
+  if (!location) return null;
+  const label = location.label?.trim() ?? "";
+  const url =
+    Number.isFinite(location.lat) && Number.isFinite(location.lng)
+      ? `https://www.google.com/maps/search/?api=1&query=${location.lat},${location.lng}`
+      : null;
+  return [label, url].filter(Boolean).join(" — ") || null;
 }
 
 export interface DispatchBookingInput {

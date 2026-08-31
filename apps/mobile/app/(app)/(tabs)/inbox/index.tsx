@@ -14,12 +14,12 @@ import { PrimaryButton } from "@/components/primary-button";
 import { EmptyState, ErrorState, InlineAlert } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge, CountBadge } from "@/components/ui/badge";
-import { IconSymbol } from "@/components/ui/icon-symbol";
+import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { TypingIndicator } from "@/components/typing-indicator";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
-import { bookingStageLabel, csStatusLabel, relativeTimeLabel } from "@/lib/format";
+import { bookingStageLabel, conversationListTimeLabel, csStatusLabel } from "@/lib/format";
 import { EMPTY_CONVERSATION_FILTERS, useBootstrap, useConversations } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import { useIsTyping } from "@/providers/inbox-live-provider";
@@ -34,17 +34,59 @@ const views: SegmentOption<InboxView>[] = [
   { value: "mine", label: "محادثاتي" },
   { value: "unassigned", label: "غير مستلمة" },
   { value: "specialists", label: "الأخصائيات" },
+  { value: "drivers", label: "السائقون" },
   { value: "danger", label: "خطر" },
 ];
 
 const keyOfConversation = (item: ConversationSummary) => item.id;
 
+/** A readable fallback for media messages that have no caption of their own. */
+const MEDIA_PREVIEW: Record<string, { label: string; icon: IconName }> = {
+  voice: { label: "رسالة صوتية", icon: "mic" },
+  audio: { label: "مقطع صوتي", icon: "waveform" },
+  image: { label: "صورة", icon: "camera" },
+  video: { label: "فيديو", icon: "photo" },
+  document: { label: "ملف", icon: "doc" },
+  file: { label: "ملف", icon: "doc" },
+  sticker: { label: "ملصق", icon: "photo" },
+  location: { label: "موقع", icon: "mappin.and.ellipse" },
+  locationMessage: { label: "موقع", icon: "mappin.and.ellipse" },
+  liveLocationMessage: { label: "موقع مباشر", icon: "mappin.and.ellipse" },
+};
+
+/** WhatsApp-style delivery ticks for the latest outbound message. */
+function DeliveryTicks({ status }: { status: string | null }) {
+  const { colors } = useTheme();
+
+  if (status === "failed") {
+    return <IconSymbol name="exclamationmark.circle" color={colors.danger} size={14} />;
+  }
+  if (status === "queued") {
+    return <IconSymbol name="clock" color={colors.textTertiary} size={13} />;
+  }
+
+  const hasSecondTick = status === "delivered" || status === "read" || status === "played";
+  const tint = status === "read" || status === "played" ? colors.brand : colors.textTertiary;
+
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center" }}>
+      <IconSymbol name="checkmark" color={tint} size={13} />
+      {hasSecondTick ? (
+        <View style={{ marginStart: -7 }}>
+          <IconSymbol name="checkmark" color={tint} size={13} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 const ConversationRow = memo(function ConversationRow({
   conversation,
-  specialist,
+  staff,
 }: {
   conversation: ConversationSummary;
-  specialist: boolean;
+  /** Which roster tab this row is being listed under, if any. */
+  staff: "specialist" | "driver" | null;
 }) {
   const { colors } = useTheme();
   // Subscribed here rather than passed down, so a keystroke in one chat wakes
@@ -54,10 +96,18 @@ const ConversationRow = memo(function ConversationRow({
   const overdue = conversation.dangerMinutes !== null && conversation.dangerMinutes >= 6;
   const unread = conversation.unread_count ?? 0;
   const displayName = conversation.customer_name || conversation.customer_phone;
+  const lastMessage = conversation.lastMessage ?? null;
+  const mediaPreview = lastMessage ? MEDIA_PREVIEW[lastMessage.messageType] : undefined;
+  // Prefer a real caption when media has one. Unknown text-bearing message
+  // types (for example reactions) remain readable instead of exposing an
+  // internal provider type to the employee.
+  const previewText = lastMessage
+    ? lastMessage.text || mediaPreview?.label || ""
+    : conversation.customer_phone;
 
   return (
-    // `asChild` keeps the card a real View tree. A plain <Link> renders its
-    // children inside a <Text>, which drops the card's background and flex row.
+    // `asChild` keeps the row a real View tree. A plain <Link> renders its
+    // children inside a <Text>, which drops the flex layout.
     <Link href={{ pathname: "/inbox/[id]", params: { id: conversation.id } }} asChild>
       <Pressable
         accessibilityRole="button"
@@ -69,19 +119,21 @@ const ConversationRow = memo(function ConversationRow({
           <View
             style={{
               flexDirection: "row-reverse",
+              alignItems: "center",
               gap: spacing.md,
-              padding: spacing.lg,
-              borderRadius: radius.xl,
-              borderCurve: "continuous",
-              borderWidth: 1,
-              borderColor: overdue ? colors.danger : colors.border,
+              minHeight: 80,
+              paddingHorizontal: spacing.lg,
+              paddingVertical: spacing.md,
               backgroundColor: pressed ? colors.surfaceSunken : colors.surface,
-              boxShadow: "0 1px 2px rgba(24, 33, 77, 0.05)",
             }}
           >
-            <Avatar name={conversation.customer_name} seed={conversation.customer_phone} />
+            <Avatar
+              name={conversation.customer_name}
+              seed={conversation.customer_phone}
+              size={56}
+            />
 
-            <View style={{ flex: 1, gap: spacing.xs + 2 }}>
+            <View style={{ flex: 1, gap: spacing.xs }}>
               <View
                 style={{
                   flexDirection: "row-reverse",
@@ -93,7 +145,7 @@ const ConversationRow = memo(function ConversationRow({
                   numberOfLines={1}
                   style={{
                     flex: 1,
-                    ...type.headline,
+                    ...type.bodyStrong,
                     color: colors.text,
                     ...rtlText,
                   }}
@@ -103,50 +155,86 @@ const ConversationRow = memo(function ConversationRow({
                 <Text
                   style={{
                     ...type.caption,
-                    color: overdue ? colors.danger : colors.textTertiary,
+                    fontWeight: "400",
+                    color: overdue
+                      ? colors.danger
+                      : unread
+                        ? colors.brand
+                        : colors.textTertiary,
                     fontVariant: ["tabular-nums"],
                   }}
                 >
-                  {relativeTimeLabel(conversation.last_message_at)}
+                  {conversationListTimeLabel(lastMessage?.at ?? conversation.last_message_at)}
                 </Text>
               </View>
-
-              {typing ? (
-                <TypingIndicator />
-              ) : (
-                <Text
-                  numberOfLines={1}
-                  style={{
-                    ...type.footnote,
-                    color: colors.textSecondary,
-                    fontVariant: ["tabular-nums"],
-                    ...rtlText,
-                  }}
-                >
-                  {conversation.customer_phone}
-                </Text>
-              )}
 
               <View
                 style={{
                   flexDirection: "row-reverse",
                   alignItems: "center",
-                  flexWrap: "wrap",
-                  gap: spacing.xs + 2,
+                  gap: spacing.xs,
+                  minHeight: 22,
                 }}
               >
-                <CountBadge count={unread} />
-                {overdue ? <Badge tone="danger" icon="hourglass" label="تنتظر ردًا" /> : null}
-                {specialist ? (
-                  <Badge tone="brand" icon="sparkles" label="أخصائية" />
-                ) : !conversation.assigned_to ? (
-                  <Badge tone="warning" icon="person.crop.circle" label="غير مستلمة" />
-                ) : null}
-                {!specialist && conversation.bookingStage ? (
-                  <Badge tone="neutral" label={bookingStageLabel[conversation.bookingStage]} />
+                {typing ? (
+                  <TypingIndicator />
+                ) : (
+                  <>
+                    {lastMessage?.role === "agent" ? (
+                      <DeliveryTicks status={lastMessage.deliveryStatus} />
+                    ) : null}
+                    {mediaPreview ? (
+                      <IconSymbol
+                        name={mediaPreview.icon}
+                        color={colors.textTertiary}
+                        size={15}
+                      />
+                    ) : null}
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        flex: 1,
+                        ...type.footnote,
+                        color: unread ? colors.text : colors.textSecondary,
+                        ...rtlText,
+                      }}
+                    >
+                      {previewText}
+                    </Text>
+                  </>
+                )}
+
+                {unread ? (
+                  <CountBadge count={unread} />
+                ) : overdue ? (
+                  <View accessibilityLabel="تنتظر ردًا">
+                    <IconSymbol name="hourglass" color={colors.danger} size={15} />
+                  </View>
+                ) : !staff && !conversation.assigned_to ? (
+                  <View accessibilityLabel="غير مستلمة">
+                    <IconSymbol
+                      name="person.crop.circle"
+                      color={colors.warning}
+                      size={16}
+                    />
+                  </View>
                 ) : null}
               </View>
             </View>
+
+            {/* Keep the divider under the text, rather than cutting through
+                the avatar column, like a native messaging list. */}
+            <View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                bottom: 0,
+                left: spacing.lg,
+                right: spacing.lg + 56 + spacing.md,
+                height: 1,
+                backgroundColor: colors.border,
+              }}
+            />
           </View>
         )}
       </Pressable>
@@ -220,7 +308,8 @@ export default function InboxScreen() {
   }, [conversations.data?.pages]);
   const total = firstPage?.conversations.total ?? items.length;
   const showSkeleton = conversations.isLoading && items.length === 0;
-  const specialistView = view === "specialists";
+  const staffView =
+    view === "specialists" ? "specialist" : view === "drivers" ? "driver" : null;
 
   /**
    * Hoisted so the memo on ConversationRow actually holds — an arrow declared
@@ -238,10 +327,10 @@ export default function InboxScreen() {
         entering={FadeIn.delay(Math.min(index, 8) * 24).duration(200)}
         exiting={FadeOut.duration(140)}
       >
-        <ConversationRow conversation={item} specialist={specialistView} />
+        <ConversationRow conversation={item} staff={staffView} />
       </Animated.View>
     ),
-    [specialistView],
+    [staffView],
   );
 
   return (
@@ -267,13 +356,19 @@ export default function InboxScreen() {
         windowSize={7}
         removeClippedSubviews={process.env.EXPO_OS === "android"}
         contentContainerStyle={{
-          padding: spacing.lg,
-          gap: spacing.md,
+          paddingBottom: spacing.lg,
           flexGrow: 1,
         }}
         keyboardDismissMode="on-drag"
         ListHeaderComponent={
-          <View style={{ gap: spacing.md, paddingBottom: spacing.xs }}>
+          <View
+            style={{
+              gap: spacing.md,
+              paddingHorizontal: spacing.lg,
+              paddingTop: spacing.lg,
+              paddingBottom: spacing.md,
+            }}
+          >
             {/* The inbox views, plus the way into everything the web keeps in
                 dropdowns next to its search box. */}
             <View
@@ -391,7 +486,9 @@ export default function InboxScreen() {
               detail={
                 view === "specialists"
                   ? "لا توجد محادثات لأرقام الأخصائيات المحفوظة."
-                  : "لا توجد محادثات مطابقة لهذا الفلتر حاليًا."
+                  : view === "drivers"
+                    ? "لا توجد محادثات لأرقام السائقين المحفوظة."
+                    : "لا توجد محادثات مطابقة لهذا الفلتر حاليًا."
               }
             />
           )
@@ -401,6 +498,7 @@ export default function InboxScreen() {
             <View
               style={{
                 gap: spacing.sm,
+                paddingHorizontal: spacing.lg,
                 paddingVertical: spacing.lg,
               }}
             >

@@ -136,14 +136,17 @@ function RemindForm({ id, initialRole }: { id: string; initialRole: FieldSession
     setMessage(recipient.message);
     setResult(null);
     setValidation(null);
-    // Default to what can actually carry it: the app if a device is
-    // registered, WhatsApp otherwise. Both stay switchable.
+    // Every channel that can carry it, not the best single one.
+    //
+    // A reminder exists because someone has not acted yet, and the two
+    // channels fail in different ways: a push dies silently on a phone with
+    // notifications off, and WhatsApp goes unread on a driver mid-trip.
+    // Defaulting to one of them made the salon send the same reminder twice
+    // by hand. Both stay switchable.
     setChannels(
-      recipient.canPush
-        ? ["push"]
-        : recipient.canWhatsapp
-          ? ["whatsapp"]
-          : [],
+      (["push", "whatsapp"] as const).filter((channel) =>
+        channel === "push" ? recipient.canPush : recipient.canWhatsapp,
+      ),
     );
   }, [recipient, role]);
 

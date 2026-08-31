@@ -13,6 +13,7 @@ export const MOBILE_CONVERSATION_VIEWS = [
   "mine",
   "unassigned",
   "specialists",
+  "drivers",
   "danger",
 ] as const;
 
@@ -29,11 +30,27 @@ export interface MobileSession {
   displayName: string | null;
 }
 
+/**
+ * The last line of a thread, for the list row.
+ *
+ * The text is whatever was said; media carries no text, so the row draws its
+ * own label from `messageType`. Absent on a thread whose newest message could
+ * not be read — the row falls back to the number rather than guessing.
+ */
+export interface MobileConversationPreview {
+  at: string;
+  role: "customer" | "agent" | "system";
+  messageType: string;
+  text: string;
+  deliveryStatus: string | null;
+}
+
 export interface MobileConversation
   extends Omit<Conversation, "restaurant_id" | "metadata"> {
   csStatus: CsStatus;
   bookingStage: BookingStage | null;
   dangerMinutes: number | null;
+  lastMessage?: MobileConversationPreview | null;
 }
 
 export type MobileOrder = DriverOrderRow;

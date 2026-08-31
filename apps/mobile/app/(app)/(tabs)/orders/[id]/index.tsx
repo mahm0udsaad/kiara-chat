@@ -22,6 +22,8 @@ import {
   durationLabel,
   formatPhone,
   formatters,
+  isLocationMissing,
+  locationLabel,
   locationUrl,
   orderStatusIcon,
   orderStatusLabel,
@@ -232,6 +234,7 @@ export default function OrderDetailScreen() {
   const edited = wasEdited(order.created_at, order.updated_at);
   const canViewPrice = bootstrap.data?.capabilities.canViewOrderPrices === true;
   const isAdmin = bootstrap.data?.session.role === "admin";
+  const locationMissing = isLocationMissing(order.customer_location);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -369,13 +372,24 @@ export default function OrderDetailScreen() {
               value={tripTypeLabel[order.trip_type]}
             />
             <Divider inset={46} />
+            {/* Searching the maps for "لم يُحدد الموقع" is worse than not
+                offering the tap at all. */}
             <DetailRow
               icon="mappin.and.ellipse"
               label="موقع العميلة"
-              value={order.customer_location}
-              actionIcon="chevron.left"
-              actionLabel={`فتح موقع العميلة في الخرائط: ${order.customer_location}`}
-              onPress={() => void Linking.openURL(locationUrl(order.customer_location))}
+              value={locationLabel(order.customer_location)}
+              tone={locationMissing ? "muted" : "default"}
+              actionIcon={locationMissing ? undefined : "chevron.left"}
+              actionLabel={
+                locationMissing
+                  ? undefined
+                  : `فتح موقع العميلة في الخرائط: ${locationLabel(order.customer_location)}`
+              }
+              onPress={
+                locationMissing
+                  ? undefined
+                  : () => void Linking.openURL(locationUrl(order.customer_location))
+              }
             />
           </Card>
         </View>

@@ -75,7 +75,13 @@ import {
   ToggleGroupItem,
 } from "@/components/ui/toggle-group";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
-import { formatDuration, formatRelativeTime, TRIP_TYPE_LABEL } from "@/lib/format";
+import {
+  formatDuration,
+  formatRelativeTime,
+  locationLabel,
+  locationLink,
+  TRIP_TYPE_LABEL,
+} from "@/lib/format";
 import { phoneMatches } from "@/lib/phone";
 import { RekazReservations } from "@/components/rekaz-reservations";
 import type { ReservationsSnapshot } from "@/lib/reservations";
@@ -598,7 +604,7 @@ function OrderCard({
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const arrival = new Date(order.arrival_at);
   const status = statusMeta(order);
-  const isLocationLink = /^https?:\/\//i.test(order.customer_location.trim());
+  const mapsLink = locationLink(order.customer_location);
   const driverLate = isDriverLate(order);
 
   const resend = useCallback(async () => {
@@ -643,14 +649,14 @@ function OrderCard({
         <CardContent className="flex flex-col gap-3">
           <div className="flex items-start gap-2 text-sm">
             <MapPin className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            {isLocationLink ? (
+            {mapsLink ? (
               <a
-                href={order.customer_location.trim()}
+                href={mapsLink}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-primary underline underline-offset-4"
               >
-                فتح موقع الزبونة
+                {locationLabel(order.customer_location)}
                 <ExternalLink className="size-3" aria-hidden="true" />
               </a>
             ) : (

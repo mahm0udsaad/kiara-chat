@@ -19,6 +19,8 @@ import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   durationLabel,
   formatters,
+  isLocationMissing,
+  locationLabel,
   relativeDayLabel,
   tripTypeLabel,
 } from "@/lib/format";
@@ -348,8 +350,21 @@ function DispatchForm({ id }: { id: string }) {
             icon="clock"
             text={`${durationLabel(current.duration_minutes)} · ${tripTypeLabel[current.trip_type]}`}
           />
-          <SummaryLine icon="mappin.and.ellipse" text={current.customer_location} />
+          <SummaryLine
+            icon="mappin.and.ellipse"
+            text={locationLabel(current.customer_location)}
+          />
         </Card>
+
+        {/* The driver message carries this line verbatim. A booking raised from
+            ركاز usually arrives with no address at all, and the send is the
+            last moment anyone can notice before a car is sent nowhere. */}
+        {isLocationMissing(current.customer_location) ? (
+          <InlineAlert
+            tone="warning"
+            message="لا يوجد موقع للعميلة — سيصل السائق بلا عنوان. عدّلي بيانات الطلب وأضيفي الموقع أولًا."
+          />
+        ) : null}
 
         {!reviewing ? (
           <>

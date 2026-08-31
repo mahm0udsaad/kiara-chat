@@ -72,3 +72,22 @@ export function formatRelativeTime(
   if (abs < 2592000) return rtf.format(Math.round(diffSec / 86400), "day");
   return new Date(iso).toLocaleDateString("ar");
 }
+
+/**
+ * The maps link inside a location, wherever it sits.
+ *
+ * A location is stored as "label — url" when the customer dropped a pin or the
+ * Rekaz booking carried coordinates, so a check for a string that *starts*
+ * with http misses exactly the locations that have a real link.
+ */
+const EMBEDDED_LINK = /https?:\/\/\S+/i;
+
+export function locationLink(location: string): string | null {
+  return EMBEDDED_LINK.exec(location)?.[0] ?? null;
+}
+
+/** The readable half, for a row that carries its own link. */
+export function locationLabel(location: string): string {
+  const withoutLink = location.replace(EMBEDDED_LINK, "").trim();
+  return withoutLink.replace(/[—–-]\s*$/, "").trim() || "موقع على الخريطة";
+}

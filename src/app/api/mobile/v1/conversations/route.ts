@@ -55,7 +55,7 @@ export async function GET(request: Request) {
     return mobileError(
       400,
       "INVALID_VIEW",
-      "view must be new, mine, unassigned, specialists, or danger"
+      "view must be new, mine, unassigned, specialists, drivers, or danger"
     );
   }
 

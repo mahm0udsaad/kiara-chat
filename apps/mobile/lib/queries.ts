@@ -954,3 +954,23 @@ export function useOrderAudit(id: string, enabled = true) {
     staleTime: 60_000,
   });
 }
+
+/**
+ * The in-app thread for a phone number, opened rather than handed to WhatsApp.
+ *
+ * Used by the order screens' message buttons for the driver and the
+ * specialist: replying as the salon means replying in the app, and the roster
+ * knows a number where the inbox needs a conversation id.
+ */
+export function useConversationForPhone() {
+  return useMutation({
+    mutationFn: (input: { phone: string; name?: string | null }) =>
+      apiRequest<{ conversationId: string; created: boolean }>(
+        "/conversations/by-phone",
+        {
+          method: "POST",
+          body: JSON.stringify({ phone: input.phone, name: input.name ?? "" }),
+        },
+      ),
+  });
+}

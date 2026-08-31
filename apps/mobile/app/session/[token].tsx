@@ -11,6 +11,7 @@ import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   durationLabel,
   formatters,
+  locationLabel,
   locationUrl,
   relativeDayLabel,
   tripTypeLabel,
@@ -166,7 +167,7 @@ function VisitCard({
 
       <Pressable
         accessibilityRole="link"
-        accessibilityLabel={`فتح موقع العميلة في الخرائط: ${visit.customerLocation}`}
+        accessibilityLabel={`فتح موقع العميلة في الخرائط: ${locationLabel(visit.customerLocation)}`}
         onPress={() => {
           tapFeedback();
           void Linking.openURL(locationUrl(visit.customerLocation));
@@ -188,7 +189,7 @@ function VisitCard({
           numberOfLines={2}
           style={{ flex: 1, ...type.footnote, color: colors.text, ...rtlText }}
         >
-          {visit.customerLocation}
+          {locationLabel(visit.customerLocation)}
         </Text>
         <IconSymbol name="chevron.left" color={colors.brand} size={15} />
       </Pressable>

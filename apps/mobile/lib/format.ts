@@ -62,6 +62,22 @@ export function relativeTimeLabel(iso: string, now = new Date()) {
   return formatters.shortDate.format(new Date(iso));
 }
 
+const shortWeekday = new Intl.DateTimeFormat(locale, { weekday: "short" });
+const shortNumericDate = new Intl.DateTimeFormat(locale, {
+  day: "numeric",
+  month: "numeric",
+  year: "2-digit",
+});
+
+/** Compact timestamp used by messaging lists: time today, then day/date. */
+export function conversationListTimeLabel(iso: string, now = new Date()) {
+  const offset = dayOffset(iso, now);
+  if (offset === 0) return formatters.time.format(new Date(iso));
+  if (offset === -1) return "أمس";
+  if (offset > -7 && offset < 0) return shortWeekday.format(new Date(iso));
+  return shortNumericDate.format(new Date(iso));
+}
+
 /** "٩٠ دقيقة" as "ساعة و٣٠ د" — durations read faster in hours past 60m. */
 export function durationLabel(minutes: number) {
   if (minutes < 60) return `${minutes} دقيقة`;
@@ -145,10 +161,45 @@ export const bookingStageLabel: Record<BookingStage, string> = {
   completed: "تم التنفيذ",
 };
 
-/** Builds a maps deep link from either a pasted URL or a free-text address. */
+/**
+ * The link inside a location, wherever it sits.
+ *
+ * A location is stored as "label — url" when the customer dropped a pin or the
+ * booking carried coordinates. Matching only a string that *starts* with http
+ * missed those and searched the maps for the whole line, label and URL
+ * together — which finds nothing.
+ */
+const EMBEDDED_LINK = /https?:\/\/\S+/i;
+
+/**
+ * The marker the server writes when a raised Rekaz booking carries no address
+ * anywhere — not in Rekaz, not as a pin in her chat. Kept in step with
+ * `LOCATION_UNSET` in `src/lib/dispatch.ts`; matched on the prefix so the
+ * server can reword the instruction half without breaking the phone.
+ */
+const LOCATION_UNSET_PREFIX = "لم يُحدد الموقع";
+
+/** Is this order still missing a real address? */
+export function isLocationMissing(location: string): boolean {
+  return !location.trim() || location.trim().startsWith(LOCATION_UNSET_PREFIX);
+}
+
+/** Builds a maps deep link from a pasted URL, a "label — url" line, or an address. */
 export function locationUrl(location: string) {
-  if (/^https?:\/\//i.test(location)) return location;
+  const embedded = EMBEDDED_LINK.exec(location)?.[0];
+  if (embedded) return embedded;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+}
+
+/**
+ * The readable half of a location, for a row that has its own tap target.
+ * Showing the raw maps URL beside the label buys the reader nothing and pushes
+ * the part she needs off the end of the line.
+ */
+export function locationLabel(location: string) {
+  const withoutLink = location.replace(EMBEDDED_LINK, "").trim();
+  const trimmed = withoutLink.replace(/[—–-]\s*$/, "").trim();
+  return trimmed || "موقع على الخريطة";
 }
 
 export function telUrl(phone: string) {

@@ -1,6 +1,14 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo } from "react";
-import { Linking, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Linking,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 
 import { PrimaryButton } from "@/components/primary-button";
 import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-state";
@@ -18,8 +26,13 @@ import {
   type ExecutionState,
   type ExecutionStep,
 } from "@/lib/execution";
-import { formatters, relativeDayLabel, telUrl, whatsappUrl } from "@/lib/format";
-import { useOrder, useOrderReminder } from "@/lib/queries";
+import { formatters, relativeDayLabel, telUrl } from "@/lib/format";
+import { tapFeedback } from "@/lib/haptics";
+import {
+  useConversationForPhone,
+  useOrder,
+  useOrderReminder,
+} from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { FieldSessionRole, OrderReminderRecipient } from "@/types/api";
 
@@ -134,6 +147,8 @@ function RecipientCard({
   recipient,
   execution,
   onRemind,
+  onOpenChat,
+  openingChat,
 }: {
   role: FieldSessionRole;
   name: string | null;
@@ -141,6 +156,9 @@ function RecipientCard({
   recipient: OrderReminderRecipient | undefined;
   execution: ExecutionState;
   onRemind: () => void;
+  onOpenChat: (phone: string, name: string | null) => void;
+  /** True while the thread for this card is being resolved. */
+  openingChat: boolean;
 }) {
   const { colors } = useTheme();
   const pending = execution.pendingRole === role;
@@ -241,10 +259,14 @@ function RecipientCard({
             >
               <IconSymbol name="phone" color={colors.onBrandSoft} size={18} />
             </Pressable>
+            {/* The thread inside the app, not the employee's own WhatsApp:
+                messaging a driver from her personal account sends it as her,
+                and the reply lands where no one else on the team sees it. */}
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`محادثة واتساب مع ${name}`}
-              onPress={() => void Linking.openURL(whatsappUrl(contactPhone))}
+              accessibilityLabel={`فتح محادثة ${name} في التطبيق`}
+              disabled={openingChat}
+              onPress={() => onOpenChat(contactPhone, name)}
               style={({ pressed }) => ({
                 width: hitSize.min,
                 height: hitSize.min,
@@ -252,10 +274,14 @@ function RecipientCard({
                 justifyContent: "center",
                 borderRadius: radius.full,
                 backgroundColor: colors.brandSoft,
-                opacity: pressed ? 0.6 : 1,
+                opacity: openingChat ? 0.5 : pressed ? 0.6 : 1,
               })}
             >
-              <IconSymbol name="message" color={colors.onBrandSoft} size={18} />
+              {openingChat ? (
+                <ActivityIndicator color={colors.onBrandSoft} size="small" />
+              ) : (
+                <IconSymbol name="message" color={colors.onBrandSoft} size={18} />
+              )}
             </Pressable>
           </>
         ) : null}
@@ -275,6 +301,8 @@ export default function OrderStatusScreen() {
 
   const detail = useOrder(id);
   const reminder = useOrderReminder(id);
+  const openChat = useConversationForPhone();
+  const [openingFor, setOpeningFor] = useState<FieldSessionRole | null>(null);
 
   if (detail.isLoading) return <LoadingScreen label="جارٍ تحميل حالة التنفيذ…" />;
   if (detail.isError || !detail.data) {
@@ -296,6 +324,23 @@ export default function OrderStatusScreen() {
 
   const openComposer = (role: FieldSessionRole) =>
     router.push({ pathname: "/orders/[id]/remind", params: { id, role } });
+
+  // The roster knows a number; the inbox needs a conversation. Resolved on tap
+  // rather than for every card up front — most visits never open a chat.
+  const openConversation = (phone: string, name: string | null, role: FieldSessionRole) => {
+    if (openChat.isPending) return;
+    tapFeedback();
+    setOpeningFor(role);
+    openChat.mutate(
+      { phone, name },
+      {
+        onSuccess: ({ conversationId }) => {
+          router.push({ pathname: "/inbox/[id]", params: { id: conversationId } });
+        },
+        onSettled: () => setOpeningFor(null),
+      },
+    );
+  };
 
   return (
     <ScrollView
@@ -431,6 +476,9 @@ export default function OrderStatusScreen() {
             message="واتساب غير متصل حاليًا — التذكير سيصل عبر إشعار التطبيق فقط."
           />
         ) : null}
+        {openChat.isError ? (
+          <InlineAlert message={openChat.error.message} />
+        ) : null}
         <RecipientCard
           role="driver"
           name={order.driver_name}
@@ -438,6 +486,8 @@ export default function OrderStatusScreen() {
           recipient={recipientOf("driver")}
           execution={execution}
           onRemind={() => openComposer("driver")}
+          onOpenChat={(phone, name) => openConversation(phone, name, "driver")}
+          openingChat={openingFor === "driver"}
         />
         <RecipientCard
           role="specialist"
@@ -446,6 +496,8 @@ export default function OrderStatusScreen() {
           recipient={recipientOf("specialist")}
           execution={execution}
           onRemind={() => openComposer("specialist")}
+          onOpenChat={(phone, name) => openConversation(phone, name, "specialist")}
+          openingChat={openingFor === "specialist"}
         />
       </View>
     </ScrollView>

@@ -22,6 +22,7 @@ const VIEW_LABELS = {
   mine: "محادثاتي",
   unassigned: "غير مستلمة",
   specialists: "الأخصائيات",
+  drivers: "السائقون",
   danger: "خطر",
 } as const;
 

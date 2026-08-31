@@ -68,6 +68,7 @@ export type InboxView =
   | "mine"
   | "unassigned"
   | "specialists"
+  | "drivers"
   | "danger";
 
 export type ConversationSummary = {
@@ -83,6 +84,20 @@ export type ConversationSummary = {
   csStatus: CsStatus;
   bookingStage: BookingStage | null;
   dangerMinutes: number | null;
+  /**
+   * The last line of the thread, for the list row. Absent on older API builds
+   * — the row falls back to the number rather than showing an empty line.
+   */
+  lastMessage?: ConversationPreview | null;
+};
+
+/** The newest message in a thread, as the inbox list renders it. */
+export type ConversationPreview = {
+  at: string;
+  role: "customer" | "agent" | "system";
+  messageType: string;
+  text: string;
+  deliveryStatus: string | null;
 };
 
 /** One stored attachment on a message, as the engine and composer record it. */

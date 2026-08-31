@@ -7,9 +7,11 @@ import {
 } from "@/lib/labels";
 import { listDrivers, listSpecialists } from "@/lib/dispatch";
 import { listConversations } from "@/lib/inbox";
+import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import {
   MOBILE_DANGER_AFTER_SECONDS,
   type MobileConversation,
+  type MobileConversationPreview,
   type MobileConversationView,
   type MobilePage,
 } from "@/lib/mobile/contracts";
@@ -133,7 +135,8 @@ function matchesView(
   dangerExcludedPhoneSet: ReadonlySet<string>,
   specialistPhoneSet: ReadonlySet<string>,
   specialistConversationIdSet: ReadonlySet<string>,
-  teamMemberId: string | null
+  teamMemberId: string | null,
+  driverPhoneSet: ReadonlySet<string> = EMPTY_PHONE_SET,
 ): boolean {
   const isSpecialist =
     specialistPhoneSet.has(normalizePhone(conversation.customer_phone)) ||
@@ -142,6 +145,12 @@ function matchesView(
   // Specialist threads live in one dedicated place. Keeping this guard in
   // the shared matcher means they cannot leak into a normal tab or its count.
   if (isSpecialist) return false;
+  // Drivers get the same treatment for the same reason: the salon works its
+  // customer queue in the other tabs, and a driver saying "وصلت" is not a
+  // customer waiting on an answer.
+  const isDriver = driverPhoneSet.has(normalizePhone(conversation.customer_phone));
+  if (view === "drivers") return isDriver;
+  if (isDriver) return false;
   if (view === "new") return (conversation.unread_count ?? 0) > 0;
   if (view === "mine") {
     return Boolean(
@@ -177,6 +186,9 @@ async function loadMobileConversationClassification(conversationId?: string) {
         .map((specialist) => normalizePhone(specialist.phone ?? ""))
         .filter(Boolean),
     ),
+    driverPhoneSet: new Set(
+      drivers.map((driver) => normalizePhone(driver.phone ?? "")).filter(Boolean),
+    ),
     dangerExcludedPhoneSet: new Set(
       [...specialists, ...drivers]
         .map((person) => normalizePhone(person.phone ?? ""))
@@ -187,6 +199,61 @@ async function loadMobileConversationClassification(conversationId?: string) {
       labelAssignments,
     ),
   };
+}
+
+/**
+ * The newest message in each conversation on this page, for the list preview.
+ *
+ * Bounded by the page's own oldest activity: every conversation's newest
+ * message is by definition at or after its `last_message_at`, so nothing older
+ * than the oldest row on the page can be the answer for any of them. That
+ * keeps one query in place of fifty — which matters more here than it looks,
+ * with the functions and the database on different continents.
+ *
+ * A failure returns no previews rather than failing the inbox: a row without
+ * its last line still opens the chat.
+ */
+async function lastMessagesFor(
+  conversations: Conversation[],
+): Promise<Map<string, MobileConversationPreview>> {
+  const out = new Map<string, MobileConversationPreview>();
+  if (!conversations.length) return out;
+
+  const ids = conversations.map((conversation) => conversation.id);
+  const oldest = conversations
+    .map((conversation) => conversation.last_message_at)
+    .filter(Boolean)
+    .sort()[0];
+
+  const admin = getAdminSupabaseClient();
+  let query = admin
+    .from("messages")
+    .select("conversation_id, role, content, message_type, delivery_status, created_at")
+    .in("conversation_id", ids)
+    .order("created_at", { ascending: false })
+    // A ceiling on a pathological day; the window above is the real bound.
+    .limit(2_000);
+  if (oldest) query = query.gte("created_at", oldest);
+
+  const { data, error } = await query;
+  if (error) {
+    console.error("[mobile-inbox] last-message previews unavailable", error);
+    return out;
+  }
+
+  // Newest first, so the first row seen for a conversation is its latest.
+  for (const row of (data ?? []) as Record<string, unknown>[]) {
+    const conversationId = String(row.conversation_id);
+    if (out.has(conversationId)) continue;
+    out.set(conversationId, {
+      at: String(row.created_at),
+      role: (row.role as MobileConversationPreview["role"]) ?? "customer",
+      messageType: String(row.message_type ?? "text"),
+      text: String(row.content ?? "").replace(/\s+/g, " ").trim().slice(0, 160),
+      deliveryStatus: (row.delivery_status as string | null) ?? null,
+    });
+  }
+  return out;
 }
 
 /** One correctly classified row for detail and mutation responses. */
@@ -250,6 +317,7 @@ export async function listMobileConversations(options: {
   const {
     dangerExcludedPhoneSet,
     labelAssignments,
+    driverPhoneSet,
     specialistConversationIdSet,
     specialistPhoneSet,
   } = classification;
@@ -273,84 +341,43 @@ export async function listMobileConversations(options: {
       }
       return true;
     });
+  // One shape for every tab: the matcher takes the same classification each
+  // time, and six copies of that argument list is how a new tab gets added to
+  // five of them.
+  const inView = (view: MobileConversationView) =>
+    searched.filter((conversation) =>
+      matchesView(
+        conversation,
+        view,
+        now,
+        dangerExcludedPhoneSet,
+        specialistPhoneSet,
+        specialistConversationIdSet,
+        options.teamMemberId,
+        driverPhoneSet,
+      ),
+    );
+
   const counts = {
-    new: searched.filter((conversation) =>
-      matchesView(
-        conversation,
-        "new",
-        now,
-        dangerExcludedPhoneSet,
-        specialistPhoneSet,
-        specialistConversationIdSet,
-        options.teamMemberId
-      )
-    ).length,
-    mine: searched.filter((conversation) =>
-      matchesView(
-        conversation,
-        "mine",
-        now,
-        dangerExcludedPhoneSet,
-        specialistPhoneSet,
-        specialistConversationIdSet,
-        options.teamMemberId
-      )
-    ).length,
-    unassigned: searched.filter((conversation) =>
-      matchesView(
-        conversation,
-        "unassigned",
-        now,
-        dangerExcludedPhoneSet,
-        specialistPhoneSet,
-        specialistConversationIdSet,
-        options.teamMemberId
-      )
-    ).length,
-    specialists: searched.filter((conversation) =>
-      matchesView(
-        conversation,
-        "specialists",
-        now,
-        dangerExcludedPhoneSet,
-        specialistPhoneSet,
-        specialistConversationIdSet,
-        options.teamMemberId
-      )
-    ).length,
-    danger: searched.filter((conversation) =>
-      matchesView(
-        conversation,
-        "danger",
-        now,
-        dangerExcludedPhoneSet,
-        specialistPhoneSet,
-        specialistConversationIdSet,
-        options.teamMemberId
-      )
-    ).length,
+    new: inView("new").length,
+    mine: inView("mine").length,
+    unassigned: inView("unassigned").length,
+    specialists: inView("specialists").length,
+    drivers: inView("drivers").length,
+    danger: inView("danger").length,
   };
-  const matching = searched.filter((conversation) =>
-    matchesView(
+  const matching = inView(options.view);
+  const page = matching.slice(options.offset, options.offset + options.limit);
+  const previews = await lastMessagesFor(page);
+  const items = page.map((conversation) => ({
+    ...toMobileConversation(
       conversation,
-      options.view,
       now,
       dangerExcludedPhoneSet,
-      specialistPhoneSet,
       specialistConversationIdSet,
-      options.teamMemberId
-    )
-  );
-  const items = matching
-    .slice(options.offset, options.offset + options.limit)
-    .map((conversation) =>
-      toMobileConversation(
-        conversation,
-        now,
-        dangerExcludedPhoneSet,
-        specialistConversationIdSet,
-      )
-    );
+    ),
+    lastMessage: previews.get(conversation.id) ?? null,
+  }));
   const nextOffset = options.offset + items.length;
 
   return {

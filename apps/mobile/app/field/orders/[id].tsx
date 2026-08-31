@@ -14,6 +14,7 @@ import {
   durationLabel,
   formatPhone,
   formatters,
+  locationLabel,
   locationUrl,
   relativeDayLabel,
   tripTypeLabel,
@@ -150,7 +151,7 @@ export default function FieldOrderDetailScreen() {
             <DetailRow
               icon="mappin.and.ellipse"
               label="موقع العميلة"
-              value={order.customerLocation}
+              value={locationLabel(order.customerLocation)}
               actionIcon="chevron.left"
               actionLabel="فتح الموقع"
               onPress={() => void Linking.openURL(locationUrl(order.customerLocation))}
