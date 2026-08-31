@@ -1,4 +1,5 @@
 import { listConversations } from "@/lib/inbox";
+import { isGroupConversation } from "@/lib/mobile/conversations";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -18,7 +19,15 @@ export async function POST(request: Request) {
       isAdmin: auth.session.role === "admin",
       teamMemberId: auth.session.teamMemberId,
     });
-    const phones = [...new Set(conversations.map((item) => item.customer_phone))];
+    // Groups keep their jid where a phone goes, and nothing renders typing
+    // state for a room — subscribing to them is a wasted watch slot.
+    const phones = [
+      ...new Set(
+        conversations
+          .filter((item) => !isGroupConversation(item))
+          .map((item) => item.customer_phone),
+      ),
+    ];
     await watchPresence(phones);
     return mobileData({ watched: phones.length });
   } catch (error) {

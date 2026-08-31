@@ -47,6 +47,15 @@ export interface OpenWaMessageEvent {
    * lid-only messages still land in the right thread.
    */
   chatLid?: string | null;
+  /**
+   * A group chat's jid (`…@g.us`). Present only on group messages; when it is
+   * set, `customerPhone` is the *participant* who spoke, not the chat.
+   */
+  chatJid?: string | null;
+  /** The group's title, so the thread can be listed by name. */
+  groupSubject?: string | null;
+  /** Who spoke inside the group — WhatsApp `pushName`. Inbound only. */
+  participantName?: string | null;
   timestamp?: number; // unix seconds
   messageType: string; // text | image | audio | voice | video | document | file
   body: string;

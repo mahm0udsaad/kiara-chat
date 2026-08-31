@@ -15,6 +15,7 @@ export const MOBILE_CONVERSATION_VIEWS = [
   "unassigned",
   "specialists",
   "drivers",
+  "groups",
   "danger",
 ] as const;
 
@@ -44,11 +45,17 @@ export interface MobileConversationPreview {
   messageType: string;
   text: string;
   deliveryStatus: string | null;
+  /** Who spoke, in a group thread. Null on a 1:1 chat, where it is the customer. */
+  participantName?: string | null;
 }
 
 export interface MobileConversation
   extends Omit<Conversation, "restaurant_id" | "metadata"> {
   csStatus: CsStatus;
+  /** Somebody answered this from the phone's WhatsApp app, not from here. */
+  handledOnWhatsApp: boolean;
+  /** A WhatsApp group rather than a person — listed in its own tab. */
+  isGroup: boolean;
   bookingStage: BookingStage | null;
   dangerMinutes: number | null;
   /** Every label currently assigned to the conversation, for inbox chips. */

@@ -23,6 +23,7 @@ const VIEW_LABELS = {
   unassigned: "غير مستلمة",
   specialists: "الأخصائيات",
   drivers: "السائقون",
+  groups: "المجموعات",
   danger: "خطر",
 } as const;
 

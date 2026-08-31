@@ -69,6 +69,7 @@ export type InboxView =
   | "unassigned"
   | "specialists"
   | "drivers"
+  | "groups"
   | "danger";
 
 export type ConversationSummary = {
@@ -82,6 +83,16 @@ export type ConversationSummary = {
   assigned_to: string | null;
   unread_count: number | null;
   csStatus: CsStatus;
+  /**
+   * Somebody answered from the phone's WhatsApp app rather than from here.
+   * Optional: older API builds don't send it.
+   */
+  handledOnWhatsApp?: boolean;
+  /**
+   * A WhatsApp group rather than a person. Optional: older API builds never
+   * send groups at all, so an absent flag correctly means "not a group".
+   */
+  isGroup?: boolean;
   bookingStage: BookingStage | null;
   dangerMinutes: number | null;
   /** Every label currently assigned to the conversation. */
@@ -97,6 +108,8 @@ export type ConversationSummary = {
 export type ConversationPreview = {
   at: string;
   role: "customer" | "agent" | "system";
+  /** Who spoke, in a group. Absent on a 1:1 chat — there it is the customer. */
+  participantName?: string | null;
   messageType: string;
   text: string;
   deliveryStatus: string | null;
@@ -152,7 +165,16 @@ export type ConversationFilters = {
   labelId: string | null;
   /** Where the booking stands — مرحلة متابعة الحجز, as filed on the thread. */
   bookingStage: BookingStage | null;
+  /** Who has dealt with the thread so far — المتابعة. */
+  handling: ConversationHandling | null;
 };
+
+/**
+ * The three ways a thread gets left behind, as the salon names them:
+ * answered from the WhatsApp app instead of here, never opened at all, or
+ * opened and then claimed by nobody.
+ */
+export type ConversationHandling = "whatsapp" | "unread" | "read_unclaimed";
 
 /** قسم الطلبات / قسم الردود — how the owner files a thread. */
 export type ConversationSection = "orders" | "replies";

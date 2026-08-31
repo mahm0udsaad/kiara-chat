@@ -241,6 +241,9 @@ function replyDelayMinutes(
 function conversationStateLabel(c: Conversation): string {
   return c.assigned_to ? CS_STATUS_LABEL[csStatusOf(c)] : "غير مستلمة";
 }
+function isGroupConversation(c: Conversation): boolean {
+  return (c.metadata as { chat_kind?: unknown } | null)?.chat_kind === "group";
+}
 function isHandledOnWhatsApp(c: Conversation): boolean {
   return Boolean(
     (c.metadata as { handled_on_whatsapp?: boolean } | null)?.handled_on_whatsapp
@@ -611,6 +614,9 @@ export function InboxClient({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return conversations.filter((c) => {
+      // Groups live in the mobile app's own tab. Here they would sit in the
+      // customer queue under a raw jid, with no phone, no record and no owner.
+      if (isGroupConversation(c)) return false;
       if (q) {
         const hay = `${c.customer_name ?? ""} ${c.customer_phone}`.toLowerCase();
         // Staff type "0502376231"; the row stores "+966502376231".

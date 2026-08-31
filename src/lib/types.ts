@@ -20,6 +20,24 @@ export interface Conversation {
   metadata?: Record<string, unknown> | null;
 }
 
+/**
+ * How a thread has been dealt with — the axis the inbox's tabs don't cover.
+ * `read_unclaimed` is read by someone but assigned to nobody.
+ */
+export type ConversationHandling = "whatsapp" | "unread" | "read_unclaimed";
+
+export const CONVERSATION_HANDLINGS: readonly ConversationHandling[] = [
+  "whatsapp",
+  "unread",
+  "read_unclaimed",
+];
+
+export function isConversationHandling(
+  value: string
+): value is ConversationHandling {
+  return (CONVERSATION_HANDLINGS as readonly string[]).includes(value);
+}
+
 export interface Message {
   id: string;
   conversation_id: string;

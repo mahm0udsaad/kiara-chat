@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { listConversations } from "@/lib/inbox";
+import { isGroupConversation } from "@/lib/mobile/conversations";
 import { isOpenWaConfigured, watchPresence } from "@/lib/transport/openwa";
 
 /** Enough to cover what any dashboard actually shows without flooding WhatsApp. */
@@ -24,7 +25,15 @@ export async function POST() {
       isAdmin: session.role === "admin",
       teamMemberId: session.teamMemberId,
     });
-    const phones = [...new Set(conversations.map((c) => c.customer_phone))];
+    // Groups keep their jid where a phone goes, and nothing renders typing
+    // state for a room — subscribing to them is a wasted watch slot.
+    const phones = [
+      ...new Set(
+        conversations
+          .filter((c) => !isGroupConversation(c))
+          .map((c) => c.customer_phone),
+      ),
+    ];
     await watchPresence(phones);
     return NextResponse.json({ ok: true, watched: phones.length });
   } catch (e) {

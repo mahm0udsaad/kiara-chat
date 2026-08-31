@@ -71,6 +71,7 @@ export const queryKeys = {
       filters.section ?? "",
       filters.labelId ?? "",
       filters.bookingStage ?? "",
+      filters.handling ?? "",
     ] as const,
   conversation: (id: string) => ["conversation", id] as const,
   orders: (search: string) => ["orders", search] as const,
@@ -111,6 +112,7 @@ export const EMPTY_CONVERSATION_FILTERS: ConversationFilters = {
   section: null,
   labelId: null,
   bookingStage: null,
+  handling: null,
 };
 
 export function useConversations(
@@ -133,6 +135,7 @@ export function useConversations(
       if (filters.section) params.set("section", filters.section);
       if (filters.labelId) params.set("label", filters.labelId);
       if (filters.bookingStage) params.set("stage", filters.bookingStage);
+      if (filters.handling) params.set("handling", filters.handling);
       return apiRequest<ConversationsResponse>(`/conversations?${params.toString()}`);
     },
     getNextPageParam: (lastPage) =>
@@ -148,7 +151,8 @@ export function useConversations(
         previousKey?.[3] === (filters.status ?? "") &&
         previousKey?.[4] === (filters.section ?? "") &&
         previousKey?.[5] === (filters.labelId ?? "") &&
-        previousKey?.[6] === (filters.bookingStage ?? "");
+        previousKey?.[6] === (filters.bookingStage ?? "") &&
+        previousKey?.[7] === (filters.handling ?? "");
       return sameViewAndFilters ? previous : undefined;
     },
     refetchInterval: 30_000,

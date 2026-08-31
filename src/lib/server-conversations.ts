@@ -73,6 +73,72 @@ export async function findOrCreateConversation(
 }
 
 /**
+ * A WhatsApp group, as one thread.
+ *
+ * Groups ride the same row as a 1:1 chat: the group's jid goes in
+ * `customer_phone` (it is the address the engine sends to, exactly as a phone
+ * is) and the subject in `customer_name`. That keeps every existing path —
+ * lookup, reply, media — working unchanged, and `metadata.chat_kind` is the
+ * one bit that tells the inbox to file it under the groups tab instead of the
+ * customer queue.
+ */
+export async function findOrCreateGroupConversation(
+  chatJid: string,
+  subject?: string | null
+): Promise<{ id: string; is_new: boolean }> {
+  const admin = getAdminSupabaseClient();
+  const name = (subject ?? "").trim().slice(0, 80) || null;
+  const { data: existing } = await admin
+    .from("conversations")
+    .select("id, customer_name, metadata")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("customer_phone", chatJid)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing?.id) {
+    // Unlike a person's pushName, a group's subject is the group's real title
+    // and renaming one is deliberate — so this one does follow changes.
+    const metadata = (existing.metadata as Record<string, unknown>) ?? {};
+    const patch: Record<string, unknown> = {};
+    if (name && name !== existing.customer_name) patch.customer_name = name;
+    if (metadata.chat_kind !== "group") {
+      patch.metadata = { ...metadata, chat_kind: "group" };
+    }
+    if (Object.keys(patch).length) {
+      await admin
+        .from("conversations")
+        .update(patch)
+        .eq("id", existing.id)
+        .eq("restaurant_id", KIARA_RESTAURANT_ID);
+    }
+    return { id: existing.id as string, is_new: false };
+  }
+
+  const now = new Date().toISOString();
+  const { data: created, error } = await admin
+    .from("conversations")
+    .insert({
+      restaurant_id: KIARA_RESTAURANT_ID,
+      customer_phone: chatJid,
+      customer_name: name,
+      status: "active",
+      started_at: now,
+      last_message_at: now,
+      last_inbound_at: null,
+      metadata: { chat_kind: "group" },
+    })
+    .select("id")
+    .single();
+
+  if (error || !created) {
+    throw new Error(`Failed to create group conversation: ${error?.message}`);
+  }
+  return { id: created.id as string, is_new: true };
+}
+
+/**
  * WhatsApp increasingly addresses 1:1 chats by an anonymized `@lid` instead of
  * the phone jid, and a reply typed in the phone app often carries nothing else
  * — no phone number anywhere on the message. So the first time a chat's lid

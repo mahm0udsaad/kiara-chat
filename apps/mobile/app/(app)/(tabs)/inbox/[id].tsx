@@ -133,6 +133,12 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Conver
   // A media message with no caption and nothing renderable still needs to say
   // *something*, otherwise the bubble is an empty box.
   const placeholder = slots.length === 0 && !message.content;
+  // In a group, "who said this" is the whole point — the ingest webhook stamps
+  // it on the message because the thread itself is the group, not a person.
+  const speaker =
+    !outbound && typeof message.metadata?.participant_name === "string"
+      ? message.metadata.participant_name.trim()
+      : "";
 
   return (
     <View
@@ -152,6 +158,15 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Conver
         borderColor: colors.border,
       }}
     >
+      {speaker ? (
+        <Text
+          numberOfLines={1}
+          style={{ ...type.caption, color: colors.brand, ...rtlText }}
+        >
+          {speaker}
+        </Text>
+      ) : null}
+
       {slots.map((slot, index) => (
         <MediaAttachment
           key={slot.storage_path ?? `${message.id}-${index}`}
@@ -264,12 +279,18 @@ export default function ConversationScreen() {
   }
 
   const current = conversation.data.conversation;
+  const isGroup = current.isGroup ?? false;
+  // A group's `customer_phone` is its jid, so it is never a usable fallback.
+  const headerName =
+    current.customer_name || (isGroup ? "مجموعة" : current.customer_phone);
   const booking = current.bookingRequest ?? null;
   const isAssignedToMe = Boolean(
     bootstrap.data?.session.teamMemberId &&
       current.assigned_to === bootstrap.data.session.teamMemberId,
   );
   const isAdmin = bootstrap.data?.session.role === "admin";
+  const canTakeConversations =
+    bootstrap.data?.capabilities.canTakeConversations === true;
   const canUpdateConversation = isAdmin || isAssignedToMe;
   // Being an admin is not itself permission to reply into someone else's
   // thread. The server returns TAKEOVER_REQUIRED for that, and the composer
@@ -291,11 +312,14 @@ export default function ConversationScreen() {
           pushed screen still has a short label to fall back to. */}
       <Stack.Screen
         options={{
-          title: current.customer_name || current.customer_phone,
+          title: headerName,
           headerTitle: () => (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`ملف ${current.customer_name || current.customer_phone}`}
+              disabled={isGroup}
+              accessibilityLabel={
+                isGroup ? headerName : `ملف ${headerName}`
+              }
               accessibilityHint="يفتح سجل العميلة وحجوزاتها"
               onPress={() =>
                 router.navigate({
@@ -317,20 +341,37 @@ export default function ConversationScreen() {
                 numberOfLines={1}
                 style={{ ...type.headline, color: colors.text, ...rtlText }}
               >
-                {current.customer_name || current.customer_phone}
+                {headerName}
               </Text>
-              <View
-                style={{
-                  flexDirection: "row-reverse",
-                  alignItems: "center",
-                  gap: spacing.xs,
-                }}
-              >
-                <IconSymbol name="person.crop.circle" size={11} color={colors.brand} />
-                <Text style={{ ...type.caption, color: colors.brand }}>
-                  عرض الملف
-                </Text>
-              </View>
+              {/* A group is not a customer: there is no record behind it, and
+                  its jid would open somebody else's timeline or none at all. */}
+              {isGroup ? (
+                <View
+                  style={{
+                    flexDirection: "row-reverse",
+                    alignItems: "center",
+                    gap: spacing.xs,
+                  }}
+                >
+                  <IconSymbol name="person.2" size={11} color={colors.textTertiary} />
+                  <Text style={{ ...type.caption, color: colors.textTertiary }}>
+                    مجموعة واتساب
+                  </Text>
+                </View>
+              ) : (
+                <View
+                  style={{
+                    flexDirection: "row-reverse",
+                    alignItems: "center",
+                    gap: spacing.xs,
+                  }}
+                >
+                  <IconSymbol name="person.crop.circle" size={11} color={colors.brand} />
+                  <Text style={{ ...type.caption, color: colors.brand }}>
+                    عرض الملف
+                  </Text>
+                </View>
+              )}
             </Pressable>
           ),
         }}
@@ -370,7 +411,7 @@ export default function ConversationScreen() {
             textAlign: "left",
           }}
         >
-          {current.customer_phone}
+          {isGroup ? "" : current.customer_phone}
         </Text>
         {/* Confirming an appointment is the most common thing an employee does
             mid-chat, so it sits in the pinned strip rather than behind the
@@ -575,12 +616,21 @@ export default function ConversationScreen() {
             {take.error ? <InlineAlert message={take.error.message} /> : null}
             {takeover.error ? <InlineAlert message={takeover.error.message} /> : null}
             {!current.assigned_to ? (
-              <PrimaryButton
-                label="استلام المحادثة"
-                icon="checkmark.circle"
-                loading={take.isPending}
-                onPress={() => take.mutate()}
-              />
+              canTakeConversations ? (
+                <PrimaryButton
+                  testID="take-conversation"
+                  label="استلام المحادثة"
+                  loadingLabel="جارٍ استلام المحادثة…"
+                  icon="checkmark.circle"
+                  loading={take.isPending}
+                  onPress={() => take.mutate()}
+                />
+              ) : (
+                <InlineAlert
+                  tone="warning"
+                  message="هذا الحساب غير مرتبط بعضوية فريق نشطة، لذلك لا يمكنه استلام المحادثات. تواصلي مع الإدارة لتصحيح الحساب."
+                />
+              )
             ) : isAdmin ? (
               // An admin may override a colleague, but not silently: the reason
               // is required here because it is what the owner report shows

@@ -8,7 +8,7 @@ import {
 } from "@/lib/mobile/conversations";
 import { isBookingStage } from "@/lib/booking-stage";
 import { isConversationSection } from "@/lib/conversation-meta";
-import type { CsStatus } from "@/lib/types";
+import { isConversationHandling, type CsStatus } from "@/lib/types";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -37,11 +37,13 @@ function readFilters(params: URLSearchParams): MobileConversationFilters {
   const section = params.get("section") ?? "";
   const labelId = (params.get("label") ?? "").trim().slice(0, 64);
   const stage = params.get("stage") ?? "";
+  const handling = params.get("handling") ?? "";
   return {
     status: isCsStatus(status) ? status : null,
     section: isConversationSection(section) ? section : null,
     labelId: labelId || null,
     bookingStage: isBookingStage(stage) ? stage : null,
+    handling: isConversationHandling(handling) ? handling : null,
   };
 }
 
@@ -55,7 +57,7 @@ export async function GET(request: Request) {
     return mobileError(
       400,
       "INVALID_VIEW",
-      "view must be new, mine, unassigned, specialists, drivers, or danger"
+      "view must be new, mine, unassigned, specialists, drivers, groups, or danger"
     );
   }
 

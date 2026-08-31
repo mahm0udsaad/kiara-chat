@@ -10,6 +10,7 @@ import { useTheme } from "@/providers/theme-provider";
 import type {
   BookingStage,
   ConversationFilters,
+  ConversationHandling,
   ConversationLabel,
   ConversationSection,
   CsStatus,
@@ -31,13 +32,30 @@ const STAGE_ORDER: BookingStage[] = [
   "completed",
 ];
 
+/**
+ * Who has actually dealt with the thread — the axis none of the tabs cover.
+ * "مقروءة بدون استلام" is the one the owner keeps asking for: somebody opened
+ * the chat, so it left the جديد tab, and then nobody took it.
+ */
+const HANDLING_ORDER: ConversationHandling[] = [
+  "whatsapp",
+  "unread",
+  "read_unclaimed",
+];
+export const HANDLING_LABEL: Record<ConversationHandling, string> = {
+  whatsapp: "تم الرد من واتساب",
+  unread: "غير مقروءة",
+  read_unclaimed: "مقروءة بدون استلام",
+};
+
 /** How many refinements are on — drives the badge on the inbox's filter button. */
 export function activeFilterCount(filters: ConversationFilters): number {
   return (
     (filters.status ? 1 : 0) +
     (filters.section ? 1 : 0) +
     (filters.labelId ? 1 : 0) +
-    (filters.bookingStage ? 1 : 0)
+    (filters.bookingStage ? 1 : 0) +
+    (filters.handling ? 1 : 0)
   );
 }
 
@@ -189,6 +207,22 @@ export function ConversationFiltersSheet({
             ))}
           </Group>
 
+          <Group title="المتابعة">
+            <Choice
+              label="كل المحادثات"
+              selected={!filters.handling}
+              onPress={() => onChange({ ...filters, handling: null })}
+            />
+            {HANDLING_ORDER.map((handling) => (
+              <Choice
+                key={handling}
+                label={HANDLING_LABEL[handling]}
+                selected={filters.handling === handling}
+                onPress={() => onChange({ ...filters, handling })}
+              />
+            ))}
+          </Group>
+
           <Group title="القسم">
             <Choice
               label="كل الأقسام"
@@ -253,6 +287,7 @@ export function ConversationFiltersSheet({
                 section: null,
                 labelId: null,
                 bookingStage: null,
+                handling: null,
               })
             }
           />

@@ -20,6 +20,7 @@ import { specialistConversationIdsFromLabels } from "@/lib/specialist-conversati
 import type {
   BookingStage,
   Conversation,
+  ConversationHandling,
   ConversationSection,
   CsStatus,
 } from "@/lib/types";
@@ -42,6 +43,34 @@ export function conversationCsStatus(
     return configured;
   }
   return conversation.status === "resolved" ? "resolved" : "open";
+}
+
+/**
+ * A WhatsApp group thread. The group's jid sits in `customer_phone` — it is
+ * the address we send to, exactly as a phone is — and this flag is what keeps
+ * it out of the customer queue.
+ */
+export function isGroupConversation(
+  conversation: Pick<Conversation, "metadata">
+): boolean {
+  return (
+    (conversation.metadata as { chat_kind?: unknown } | null)?.chat_kind ===
+    "group"
+  );
+}
+
+/**
+ * True once someone answered this thread from the WhatsApp app on the phone
+ * rather than from here. Set by the ingest webhook on every `fromMe` message
+ * our own send path did not produce.
+ */
+export function isHandledOnWhatsApp(
+  conversation: Pick<Conversation, "metadata">
+): boolean {
+  return Boolean(
+    (conversation.metadata as { handled_on_whatsapp?: unknown } | null)
+      ?.handled_on_whatsapp
+  );
 }
 
 /**
@@ -108,6 +137,8 @@ export function toMobileConversation(
     assigned_to: conversation.assigned_to ?? null,
     unread_count: conversation.unread_count ?? 0,
     csStatus: conversationCsStatus(conversation),
+    handledOnWhatsApp: isHandledOnWhatsApp(conversation),
+    isGroup: isGroupConversation(conversation),
     bookingStage: bookingStageOf(conversation),
     dangerMinutes: conversationDangerMinutes(
       conversation,
@@ -123,6 +154,13 @@ export function toMobileConversation(
 function matchesSearch(conversation: Conversation, rawQuery: string): boolean {
   const query = rawQuery.trim().toLocaleLowerCase("ar");
   if (!query) return true;
+  if (isGroupConversation(conversation)) {
+    // Its "phone" is a jid — matching digits against it would surface a group
+    // for any number that happens to share a run of digits with the jid.
+    return (conversation.customer_name ?? "")
+      .toLocaleLowerCase("ar")
+      .includes(query);
+  }
   return (
     (conversation.customer_name ?? "").toLocaleLowerCase("ar").includes(query) ||
     conversation.customer_phone.toLocaleLowerCase("ar").includes(query) ||
@@ -140,6 +178,12 @@ function matchesView(
   teamMemberId: string | null,
   driverPhoneSet: ReadonlySet<string> = EMPTY_PHONE_SET,
 ): boolean {
+  // Groups are their own room. They are checked before anything else because
+  // a group's jid is not a phone, so every phone-keyed rule below would be
+  // answering a question that doesn't apply to it.
+  const isGroup = isGroupConversation(conversation);
+  if (view === "groups") return isGroup;
+  if (isGroup) return false;
   const isSpecialist =
     specialistPhoneSet.has(normalizePhone(conversation.customer_phone)) ||
     specialistConversationIdSet.has(conversation.id);
@@ -231,7 +275,9 @@ async function lastMessagesFor(
   const admin = getAdminSupabaseClient();
   let query = admin
     .from("messages")
-    .select("conversation_id, role, content, message_type, delivery_status, created_at")
+    .select(
+      "conversation_id, role, content, message_type, delivery_status, created_at, metadata",
+    )
     .in("conversation_id", ids)
     .order("created_at", { ascending: false })
     // A ceiling on a pathological day; the window above is the real bound.
@@ -254,6 +300,9 @@ async function lastMessagesFor(
       messageType: String(row.message_type ?? "text"),
       text: String(row.content ?? "").replace(/\s+/g, " ").trim().slice(0, 160),
       deliveryStatus: (row.delivery_status as string | null) ?? null,
+      participantName:
+        ((row.metadata as { participant_name?: unknown } | null)
+          ?.participant_name as string | undefined) ?? null,
     });
   }
   return out;
@@ -291,6 +340,8 @@ export interface MobileConversationFilters {
   labelId: string | null;
   /** Where the booking itself stands — the stage the thread is filed under. */
   bookingStage: BookingStage | null;
+  /** How the thread has been dealt with so far — see `matchesHandling`. */
+  handling: ConversationHandling | null;
 }
 
 const NO_FILTERS: MobileConversationFilters = {
@@ -298,7 +349,29 @@ const NO_FILTERS: MobileConversationFilters = {
   section: null,
   labelId: null,
   bookingStage: null,
+  handling: null,
 };
+
+/**
+ * Who has actually dealt with the thread, as opposed to what state it is
+ * filed under. The three cases the salon asks about by name:
+ *
+ * - `whatsapp`: answered from the phone's WhatsApp app, so the reply exists
+ *   but nothing here records who sent it.
+ * - `unread`: nobody has opened it yet.
+ * - `read_unclaimed`: somebody opened it and then left it — read, but still
+ *   nobody's job. These are the ones that fall through the cracks, and until
+ *   now no view separated them from the unread pile.
+ */
+function matchesHandling(
+  conversation: Conversation,
+  handling: ConversationHandling
+): boolean {
+  if (handling === "whatsapp") return isHandledOnWhatsApp(conversation);
+  const unread = conversation.unread_count ?? 0;
+  if (handling === "unread") return unread > 0;
+  return unread === 0 && !conversation.assigned_to;
+}
 
 export async function listMobileConversations(options: {
   isAdmin: boolean;
@@ -347,6 +420,9 @@ export async function listMobileConversations(options: {
       if (filters.bookingStage && bookingStageOf(conversation) !== filters.bookingStage) {
         return false;
       }
+      if (filters.handling && !matchesHandling(conversation, filters.handling)) {
+        return false;
+      }
       return true;
     });
   // One shape for every tab: the matcher takes the same classification each
@@ -372,6 +448,7 @@ export async function listMobileConversations(options: {
     unassigned: inView("unassigned").length,
     specialists: inView("specialists").length,
     drivers: inView("drivers").length,
+    groups: inView("groups").length,
     danger: inView("danger").length,
   };
   const matching = inView(options.view);

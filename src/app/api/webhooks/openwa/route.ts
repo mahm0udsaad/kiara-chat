@@ -12,6 +12,7 @@ import { broadcastTyping } from "@/lib/presence";
 import { notifyInboundInboxMessage } from "@/lib/inbox-notifications";
 import {
   findOrCreateConversation,
+  findOrCreateGroupConversation,
   findConversationByLid,
   findConversationByPhone,
   rememberChatLid,
@@ -96,14 +97,21 @@ export async function POST(request: NextRequest) {
 
   const phone = normalizeE164(event.customerPhone ?? "");
   const chatLid = event.chatLid?.trim() || null;
-  if (!phone && !chatLid) {
+  // A group addresses itself by jid; the phone on the event is whoever spoke
+  // inside it, which is a participant and never the thread's address.
+  const groupJid = event.chatJid?.trim().endsWith("@g.us")
+    ? event.chatJid.trim()
+    : null;
+  if (!phone && !chatLid && !groupJid) {
     return NextResponse.json({ error: "Missing customerPhone" }, { status: 400 });
   }
 
   // pushName is only the customer's name on an inbound message; on fromMe it's
   // Kiara's own account name (the engine already nulls it, belt and braces here).
   let conv: { id: string } | null = null;
-  if (phone) {
+  if (groupJid) {
+    conv = await findOrCreateGroupConversation(groupJid, event.groupSubject);
+  } else if (phone) {
     conv = await findOrCreateConversation(
       phone,
       event.fromMe ? null : event.customerName
@@ -149,6 +157,12 @@ export async function POST(request: NextRequest) {
   const metadata: Record<string, unknown> = {};
   if (mediaSlots.length) metadata.media = mediaSlots;
   if (event.fromMe) metadata.source = "whatsapp_app";
+  // In a group the thread is the group, so the bubble has to carry its own
+  // speaker — otherwise every inbound line looks like it came from one person.
+  if (groupJid && !event.fromMe) {
+    if (event.participantName) metadata.participant_name = event.participantName;
+    if (phone) metadata.participant_phone = phone;
+  }
 
   const messageId = await saveMessage({
     conversationId: conv.id,
@@ -167,7 +181,9 @@ export async function POST(request: NextRequest) {
 
   // A live inbound wakes the employee who owns the chat, or — when nobody has
   // claimed it yet — the whole team, so it does not sit unanswered.
-  if (!event.fromMe && isLive(event.timestamp)) {
+  // Groups are left out: a staff room can produce fifty messages in a minute,
+  // and an unclaimed thread notifies the whole team on every one of them.
+  if (!event.fromMe && !groupJid && isLive(event.timestamp)) {
     after(() => notifyInboundInboxMessage(conversationId));
   }
 
@@ -179,7 +195,9 @@ export async function POST(request: NextRequest) {
   // inbound only: the pairing-time history backfill replays old messages
   // through this same endpoint, and answering a week-old question is worse
   // than staying quiet.
-  if (!event.fromMe && phone && isLive(event.timestamp)) {
+  // Groups are excluded outright: the assistant answers a customer asking a
+  // question, and a staff group is a room full of people talking to each other.
+  if (!event.fromMe && !groupJid && phone && isLive(event.timestamp)) {
     after(() =>
       runBotTurn({
         conversationId,

@@ -1,6 +1,13 @@
 import { Link, Stack } from "expo-router";
 import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
-import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
+import {
+  FlatList,
+  Pressable,
+  RefreshControl,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -8,6 +15,7 @@ import Animated, {
 
 import {
   ConversationFiltersSheet,
+  HANDLING_LABEL,
   activeFilterCount,
 } from "@/components/inbox/conversation-filters-sheet";
 import { PrimaryButton } from "@/components/primary-button";
@@ -41,6 +49,7 @@ const views: SegmentOption<InboxView>[] = [
   { value: "unassigned", label: "غير مستلمة" },
   { value: "specialists", label: "الأخصائيات" },
   { value: "drivers", label: "السائقون" },
+  { value: "groups", label: "المجموعات" },
   { value: "danger", label: "خطر" },
 ];
 
@@ -112,15 +121,25 @@ const ConversationRow = memo(function ConversationRow({
 
   const overdue = conversation.dangerMinutes !== null && conversation.dangerMinutes >= 6;
   const unread = conversation.unread_count ?? 0;
-  const displayName = conversation.customer_name || conversation.customer_phone;
+  const isGroup = conversation.isGroup ?? false;
+  // A group's "phone" is its jid, which is not something to show anybody — an
+  // unnamed group says so instead.
+  const displayName =
+    conversation.customer_name || (isGroup ? "مجموعة" : conversation.customer_phone);
   const lastMessage = conversation.lastMessage ?? null;
   const mediaPreview = lastMessage ? MEDIA_PREVIEW[lastMessage.messageType] : undefined;
   // Prefer a real caption when media has one. Unknown text-bearing message
   // types (for example reactions) remain readable instead of exposing an
   // internal provider type to the employee.
-  const previewText = lastMessage
+  const previewBody = lastMessage
     ? lastMessage.text || mediaPreview?.label || ""
-    : conversation.customer_phone;
+    : isGroup
+      ? ""
+      : conversation.customer_phone;
+  // In a group every line is from someone different, so the row names them —
+  // without it the preview reads as one person talking to themselves.
+  const speaker = isGroup ? lastMessage?.participantName?.trim() : null;
+  const previewText = speaker ? `${speaker}: ${previewBody}` : previewBody;
 
   return (
     // `asChild` keeps the row a real View tree. A plain <Link> renders its
@@ -146,7 +165,7 @@ const ConversationRow = memo(function ConversationRow({
             }}
           >
             <Avatar
-              name={conversation.customer_name}
+              name={displayName}
               seed={conversation.customer_phone}
               size={56}
             />
@@ -246,7 +265,11 @@ const ConversationRow = memo(function ConversationRow({
                     tone="neutral"
                   />
                 ) : null}
-                {staff === "specialist" ? (
+                {isGroup ? (
+                  // Groups are nobody's ticket, so the unclaimed warning below
+                  // would be permanent and meaningless on every one of them.
+                  <Badge tone="brand" icon="person.2" label="مجموعة" />
+                ) : staff === "specialist" ? (
                   <Badge tone="brand" icon="sparkles" label="أخصائية" />
                 ) : staff === "driver" ? (
                   <Badge tone="brand" icon="car" label="سائق" />
@@ -255,6 +278,11 @@ const ConversationRow = memo(function ConversationRow({
                 ) : null}
                 {overdue ? (
                   <Badge tone="danger" icon="hourglass" label="تنتظر ردًا" />
+                ) : null}
+                {/* Otherwise the thread reads as ignored: the reply exists,
+                    it was just typed on the phone and never recorded here. */}
+                {conversation.handledOnWhatsApp ? (
+                  <Badge tone="info" icon="message" label="رُدّ من واتساب" />
                 ) : null}
                 {conversation.labels?.map((label) => (
                   <Badge
@@ -288,6 +316,7 @@ const ConversationRow = memo(function ConversationRow({
 
 export default function InboxScreen() {
   const { colors } = useTheme();
+  const android = process.env.EXPO_OS === "android";
   const [view, setView] = useState<InboxView>("new");
   const [search, setSearch] = useState("");
   // The web inbox's status/section/label dropdowns, folded into one sheet.
@@ -333,6 +362,13 @@ export default function InboxScreen() {
         key: "stage",
         label: bookingStageLabel[filters.bookingStage],
         clear: () => setFilters((current) => ({ ...current, bookingStage: null })),
+      });
+    }
+    if (filters.handling) {
+      chips.push({
+        key: "handling",
+        label: HANDLING_LABEL[filters.handling],
+        clear: () => setFilters((current) => ({ ...current, handling: null })),
       });
     }
     return chips;
@@ -381,12 +417,16 @@ export default function InboxScreen() {
     <>
       <Stack.Screen
         options={{
-          headerSearchBarOptions: {
-            placeholder: "بحث بالاسم أو رقم الجوال",
-            onChangeText: (event) => setSearch(event.nativeEvent.text),
-            onClose: () => setSearch(""),
-            hideWhenScrolling: false,
-          },
+          // The native-stack header search control is iOS-only. Android gets
+          // the always-visible field in the list header below.
+          headerSearchBarOptions: android
+            ? undefined
+            : {
+                placeholder: "بحث بالاسم أو رقم الجوال",
+                onChangeText: (event) => setSearch(event.nativeEvent.text),
+                onClose: () => setSearch(""),
+                hideWhenScrolling: false,
+              },
         }}
       />
 
@@ -414,6 +454,62 @@ export default function InboxScreen() {
               paddingBottom: spacing.md,
             }}
           >
+            {android ? (
+              <View
+                style={{
+                  minHeight: hitSize.comfortable,
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  gap: spacing.sm,
+                  paddingHorizontal: spacing.md,
+                  borderRadius: radius.lg,
+                  borderCurve: "continuous",
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  backgroundColor: colors.surface,
+                }}
+              >
+                <IconSymbol
+                  name="magnifyingglass"
+                  color={colors.textTertiary}
+                  size={18}
+                />
+                <TextInput
+                  testID="conversation-search"
+                  accessibilityLabel="بحث في المحادثات"
+                  placeholder="بحث بالاسم أو رقم الجوال"
+                  placeholderTextColor={colors.textTertiary}
+                  value={search}
+                  onChangeText={setSearch}
+                  returnKeyType="search"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={{
+                    flex: 1,
+                    minHeight: hitSize.comfortable,
+                    ...type.body,
+                    color: colors.text,
+                    ...rtlText,
+                  }}
+                />
+                {search ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="مسح البحث"
+                    hitSlop={8}
+                    onPress={() => setSearch("")}
+                    style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
+                  >
+                    <IconSymbol
+                      name="xmark"
+                      color={colors.textTertiary}
+                      size={19}
+                    />
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+
             {/* The inbox views, plus the way into everything the web keeps in
                 dropdowns next to its search box. */}
             <View
@@ -533,7 +629,9 @@ export default function InboxScreen() {
                   ? "لا توجد محادثات لأرقام الأخصائيات المحفوظة."
                   : view === "drivers"
                     ? "لا توجد محادثات لأرقام السائقين المحفوظة."
-                    : "لا توجد محادثات مطابقة لهذا الفلتر حاليًا."
+                    : view === "groups"
+                      ? "لم تصل رسائل من أي مجموعة بعد."
+                      : "لا توجد محادثات مطابقة لهذا الفلتر حاليًا."
               }
             />
           )
