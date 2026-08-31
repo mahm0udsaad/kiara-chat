@@ -155,6 +155,7 @@ export type UploadFile = {
 export async function apiUpload<T>(
   path: string,
   parts: Record<string, string | UploadFile>,
+  options: { timeoutMs?: number } = {},
 ): Promise<T> {
   if (!apiUrl) {
     throw new ApiError("أضيفي EXPO_PUBLIC_API_URL في ملف .env", 0, "NO_API_URL");
@@ -173,18 +174,33 @@ export async function apiUpload<T>(
     else form.append(key, value as unknown as Blob);
   }
 
+  // An upload that never answers used to hang the screen forever — there was
+  // no deadline here at all. Callers that send on a person's behalf name their
+  // own; the rest get the ordinary one.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? TIMEOUT_MS);
+
   let response: Response;
   try {
     response = await globalThis.fetch(`${apiUrl}/api/mobile/v1${path}`, {
       method: "POST",
       body: form,
+      signal: controller.signal,
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${data.session.access_token}`,
       },
     });
   } catch {
-    throw new ApiError("تعذر رفع الملف. تحققي من الإنترنت.", 0, "NETWORK");
+    throw new ApiError(
+      controller.signal.aborted
+        ? "الخادم تأخر في الرد. حاولي مرة أخرى."
+        : "تعذر رفع الملف. تحققي من الإنترنت.",
+      0,
+      controller.signal.aborted ? "TIMEOUT" : "NETWORK",
+    );
+  } finally {
+    clearTimeout(timer);
   }
 
   return unwrap<T>(response);

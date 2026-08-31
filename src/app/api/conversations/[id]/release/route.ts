@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { denyIfRouted } from "@/lib/conversation-access";
 import { releaseConversation } from "@/lib/interactions";
+import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
 
 export async function POST(
   _request: Request,
@@ -13,5 +14,10 @@ export async function POST(
   const denied = await denyIfRouted(id, session);
   if (denied) return denied;
   await releaseConversation(id);
+  await recordConversationEvent(id, CONVERSATION_EVENTS.released, {
+    userId: session.userId,
+    teamMemberId: session.teamMemberId,
+    role: session.role,
+  });
   return NextResponse.json({ ok: true });
 }

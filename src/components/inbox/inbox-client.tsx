@@ -60,6 +60,7 @@ const CreateOrderSheet = lazy(loadCreateOrderSheet);
 const CatalogSheet = lazy(() =>
   import("./catalog-sheet").then((module) => ({ default: module.CatalogSheet }))
 );
+import { ConversationAuditPanel } from "@/components/audit-trail";
 import { Modal } from "@/components/ui/modal";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -2523,6 +2524,15 @@ export function InboxClient({
                     </button>
                   </div>
                 </section>
+
+                {/* Every change made above — status, stage, labels, notes —
+                    lands in this trail with a name against it. Owner-only, and
+                    loaded only when she asks for it. */}
+                {isAdmin && selectedId ? (
+                  <section className="flex flex-col gap-2">
+                    <ConversationAuditPanel conversationId={selectedId} />
+                  </section>
+                ) : null}
               </div>
             </Modal>
 

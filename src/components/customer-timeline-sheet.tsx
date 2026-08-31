@@ -16,6 +16,7 @@ import {
   UserRound,
   Wallet,
 } from "lucide-react";
+import { ConversationAuditPanel } from "@/components/audit-trail";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -86,11 +87,14 @@ export function CustomerTimelineSheet({
   phone,
   name,
   open,
+  isAdmin = false,
   onClose,
 }: {
   phone: string | null;
   name?: string | null;
   open: boolean;
+  /** Gates the responsibility trail — the endpoint refuses everyone else. */
+  isAdmin?: boolean;
   onClose: () => void;
 }) {
   const [data, setData] = useState<CustomerTimeline | null>(null);
@@ -188,6 +192,7 @@ export function CustomerTimelineSheet({
           ) : data ? (
             <TimelineBody
               data={data}
+              isAdmin={isAdmin}
               analysis={analysis}
               analyzing={analyzing}
               analysisError={analysisError}
@@ -202,12 +207,14 @@ export function CustomerTimelineSheet({
 
 function TimelineBody({
   data,
+  isAdmin,
   analysis,
   analyzing,
   analysisError,
   onAnalyze,
 }: {
   data: CustomerTimeline;
+  isAdmin: boolean;
   analysis: CustomerAnalysisResult | null;
   analyzing: boolean;
   analysisError: string | null;
@@ -265,6 +272,11 @@ function TimelineBody({
         error={analysisError}
         onAnalyze={onAnalyze}
       />
+
+      {/* Who handled this customer, and what each of them did. Owner-only. */}
+      {isAdmin && customer.conversationId ? (
+        <ConversationAuditPanel conversationId={customer.conversationId} />
+      ) : null}
 
       <Feed data={data} />
     </div>

@@ -271,11 +271,14 @@ export function RekazReservations({
   orders,
   todayKey,
   initialFollowUps,
+  isAdmin = false,
 }: {
   snapshot: ReservationsSnapshot | null;
   orders: DriverOrderRow[];
   todayKey: string;
   initialFollowUps: ReservationFollowUpMap;
+  /** Passed through to the customer sheet, which gates the audit trail on it. */
+  isAdmin?: boolean;
 }) {
   const router = useRouter();
   const [view, setView] = useState<"table" | "calendar">("calendar");
@@ -1389,6 +1392,7 @@ export function RekazReservations({
             phone={timelineFor.phone}
             name={timelineFor.name}
             open
+            isAdmin={isAdmin}
             onClose={() => setTimelineFor(null)}
           />
         </Suspense>

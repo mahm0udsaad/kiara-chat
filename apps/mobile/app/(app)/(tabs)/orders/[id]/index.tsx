@@ -29,7 +29,6 @@ import {
   relativeDayLabel,
   telUrl,
   tripTypeLabel,
-  whatsappUrl,
 } from "@/lib/format";
 import { tapFeedback } from "@/lib/haptics";
 import { useBootstrap, useOrder } from "@/lib/queries";
@@ -232,6 +231,7 @@ export default function OrderDetailScreen() {
   const stalled = executionIsStalled(execution);
   const edited = wasEdited(order.created_at, order.updated_at);
   const canViewPrice = bootstrap.data?.capabilities.canViewOrderPrices === true;
+  const isAdmin = bootstrap.data?.session.role === "admin";
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -288,10 +288,19 @@ export default function OrderDetailScreen() {
               label="اتصال"
               onPress={() => void Linking.openURL(telUrl(order.customer_phone))}
             />
+            {/* The thread this order came out of, opened where the employee can
+                actually reply as the salon. Handing her off to WhatsApp put
+                her in her own personal chat with the customer — a different
+                sender, and a message nobody on the team ever sees. */}
             <QuickAction
               icon="message"
-              label="واتساب"
-              onPress={() => void Linking.openURL(whatsappUrl(order.customer_phone))}
+              label="المحادثة"
+              onPress={() =>
+                router.push({
+                  pathname: "/inbox/[id]",
+                  params: { id: order.conversation_id },
+                })
+              }
             />
             <QuickAction
               icon="mappin.and.ellipse"
@@ -533,6 +542,21 @@ export default function OrderDetailScreen() {
               </>
             ) : null}
           </Card>
+
+          {/* The full trail — who created, edited, dispatched, reminded, and
+              every field step — for the one person who has to answer for it. */}
+          {isAdmin ? (
+            <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
+              <DetailRow
+                icon="clock"
+                label="سجل الإجراءات"
+                value="من فعل ماذا"
+                onPress={() =>
+                  router.push({ pathname: "/orders/[id]/activity", params: { id } })
+                }
+              />
+            </Card>
+          ) : null}
         </View>
       </ScrollView>
 

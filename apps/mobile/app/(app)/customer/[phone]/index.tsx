@@ -11,7 +11,11 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { formatPhone, formatters } from "@/lib/format";
-import { useAnalyzeCustomer, useCustomerTimeline } from "@/lib/queries";
+import {
+  useAnalyzeCustomer,
+  useBootstrap,
+  useCustomerTimeline,
+} from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { CustomerInsights, TimelineEvent } from "@/types/api";
 
@@ -362,6 +366,7 @@ export default function CustomerProfileScreen() {
   const phone = String(rawPhone ?? "");
   const timeline = useCustomerTimeline(phone);
   const analysis = useAnalyzeCustomer(phone);
+  const isAdmin = useBootstrap().data?.session.role === "admin";
 
   const customer = timeline.data?.customer;
   const revenue = timeline.data?.revenue;
@@ -535,6 +540,47 @@ export default function CustomerProfileScreen() {
                       </Text>
                     </Pressable>
                   </Link>
+
+                  {/* Owner-only: who held this thread, and what each of them
+                      did while they held it. Agents get a 403 from the API,
+                      so the entrance is not shown to them either. */}
+                  {isAdmin ? (
+                    <Link
+                      href={{
+                        pathname: "/customer/[phone]/report",
+                        params: {
+                          phone,
+                          conversationId: customer.conversationId,
+                        },
+                      }}
+                      asChild
+                    >
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="سجل المسؤولية والإجراءات"
+                        style={({ pressed }) => ({
+                          minHeight: hitSize.comfortable,
+                          flexDirection: "row-reverse",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: spacing.sm,
+                          borderRadius: radius.md,
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                          opacity: pressed ? 0.72 : 1,
+                        })}
+                      >
+                        <IconSymbol
+                          name="person.crop.circle"
+                          size={16}
+                          color={colors.brand}
+                        />
+                        <Text style={{ ...type.calloutStrong, color: colors.brand }}>
+                          سجل المسؤولية والإجراءات
+                        </Text>
+                      </Pressable>
+                    </Link>
+                  ) : null}
                 </>
               ) : null}
             </Card>

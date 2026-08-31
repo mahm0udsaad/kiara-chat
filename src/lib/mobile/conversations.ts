@@ -16,6 +16,7 @@ import {
 import { normalizePhone, phoneMatches } from "@/lib/phone";
 import { specialistConversationIdsFromLabels } from "@/lib/specialist-conversations";
 import type {
+  BookingStage,
   Conversation,
   ConversationSection,
   CsStatus,
@@ -214,12 +215,15 @@ export interface MobileConversationFilters {
   status: CsStatus | null;
   section: ConversationSection | null;
   labelId: string | null;
+  /** Where the booking itself stands — the stage the thread is filed under. */
+  bookingStage: BookingStage | null;
 }
 
 const NO_FILTERS: MobileConversationFilters = {
   status: null,
   section: null,
   labelId: null,
+  bookingStage: null,
 };
 
 export async function listMobileConversations(options: {
@@ -262,6 +266,9 @@ export async function listMobileConversations(options: {
         filters.labelId &&
         !(labelAssignments[conversation.id] ?? []).includes(filters.labelId)
       ) {
+        return false;
+      }
+      if (filters.bookingStage && bookingStageOf(conversation) !== filters.bookingStage) {
         return false;
       }
       return true;

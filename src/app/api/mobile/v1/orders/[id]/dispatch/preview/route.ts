@@ -37,13 +37,9 @@ export async function POST(
   if (!driverId) {
     return mobileError(400, "DRIVER_REQUIRED", "driverId is required");
   }
-  if (!specialistNote) {
-    return mobileError(
-      400,
-      "SPECIALIST_NOTE_REQUIRED",
-      "specialistNote is required",
-    );
-  }
+  // Deliberately optional: when the employee records her instructions instead
+  // of typing them there is no note to send, and the booking copy the preview
+  // builds stands on its own.
   if (specialistNote.length > 500) {
     return mobileError(
       400,
@@ -65,6 +61,13 @@ export async function POST(
     });
     return mobileData({ preview });
   } catch (error) {
+    // Building a preview for an order that already went out is not a server
+    // fault — it is the app's answer to an employee opening dispatch twice,
+    // and it has to carry the code the screen keys its message off. A 500 with
+    // English prose left her staring at a form that could never be sent.
+    if (error instanceof Error && error.message.includes("تم إرسال هذا الطلب بالفعل")) {
+      return mobileError(409, "ORDER_ALREADY_DISPATCHED", "The order was already dispatched");
+    }
     return mobileServerError(
       error,
       "DISPATCH_PREVIEW_FAILED",

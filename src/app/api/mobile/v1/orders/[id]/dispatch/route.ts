@@ -1,4 +1,8 @@
-import { dispatchBooking, orderExists } from "@/lib/dispatch";
+import {
+  dispatchBooking,
+  orderExists,
+  type DispatchBookingInput,
+} from "@/lib/dispatch";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -11,6 +15,8 @@ import { OperationalCommandError } from "@/lib/operational-commands";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** A recording longer than this is a phone call, not a note — same cap as web. */
+const MAX_VOICE_BYTES = 8 * 1024 * 1024;
 
 export async function POST(
   request: Request,
@@ -19,11 +25,46 @@ export async function POST(
   const auth = await authorizeMobileRequest(request);
   if (auth.response) return auth.response;
 
-  const payload: unknown = await request.json().catch(() => null);
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return mobileError(400, "INVALID_JSON", "A JSON object is required");
+  // A written dispatch is JSON. One carrying a recorded note for the specialist
+  // is multipart, so the audio streams up as bytes instead of being inflated to
+  // base64 by the phone — the same split the web dialog makes.
+  const multipart = (request.headers.get("content-type") ?? "").includes(
+    "multipart/form-data",
+  );
+  let body: Record<string, unknown>;
+  let specialistVoice: DispatchBookingInput["specialistVoice"];
+  if (multipart) {
+    let form: FormData;
+    try {
+      form = await request.formData();
+    } catch {
+      return mobileError(400, "INVALID_FORM", "Invalid multipart body");
+    }
+    body = Object.fromEntries(
+      [...form.entries()].filter(([, value]) => typeof value === "string"),
+    );
+    const voice = form.get("specialistVoice");
+    if (voice instanceof File && voice.size > 0) {
+      if (voice.size > MAX_VOICE_BYTES) {
+        return mobileError(
+          413,
+          "VOICE_NOTE_TOO_LARGE",
+          "The voice note is too long",
+        );
+      }
+      specialistVoice = {
+        base64: Buffer.from(await voice.arrayBuffer()).toString("base64"),
+        contentType: voice.type || "audio/mp4",
+        filename: voice.name || "note.m4a",
+      };
+    }
+  } else {
+    const payload: unknown = await request.json().catch(() => null);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return mobileError(400, "INVALID_JSON", "A JSON object is required");
+    }
+    body = payload as Record<string, unknown>;
   }
-  const body = payload as Record<string, unknown>;
   const specialistId =
     typeof body.specialistId === "string" ? body.specialistId.trim() : "";
   const driverId = typeof body.driverId === "string" ? body.driverId.trim() : "";
@@ -76,6 +117,7 @@ export async function POST(
       driverId,
       driverMessage,
       specialistMessage,
+      specialistVoice,
       expectedVersion,
       idempotencyKey,
       actor: {

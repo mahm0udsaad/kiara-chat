@@ -23,6 +23,7 @@ import {
   UserRound,
   Wallet,
 } from "lucide-react";
+import { OrderAuditPanel } from "@/components/audit-trail";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -529,6 +530,7 @@ export function OrdersClient({
               orders={orders}
               todayKey={todayKey}
               initialFollowUps={initialReservationFollowUps}
+              isAdmin={isAdmin}
             />
           </TabsContent>
         </Tabs>
@@ -1086,6 +1088,11 @@ function OrderDetailsSheet({
             {order.sent_at ? ` · أُرسل ${formatRelativeTime(order.sent_at)}` : ""}
           </p>
           <EditedLine order={order} className="-mt-2 text-xs text-muted-foreground" />
+
+          {/* "عُدّل بواسطة" above names the last editor only. The owner needs
+              the whole chain — who raised it, who changed what, who sent it,
+              and every field step — so it lives one click away, hers alone. */}
+          {isAdmin ? <OrderAuditPanel orderId={order.id} /> : null}
         </div>
       </SheetContent>
     </Sheet>

@@ -27,6 +27,7 @@ import type {
   ConversationsResponse,
   CreateOrderInput,
   CustomerAnalysisResult,
+  ConversationAuditReport,
   CustomerTimeline,
   InboxView,
   DispatchInput,
@@ -40,6 +41,7 @@ import type {
   InternalNote,
   OrderDetailResponse,
   OrderPatch,
+  OrderAuditLog,
   OrderReminderContext,
   OrderReminderDelivery,
   OrderSummary,
@@ -68,6 +70,7 @@ export const queryKeys = {
       filters.status ?? "",
       filters.section ?? "",
       filters.labelId ?? "",
+      filters.bookingStage ?? "",
     ] as const,
   conversation: (id: string) => ["conversation", id] as const,
   orders: (search: string) => ["orders", search] as const,
@@ -84,6 +87,8 @@ export const queryKeys = {
   fieldOrder: (id: string) => ["field-order", id] as const,
   customerTimeline: (phone: string) => ["customer-timeline", phone] as const,
   conversationNotes: (id: string) => ["conversation-notes", id] as const,
+  conversationAudit: (id: string) => ["conversation-audit", id] as const,
+  orderAudit: (id: string) => ["order-audit", id] as const,
   catalog: ["catalog"] as const,
   mediaUrl: (path: string) => ["media-url", path] as const,
 };
@@ -105,6 +110,7 @@ export const EMPTY_CONVERSATION_FILTERS: ConversationFilters = {
   status: null,
   section: null,
   labelId: null,
+  bookingStage: null,
 };
 
 export function useConversations(
@@ -126,6 +132,7 @@ export function useConversations(
       if (filters.status) params.set("status", filters.status);
       if (filters.section) params.set("section", filters.section);
       if (filters.labelId) params.set("label", filters.labelId);
+      if (filters.bookingStage) params.set("stage", filters.bookingStage);
       return apiRequest<ConversationsResponse>(`/conversations?${params.toString()}`);
     },
     getNextPageParam: (lastPage) =>
@@ -140,7 +147,8 @@ export function useConversations(
         previousKey?.[1] === view &&
         previousKey?.[3] === (filters.status ?? "") &&
         previousKey?.[4] === (filters.section ?? "") &&
-        previousKey?.[5] === (filters.labelId ?? "");
+        previousKey?.[5] === (filters.labelId ?? "") &&
+        previousKey?.[6] === (filters.bookingStage ?? "");
       return sameViewAndFilters ? previous : undefined;
     },
     refetchInterval: 30_000,
@@ -705,15 +713,34 @@ export function useUpdateOrder(id: string) {
 export function useDispatchOrder(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: DispatchInput) =>
+    mutationFn: ({ specialistVoice, ...input }: DispatchInput) => {
       // The server reports what actually left the building, per recipient.
       // Dropping those two flags here is what let a dispatch that WhatsApp
       // refused outright still read as sent on the phone.
-      apiRequest<{
+      type Result = {
         order: OrderDetailResponse["order"];
         driverSent: boolean;
         specialistSent: boolean | null;
-      }>(
+      };
+      const idempotencyKey = Crypto.randomUUID();
+      // A recorded note has to travel as multipart — the same deadline either
+      // way, because it is the same send.
+      if (specialistVoice) {
+        return apiUpload<Result>(
+          `/orders/${id}/dispatch`,
+          {
+            specialistId: input.specialistId,
+            driverId: input.driverId,
+            driverMessage: input.driverMessage,
+            specialistMessage: input.specialistMessage,
+            expectedVersion: String(input.expectedVersion),
+            idempotencyKey,
+            specialistVoice,
+          },
+          { timeoutMs: SEND_TIMEOUT_MS },
+        );
+      }
+      return apiRequest<Result>(
         `/orders/${id}/dispatch`,
         {
           method: "POST",
@@ -721,12 +748,10 @@ export function useDispatchOrder(id: string) {
           // this answers — and the server, not the phone, decides when a send
           // has failed.
           timeoutMs: SEND_TIMEOUT_MS,
-          body: JSON.stringify({
-            ...input,
-            idempotencyKey: Crypto.randomUUID(),
-          }),
+          body: JSON.stringify({ ...input, idempotencyKey }),
         },
-      ),
+      );
+    },
     // Same reason as above: the screen closes on send, and holding it open
     // for the refetches only makes a finished action look unfinished.
     onSuccess: () => {
@@ -903,5 +928,29 @@ export function useFieldPushTest() {
         body: JSON.stringify({ deviceId }),
       });
     },
+  });
+}
+
+/**
+ * The owner's responsibility trail for one thread: who held it, for how long,
+ * and what they did while they did. Admin-only on the server, so the caller
+ * passes `enabled` from the session rather than letting an agent 403 on open.
+ */
+export function useConversationAudit(id: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.conversationAudit(id),
+    queryFn: () => apiRequest<ConversationAuditReport>(`/conversations/${id}/audit`),
+    enabled: Boolean(id) && enabled,
+    staleTime: 60_000,
+  });
+}
+
+/** Every action taken on one order, oldest first. */
+export function useOrderAudit(id: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.orderAudit(id),
+    queryFn: () => apiRequest<OrderAuditLog>(`/orders/${id}/audit`),
+    enabled: Boolean(id) && enabled,
+    staleTime: 60_000,
   });
 }

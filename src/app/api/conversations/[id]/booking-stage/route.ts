@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { isBookingStage } from "@/lib/booking-stage";
+import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
+import { bookingStageOf, isBookingStage } from "@/lib/booking-stage";
+import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { denyIfRouted } from "@/lib/conversation-access";
 import { setBookingStage } from "@/lib/interactions";
 import { getKiaraSession } from "@/lib/tenant";
@@ -21,7 +23,25 @@ export async function POST(
   }
 
   try {
+    const { data: before } = await getAdminSupabaseClient()
+      .from("conversations")
+      .select("metadata")
+      .eq("id", id)
+      .maybeSingle();
+    const previous = before ? bookingStageOf({ metadata: before.metadata }) : null;
     await setBookingStage(id, body.stage);
+    if (previous !== body.stage) {
+      await recordConversationEvent(
+        id,
+        CONVERSATION_EVENTS.stageChanged,
+        {
+          userId: session.userId,
+          teamMemberId: session.teamMemberId,
+          role: session.role,
+        },
+        { from: previous, to: body.stage },
+      );
+    }
     return NextResponse.json({ ok: true, stage: body.stage });
   } catch (error) {
     return NextResponse.json(

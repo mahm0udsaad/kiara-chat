@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { setConversationSection } from "@/lib/interactions";
 import { isConversationSection } from "@/lib/conversation-meta";
+import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
 
 /** Owner-only: file the chat under قسم الطلبات / قسم الردود (or clear it). */
 export async function POST(
@@ -21,6 +22,16 @@ export async function POST(
 
   try {
     const conversation = await setConversationSection(id, raw ?? null);
+    await recordConversationEvent(
+      id,
+      CONVERSATION_EVENTS.sectionChanged,
+      {
+        userId: session.userId,
+        teamMemberId: session.teamMemberId,
+        role: session.role,
+      },
+      { to: raw ?? null },
+    );
     return NextResponse.json({ ok: true, conversation });
   } catch (e) {
     return NextResponse.json(

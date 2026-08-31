@@ -196,6 +196,13 @@ export default function InboxScreen() {
         clear: () => setFilters((current) => ({ ...current, labelId: null })),
       });
     }
+    if (filters.bookingStage) {
+      chips.push({
+        key: "stage",
+        label: bookingStageLabel[filters.bookingStage],
+        clear: () => setFilters((current) => ({ ...current, bookingStage: null })),
+      });
+    }
     return chips;
   }, [filters, labels]);
 

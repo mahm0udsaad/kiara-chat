@@ -4,10 +4,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
-import { csStatusLabel } from "@/lib/format";
+import { bookingStageLabel, csStatusLabel } from "@/lib/format";
 import { tapFeedback } from "@/lib/haptics";
 import { useTheme } from "@/providers/theme-provider";
 import type {
+  BookingStage,
   ConversationFilters,
   ConversationLabel,
   ConversationSection,
@@ -20,13 +21,23 @@ const SECTION_LABEL: Record<ConversationSection, string> = {
   replies: "قسم الردود",
 };
 const SECTION_ORDER: ConversationSection[] = ["orders", "replies"];
+/** The booking's own progression, in the order the owner works through it. */
+const STAGE_ORDER: BookingStage[] = [
+  "collecting_details",
+  "awaiting_confirmation",
+  "booking_confirmed",
+  "invoice_required",
+  "in_progress",
+  "completed",
+];
 
 /** How many refinements are on — drives the badge on the inbox's filter button. */
 export function activeFilterCount(filters: ConversationFilters): number {
   return (
     (filters.status ? 1 : 0) +
     (filters.section ? 1 : 0) +
-    (filters.labelId ? 1 : 0)
+    (filters.labelId ? 1 : 0) +
+    (filters.bookingStage ? 1 : 0)
   );
 }
 
@@ -194,6 +205,22 @@ export function ConversationFiltersSheet({
             ))}
           </Group>
 
+          <Group title="مرحلة متابعة الحجز">
+            <Choice
+              label="كل المراحل"
+              selected={!filters.bookingStage}
+              onPress={() => onChange({ ...filters, bookingStage: null })}
+            />
+            {STAGE_ORDER.map((stage) => (
+              <Choice
+                key={stage}
+                label={bookingStageLabel[stage]}
+                selected={filters.bookingStage === stage}
+                onPress={() => onChange({ ...filters, bookingStage: stage })}
+              />
+            ))}
+          </Group>
+
           {labels.length ? (
             <Group title="التصنيف">
               <Choice
@@ -221,7 +248,12 @@ export function ConversationFiltersSheet({
             silent
             disabled={activeFilterCount(filters) === 0}
             onPress={() =>
-              onChange({ status: null, section: null, labelId: null })
+              onChange({
+                status: null,
+                section: null,
+                labelId: null,
+                bookingStage: null,
+              })
             }
           />
         </ActionBar>

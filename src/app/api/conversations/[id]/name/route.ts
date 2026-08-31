@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { denyIfRouted } from "@/lib/conversation-access";
 import { setCustomerName } from "@/lib/interactions";
+import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
 
 /** A name, not an essay — the inbox truncates anything longer anyway. */
 const MAX_NAME = 80;
@@ -32,6 +33,16 @@ export async function POST(
 
   try {
     await setCustomerName(id, name || null);
+    await recordConversationEvent(
+      id,
+      CONVERSATION_EVENTS.customerRenamed,
+      {
+        userId: session.userId,
+        teamMemberId: session.teamMemberId,
+        role: session.role,
+      },
+      { to: name || null },
+    );
     return NextResponse.json({ ok: true, name: name || null });
   } catch (e) {
     return NextResponse.json(

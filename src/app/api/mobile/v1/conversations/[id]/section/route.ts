@@ -1,4 +1,5 @@
-import { isConversationSection } from "@/lib/conversation-meta";
+import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
+import { isConversationSection, sectionOf } from "@/lib/conversation-meta";
 import { getConversationById } from "@/lib/inbox";
 import { setConversationSection } from "@/lib/interactions";
 import { toClassifiedMobileConversation } from "@/lib/mobile/conversations";
@@ -41,7 +42,20 @@ export async function PUT(
     if (!conversation) {
       return mobileError(404, "CONVERSATION_NOT_FOUND", "Conversation not found");
     }
+    const previous = sectionOf(conversation);
     const updated = await setConversationSection(id, raw);
+    if (previous !== raw) {
+      await recordConversationEvent(
+        id,
+        CONVERSATION_EVENTS.sectionChanged,
+        {
+          userId: auth.session.userId,
+          teamMemberId: auth.session.teamMemberId,
+          role: auth.session.role,
+        },
+        { from: previous, to: raw },
+      );
+    }
     return mobileData({
       conversation: await toClassifiedMobileConversation(
         updated ?? conversation,

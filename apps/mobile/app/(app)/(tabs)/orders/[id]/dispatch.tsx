@@ -3,10 +3,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { KeyboardAvoidingView, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { ApiError } from "@/lib/api";
+import {
+  DispatchVoiceNote,
+  type VoiceNote,
+} from "@/components/dispatch-voice-note";
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
 import { RosterPicker } from "@/components/roster-picker";
 import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-state";
 import { Card } from "@/components/ui/card";
+import { Segmented } from "@/components/ui/segmented";
 import { TextAreaField } from "@/components/ui/field";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
@@ -40,6 +46,35 @@ const noteTemplates = [
   "يرجى إحضار الأدوات الإضافية.",
 ];
 
+/** How the send ended. Both states are terminal: the order is already out. */
+type Outcome = "sent" | "already";
+
+/**
+ * Arabic for the failures this screen can hit.
+ *
+ * The API answers in English, and its text used to be printed verbatim at the
+ * bottom of a scroll view the employee never reaches — so a refused send read
+ * exactly like a successful one. Every case she can act on gets a sentence
+ * telling her whether the order went out and what to do next.
+ */
+function failureMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return error instanceof Error && error.message
+      ? error.message
+      : "تعذر إكمال الإرسال. حاولي مرة أخرى.";
+  }
+  if (error.code === "ORDER_ALREADY_DISPATCHED") {
+    return "هذا الطلب أُرسل بالفعل.";
+  }
+  if (error.status === 409) {
+    return "الطلب تغيّر أو زميلة أخرى ترسله الآن. ارجعي وحدّثي صفحة الطلب قبل المحاولة.";
+  }
+  if (error.status >= 500 || error.status === 0) {
+    return `${error.message} لم يتأكد إرسال الرسائل — راجعي صفحة الطلب قبل إعادة المحاولة.`;
+  }
+  return error.message;
+}
+
 function SummaryLine({ icon, text }: { icon: "calendar" | "clock" | "mappin.and.ellipse" | "car"; text: string }) {
   const { colors } = useTheme();
   return (
@@ -48,6 +83,60 @@ function SummaryLine({ icon, text }: { icon: "calendar" | "clock" | "mappin.and.
       <Text selectable style={{ flex: 1, ...type.footnote, color: colors.textSecondary, ...rtlText }}>
         {text}
       </Text>
+    </View>
+  );
+}
+
+/**
+ * The end of the flow, in place of the form. Both cases mean the messages are
+ * out and there is nothing left to send, so the only action is leaving.
+ */
+function OutcomeScreen({ kind, sentAt }: { kind: Outcome; sentAt: string | null }) {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const sent = kind === "sent";
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }}
+      >
+        <Card>
+          <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+            <IconSymbol
+              name={sent ? "checkmark.circle" : "exclamationmark.triangle"}
+              color={sent ? colors.success : colors.warning}
+              size={26}
+            />
+            <Text style={{ flex: 1, ...type.headline, color: colors.text, ...rtlText }}>
+              {sent ? "تم إرسال الرسالتين" : "هذا الطلب أُرسل من قبل"}
+            </Text>
+          </View>
+          <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+            {sent
+              ? "وصلت رسالة السائق ورسالة الأخصائية عبر واتساب. لا حاجة لإرساله مرة أخرى."
+              : "رسالتا السائق والأخصائية أُرسلتا سابقًا؛ لم يُرسل شيء الآن. إذا لم تصلا، أعيدي الإرسال من صفحة الطلب."}
+          </Text>
+          {sentAt ? (
+            <SummaryLine
+              icon="calendar"
+              text={`وقت الإرسال: ${formatters.dateTime.format(new Date(sentAt))}`}
+            />
+          ) : null}
+        </Card>
+      </ScrollView>
+
+      <ActionBar bottomInset={insets.bottom}>
+        <PrimaryButton
+          label="العودة إلى الطلب"
+          icon="chevron.right"
+          tone={sent ? "success" : "brand"}
+          silent
+          onPress={() => router.back()}
+          testID="dispatch-outcome-back"
+        />
+      </ActionBar>
     </View>
   );
 }
@@ -63,12 +152,31 @@ function DispatchForm({ id }: { id: string }) {
   const [specialistId, setSpecialistId] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  /**
+   * Typed instructions or spoken ones. A recording is sent as its own WhatsApp
+   * voice note after the booking copy, and replaces the written note rather
+   * than adding to it — the specialist gets one instruction, in one form.
+   */
+  const [noteMode, setNoteMode] = useState<"text" | "voice">("text");
+  const [voiceNote, setVoiceNote] = useState<VoiceNote | null>(null);
   const [validation, setValidation] = useState<string | null>(null);
   const [driverMessage, setDriverMessage] = useState("");
   const [specialistMessage, setSpecialistMessage] = useState("");
   const [specialistLanguage, setSpecialistLanguage] = useState("العربية");
   const [automaticAdditions, setAutomaticAdditions] = useState<string[]>([]);
   const [reviewing, setReviewing] = useState(false);
+  /**
+   * What the last attempt actually did. The screen used to close itself on
+   * success and stay put on failure, so the employee had no way to tell a sent
+   * order from a refused one — and no answer at all when she tried again.
+   */
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  /**
+   * A failure she can still act on, pinned above the buttons. Anything written
+   * into the scroll view sits under two long message fields and never gets
+   * read.
+   */
+  const [sendError, setSendError] = useState<string | null>(null);
   const initializedAssignments = useRef(false);
 
   useEffect(() => {
@@ -93,6 +201,12 @@ function DispatchForm({ id }: { id: string }) {
   }
 
   const current = order.data.order;
+  // Re-opening a dispatched order used to walk her back through the whole form
+  // and fail on the last tap. It is settled before the first field is drawn.
+  const finished: Outcome | null =
+    outcome ?? (current.dispatch_state === "sent" || current.sent_at ? "already" : null);
+  if (finished) return <OutcomeScreen kind={finished} sentAt={current.sent_at} />;
+
   const specialistName =
     options.data.specialists.find((person) => person.id === specialistId)?.full_name ?? null;
   const driverName =
@@ -101,14 +215,22 @@ function DispatchForm({ id }: { id: string }) {
   const review = () => {
     if (!specialistId) return setValidation("اختاري الأخصائية.");
     if (!driverId) return setValidation("اختاري السائق.");
-    if (!note.trim()) return setValidation("اكتبي رسالة للأخصائية.");
+    if (noteMode === "text" && !note.trim()) {
+      return setValidation("اكتبي رسالة للأخصائية.");
+    }
+    if (noteMode === "voice" && !voiceNote) {
+      return setSendError("سجّلي الملاحظة الصوتية أو حوّلي إلى تعليمات مكتوبة.");
+    }
     setValidation(null);
+    setSendError(null);
     warningFeedback();
     preparePreview.mutate(
       {
         specialistId,
         driverId,
-        specialistNote: note.trim(),
+        // The preview writes the booking copy in her language; in voice mode
+        // there is no written note to fold into it.
+        specialistNote: noteMode === "text" ? note.trim() : "",
         tripType: current.trip_type,
       },
       {
@@ -119,6 +241,18 @@ function DispatchForm({ id }: { id: string }) {
           setAutomaticAdditions(preview.automaticAdditions);
           setReviewing(true);
         },
+        onError: (error) => {
+          // A second attempt on an order that already went out lands here, and
+          // "the order was already dispatched" is an answer, not an error to
+          // retry — so it ends the screen instead of blaming the network.
+          if (error instanceof ApiError && error.code === "ORDER_ALREADY_DISPATCHED") {
+            warningFeedback();
+            setOutcome("already");
+            return;
+          }
+          errorFeedback();
+          setSendError(failureMessage(error));
+        },
       },
     );
   };
@@ -126,14 +260,23 @@ function DispatchForm({ id }: { id: string }) {
   const send = () => {
     if (!specialistId || !driverId) return;
     if (!driverMessage.trim() || !specialistMessage.trim()) {
-      return setValidation("راجعي نص الرسالتين قبل الإرسال.");
+      return setSendError("راجعي نص الرسالتين قبل الإرسال.");
     }
+    setSendError(null);
     dispatch.mutate(
       {
         specialistId,
         driverId,
         driverMessage: driverMessage.trim(),
         specialistMessage: specialistMessage.trim(),
+        specialistVoice:
+          noteMode === "voice" && voiceNote
+            ? {
+                uri: voiceNote.uri,
+                name: `dispatch-note-${Date.now()}.m4a`,
+                type: "audio/mp4",
+              }
+            : null,
         expectedVersion: current.version,
       },
       {
@@ -145,7 +288,7 @@ function DispatchForm({ id }: { id: string }) {
         onSuccess: ({ driverSent, specialistSent }) => {
           if (!driverSent || specialistSent === false) {
             errorFeedback();
-            setValidation(
+            setSendError(
               !driverSent && specialistSent === false
                 ? "لم تصل أي رسالة — واتساب غير متصل. راجعي حالة الاتصال ثم أعيدي الإرسال."
                 : !driverSent
@@ -155,7 +298,20 @@ function DispatchForm({ id }: { id: string }) {
             return;
           }
           successFeedback();
-          router.back();
+          // Not `router.back()`: closing the screen the instant it succeeds is
+          // indistinguishable from closing it because the tap did nothing. She
+          // reads the confirmation and leaves on her own.
+          setSendError(null);
+          setOutcome("sent");
+        },
+        onError: (error) => {
+          if (error instanceof ApiError && error.code === "ORDER_ALREADY_DISPATCHED") {
+            warningFeedback();
+            setOutcome("already");
+            return;
+          }
+          errorFeedback();
+          setSendError(failureMessage(error));
         },
       },
     );
@@ -218,49 +374,79 @@ function DispatchForm({ id }: { id: string }) {
             />
 
             <View style={{ gap: spacing.sm }}>
-              <TextAreaField
-                label="تعليمات الأخصائية بالعربية"
-                value={note}
-                onChangeText={setNote}
-                maxLength={noteMaxLength}
-                placeholder="مثال: الجلسة تنظيف بشرة، يرجى الوصول قبل الموعد بعشر دقائق…"
-                error={validation && specialistId && driverId && !note.trim() ? validation : null}
+              <Segmented
+                accessibilityLabel="نوع تعليمات الأخصائية"
+                value={noteMode}
+                onChange={setNoteMode}
+                testIDPrefix="dispatch-note-mode"
+                options={[
+                  { value: "text", label: "تعليمات مكتوبة" },
+                  { value: "voice", label: "ملاحظة صوتية" },
+                ]}
               />
-
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: spacing.sm, paddingVertical: spacing.xs }}
-              >
-                {noteTemplates.map((template) => (
-                  <Pressable
-                    key={template}
-                    accessibilityRole="button"
-                    accessibilityLabel={`إضافة: ${template}`}
-                    onPress={() => {
-                      tapFeedback();
-                      setNote((current) => {
-                        const next = current.trim() ? `${current.trim()} ${template}` : template;
-                        return next.slice(0, noteMaxLength);
-                      });
-                    }}
-                    style={({ pressed }) => ({
-                      minHeight: hitSize.min,
-                      justifyContent: "center",
-                      paddingHorizontal: spacing.md + 2,
-                      borderRadius: radius.full,
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      backgroundColor: pressed ? colors.surfaceSunken : colors.surface,
-                    })}
-                  >
-                    <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
-                      {template}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
             </View>
+
+            {noteMode === "voice" ? (
+              <View style={{ gap: spacing.sm }}>
+                <DispatchVoiceNote
+                  value={voiceNote}
+                  onChange={(next) => {
+                    setVoiceNote(next);
+                    setSendError(null);
+                  }}
+                  disabled={dispatch.isPending}
+                />
+                <Text style={{ ...type.footnote, color: colors.textTertiary, ...rtlText }}>
+                  تفاصيل الحجز تصل مكتوبة بلغة الأخصائية، ويصلها التسجيل بعدها
+                  مباشرة كرسالة صوتية على واتساب.
+                </Text>
+              </View>
+            ) : (
+              <View style={{ gap: spacing.sm }}>
+                <TextAreaField
+                  label="تعليمات الأخصائية بالعربية"
+                  value={note}
+                  onChangeText={setNote}
+                  maxLength={noteMaxLength}
+                  placeholder="مثال: الجلسة تنظيف بشرة، يرجى الوصول قبل الموعد بعشر دقائق…"
+                  error={validation && specialistId && driverId && !note.trim() ? validation : null}
+                />
+
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: spacing.sm, paddingVertical: spacing.xs }}
+                >
+                  {noteTemplates.map((template) => (
+                    <Pressable
+                      key={template}
+                      accessibilityRole="button"
+                      accessibilityLabel={`إضافة: ${template}`}
+                      onPress={() => {
+                        tapFeedback();
+                        setNote((current) => {
+                          const next = current.trim() ? `${current.trim()} ${template}` : template;
+                          return next.slice(0, noteMaxLength);
+                        });
+                      }}
+                      style={({ pressed }) => ({
+                        minHeight: hitSize.min,
+                        justifyContent: "center",
+                        paddingHorizontal: spacing.md + 2,
+                        borderRadius: radius.full,
+                        borderWidth: 1,
+                        borderColor: colors.border,
+                        backgroundColor: pressed ? colors.surfaceSunken : colors.surface,
+                      })}
+                    >
+                      <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+                        {template}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
           </>
         ) : (
           <View style={{ gap: spacing.lg }}>
@@ -282,6 +468,12 @@ function DispatchForm({ id }: { id: string }) {
               maxLength={3_000}
               minHeight={220}
             />
+            {noteMode === "voice" && voiceNote ? (
+              <InlineAlert
+                tone="info"
+                message="ستصل الملاحظة الصوتية إلى الأخصائية كرسالة مستقلة بعد النص أعلاه."
+              />
+            ) : null}
             <Card>
               <Text selectable style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>
                 إضافات التطبيق الظاهرة قبل التأكيد
@@ -299,11 +491,12 @@ function DispatchForm({ id }: { id: string }) {
           </View>
         )}
 
-        {preparePreview.error ? <InlineAlert message={preparePreview.error.message} /> : null}
-        {dispatch.error ? <InlineAlert message={dispatch.error.message} /> : null}
       </ScrollView>
 
       <ActionBar bottomInset={insets.bottom}>
+        {/* Above the buttons, not inside the scroll view: this is the answer to
+            the tap she just made, and she is looking at the button. */}
+        {sendError ? <InlineAlert message={sendError} /> : null}
         {reviewing ? (
           <>
             <PrimaryButton

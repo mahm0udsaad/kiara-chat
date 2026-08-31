@@ -1,3 +1,4 @@
+import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
 import { getConversationById } from "@/lib/inbox";
 import { releaseConversation } from "@/lib/interactions";
 import { toClassifiedMobileConversation } from "@/lib/mobile/conversations";
@@ -47,6 +48,19 @@ export async function POST(
     }
 
     await releaseConversation(id);
+    // `claim_conversation` records who takes a thread; nothing recorded who
+    // puts one down. Without this the owner's trail shows a period of custody
+    // that never visibly ends, and the actions after it look unowned.
+    await recordConversationEvent(
+      id,
+      CONVERSATION_EVENTS.released,
+      {
+        userId: auth.session.userId,
+        teamMemberId: auth.session.teamMemberId,
+        role: auth.session.role,
+      },
+      { previousAssignee: conversation.assigned_to },
+    );
     const updated = await getConversationById(id, viewer);
     return mobileData({
       conversation: await toClassifiedMobileConversation(

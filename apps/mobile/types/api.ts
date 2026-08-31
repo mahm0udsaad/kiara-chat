@@ -133,6 +133,8 @@ export type ConversationFilters = {
   status: CsStatus | null;
   section: ConversationSection | null;
   labelId: string | null;
+  /** Where the booking stands — مرحلة متابعة الحجز, as filed on the thread. */
+  bookingStage: BookingStage | null;
 };
 
 /** قسم الطلبات / قسم الردود — how the owner files a thread. */
@@ -302,6 +304,12 @@ export type DispatchInput = {
   driverMessage: string;
   specialistMessage: string;
   expectedVersion: number;
+  /**
+   * A recording for the specialist, sent as a WhatsApp voice note right after
+   * the booking copy. Spoken instructions carry further than written ones for
+   * a specialist who reads little Arabic.
+   */
+  specialistVoice?: { uri: string; name: string; type: string } | null;
 };
 
 export type DispatchPreview = {
@@ -647,4 +655,54 @@ export type FieldOrder = {
   canAct: boolean;
   /** The driver's non-blocking "I've arrived at the specialist" ping is offered. */
   canPingArrival: boolean;
+};
+
+/* ── Responsibility trail ────────────────────────────────────────────────── */
+
+/** Whoever acted: an employee, the owner, field staff, or the system itself. */
+export type AuditPerson = {
+  key: string;
+  name: string;
+  role: string;
+};
+
+export type AuditEntry = {
+  at: string;
+  type: string;
+  title: string;
+  detail: string | null;
+  actor: AuditPerson | null;
+};
+
+/** One stretch of time a single person was responsible for the thread. */
+export type CustodyPeriod = {
+  holder: AuditPerson | null;
+  from: string;
+  to: string | null;
+  startedBy: "start" | "claim" | "reassign" | "takeover" | "release" | "bot";
+  startedByActor: AuditPerson | null;
+  inboundMessages: number;
+  outboundMessages: number;
+  actions: AuditEntry[];
+};
+
+export type ConversationAuditReport = {
+  conversationId: string;
+  customerName: string | null;
+  customerPhone: string;
+  startedAt: string | null;
+  currentHolder: AuditPerson | null;
+  periods: CustodyPeriod[];
+  messagesByPerson: { person: AuditPerson; messages: number }[];
+  totals: { inbound: number; outbound: number; actions: number; handovers: number };
+};
+
+export type OrderAuditLog = {
+  orderId: string;
+  createdAt: string;
+  createdBy: AuditPerson | null;
+  customerName: string | null;
+  customerPhone: string;
+  arrivalAt: string;
+  entries: AuditEntry[];
 };

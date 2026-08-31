@@ -1,3 +1,4 @@
+import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
 import { isBookingStage, bookingStageOf } from "@/lib/booking-stage";
 import { getConversationById } from "@/lib/inbox";
 import { setBookingStage, setCsStatus, type CsStatus } from "@/lib/interactions";
@@ -111,6 +112,15 @@ export async function PUT(
       return mobileError(400, "UNKNOWN_LABEL", "One or more labels are invalid");
     }
 
+    // Every branch below records what it changed, from the values it already
+    // compared. The owner's report is built from these rows, so an action that
+    // is only visible as a changed field is an action nobody can be held to.
+    const actor = {
+      userId: auth.session.userId,
+      teamMemberId: auth.session.teamMemberId,
+      role: auth.session.role,
+    };
+
     if (reminder) {
       const dayKey = String(reminder.dayKey);
       const status = String(reminder.status) as "awaiting_reply" | "confirmed";
@@ -128,16 +138,34 @@ export async function PUT(
           status,
           auth.session.teamMemberId
         );
+        await recordConversationEvent(
+          id,
+          CONVERSATION_EVENTS.reminderConfirmed,
+          actor,
+          { dayKey, from: currentReminder.status, to: status },
+        );
       }
     }
 
-    if (bookingStage && bookingStageOf(conversation) !== bookingStage) {
+    const previousStage = bookingStageOf(conversation);
+    if (bookingStage && previousStage !== bookingStage) {
       await setBookingStage(id, bookingStage);
+      await recordConversationEvent(id, CONVERSATION_EVENTS.stageChanged, actor, {
+        from: previousStage,
+        to: bookingStage,
+      });
     }
-    if (conversationCsStatus(conversation) !== csStatus || bookingStage || reminder) {
+    const previousStatus = conversationCsStatus(conversation);
+    if (previousStatus !== csStatus || bookingStage || reminder) {
       // Booking and reminder writes can alter cs_status, so the user's explicit
       // selection is applied last even when it matched the opening snapshot.
       await setCsStatus(id, csStatus);
+      if (previousStatus !== csStatus) {
+        await recordConversationEvent(id, CONVERSATION_EVENTS.statusChanged, actor, {
+          from: previousStatus,
+          to: csStatus,
+        });
+      }
     }
 
     const labelsChanged =
@@ -145,6 +173,12 @@ export async function PUT(
       labelIds.some((labelId) => !currentLabelIds.includes(labelId));
     if (labelsChanged) {
       await setConversationLabels(auth.session.userId, id, labelIds);
+      const byId = new Map(availableLabels.map((label) => [label.id, label.name]));
+      const named = (ids: string[]) => ids.map((labelId) => byId.get(labelId) ?? labelId);
+      await recordConversationEvent(id, CONVERSATION_EVENTS.labelsChanged, actor, {
+        added: named(labelIds.filter((labelId) => !currentLabelIds.includes(labelId))),
+        removed: named(currentLabelIds.filter((labelId) => !labelIds.includes(labelId))),
+      });
     }
 
     return mobileData({ ok: true });

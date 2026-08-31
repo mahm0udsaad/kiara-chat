@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { denyIfRouted } from "@/lib/conversation-access";
-import { setConversationLabels } from "@/lib/labels";
+import {
+  getConversationLabelIds,
+  listLabels,
+  setConversationLabels,
+} from "@/lib/labels";
+import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
 
 export async function PUT(
   request: Request,
@@ -15,7 +20,27 @@ export async function PUT(
   const body = await request.json().catch(() => ({}));
   const labelIds = Array.isArray(body?.labelIds) ? (body.labelIds as string[]) : [];
   try {
+    const [before, available] = await Promise.all([
+      getConversationLabelIds(id),
+      listLabels(),
+    ]);
     await setConversationLabels(session.userId, id, labelIds);
+    const added = labelIds.filter((labelId) => !before.includes(labelId));
+    const removed = before.filter((labelId) => !labelIds.includes(labelId));
+    if (added.length || removed.length) {
+      const byId = new Map(available.map((label) => [label.id, label.name]));
+      const named = (ids: string[]) => ids.map((labelId) => byId.get(labelId) ?? labelId);
+      await recordConversationEvent(
+        id,
+        CONVERSATION_EVENTS.labelsChanged,
+        {
+          userId: session.userId,
+          teamMemberId: session.teamMemberId,
+          role: session.role,
+        },
+        { added: named(added), removed: named(removed) },
+      );
+    }
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json(
