@@ -45,6 +45,25 @@ export const AI_TIMEOUT_MS = 45_000;
 export const SEND_TIMEOUT_MS = 65_000;
 
 /**
+ * The real ceiling on anything we upload.
+ *
+ * The API rejects above 20 MB, but that limit is never reached: the app is
+ * served by Vercel functions, which refuse a request body over 4.5 MB before
+ * our route runs at all (`FUNCTION_PAYLOAD_TOO_LARGE`). React Native reports
+ * that mid-upload rejection as a plain transport failure, so the screen used
+ * to blame the employee's connection for a photo that was simply too big.
+ *
+ * Kept under the platform number to leave room for the multipart envelope and
+ * the caption travelling beside the file.
+ */
+export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+
+/** `4.2 ميجابايت` — for an error the employee can act on. */
+export function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} ميجابايت`;
+}
+
+/**
  * Rejects as soon as `signal` aborts, giving an otherwise untimed await the
  * caller's deadline. Used for work that must finish before the request starts
  * but has no cancellation of its own.
@@ -202,10 +221,16 @@ export async function apiUpload<T>(
       },
     });
   } catch {
+    // A body the platform refuses is dropped mid-flight, which surfaces here
+    // as an ordinary transport failure. Naming the size keeps the message
+    // honest — telling her to check the internet sent people to the router
+    // over a photo that was only ever too large.
     throw new ApiError(
       controller.signal.aborted
         ? "الخادم تأخر في الرد. حاولي مرة أخرى."
-        : "تعذر رفع الملف. تحققي من الإنترنت.",
+        : `تعذر رفع الملف. تأكدي من الإنترنت، وأن حجم الملف أقل من ${formatMegabytes(
+            MAX_UPLOAD_BYTES,
+          )}.`,
       0,
       controller.signal.aborted ? "TIMEOUT" : "NETWORK",
     );
@@ -218,6 +243,15 @@ export async function apiUpload<T>(
 
 /** Reads the `{ data } | { error }` envelope every mobile endpoint returns. */
 async function unwrap<T>(response: Response): Promise<T> {
+  // Vercel answers an oversized body itself, in plain text, so this never
+  // reaches the JSON envelope every route of ours returns.
+  if (response.status === 413) {
+    throw new ApiError(
+      `الملف أكبر من الحد المسموح (${formatMegabytes(MAX_UPLOAD_BYTES)}).`,
+      413,
+      "FILE_TOO_LARGE",
+    );
+  }
   const payload = (await response.json().catch(() => ({}))) as ApiEnvelope<T>;
   if (!response.ok) {
     if (response.status === 401) await supabase.auth.signOut({ scope: "local" });

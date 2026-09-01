@@ -1,5 +1,4 @@
 import {
-  RecordingPresets,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
   useAudioPlayer,
@@ -7,6 +6,7 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from "expo-audio";
+import { VOICE_NOTE_RECORDING } from "@/lib/audio-recording";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
@@ -97,7 +97,7 @@ export function DispatchVoiceNote({
   disabled?: boolean;
 }) {
   const { colors } = useTheme();
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorder = useAudioRecorder(VOICE_NOTE_RECORDING);
   const recorderState = useAudioRecorderState(recorder, 250);
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);

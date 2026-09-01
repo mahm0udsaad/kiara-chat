@@ -13,12 +13,12 @@ import * as Crypto from "expo-crypto";
 import * as ImagePicker from "expo-image-picker";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import {
-  RecordingPresets,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
   useAudioRecorder,
   useAudioRecorderState,
 } from "expo-audio";
+import { VOICE_NOTE_RECORDING } from "@/lib/audio-recording";
 
 import {
   AttachmentPreview,
@@ -30,12 +30,12 @@ import { InlineAlert } from "@/components/screen-state";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { commitFeedback, errorFeedback, tapFeedback } from "@/lib/haptics";
+import { MAX_UPLOAD_BYTES, formatMegabytes } from "@/lib/api";
 import { useBootstrap, useReply, useSendMedia } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { CatalogItem } from "@/types/api";
 
 /** Matches the server's cap, so an oversized file fails before it uploads. */
-const MAX_MEDIA_BYTES = 20 * 1024 * 1024;
 /** The longest edge a photo is re-encoded to before it leaves the phone. */
 const MAX_IMAGE_EDGE = 1280;
 
@@ -64,7 +64,7 @@ export function Composer({ conversationId }: { conversationId: string }) {
   const [uploading, setUploading] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
 
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorder = useAudioRecorder(VOICE_NOTE_RECORDING);
   const recorderState = useAudioRecorderState(recorder, 250);
   const [recording, setRecording] = useState(false);
   const textAttempt = useRef<{ text: string; idempotencyKey: string } | null>(null);
@@ -109,14 +109,16 @@ export function Composer({ conversationId }: { conversationId: string }) {
     if (result.canceled) return;
 
     const oversized = result.assets.filter(
-      (asset) => (asset.fileSize ?? 0) > MAX_MEDIA_BYTES,
+      (asset) => (asset.fileSize ?? 0) > MAX_UPLOAD_BYTES,
     );
     if (oversized.length) {
-      setMediaError("بعض الملفات أكبر من الحد المسموح (20 ميجابايت).");
+      setMediaError(
+        `بعض الملفات أكبر من الحد المسموح (${formatMegabytes(MAX_UPLOAD_BYTES)}).`,
+      );
     }
     stage(
       result.assets
-        .filter((asset) => (asset.fileSize ?? 0) <= MAX_MEDIA_BYTES)
+        .filter((asset) => (asset.fileSize ?? 0) <= MAX_UPLOAD_BYTES)
         .map((asset, index) => {
           const isImage = asset.type !== "video";
           return {
@@ -158,8 +160,10 @@ export function Composer({ conversationId }: { conversationId: string }) {
     if (result.canceled) return;
     const asset = result.assets[0];
     if (!asset) return;
-    if ((asset.size ?? 0) > MAX_MEDIA_BYTES) {
-      setMediaError("الملف أكبر من الحد المسموح (20 ميجابايت).");
+    if ((asset.size ?? 0) > MAX_UPLOAD_BYTES) {
+      setMediaError(
+        `الملف أكبر من الحد المسموح (${formatMegabytes(MAX_UPLOAD_BYTES)}).`,
+      );
       return;
     }
     const mimeType = asset.mimeType ?? "application/octet-stream";

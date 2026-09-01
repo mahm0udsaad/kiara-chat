@@ -23,6 +23,7 @@ import {
   csStatusLabel,
   formatters,
 } from "@/lib/format";
+import { MAX_UPLOAD_BYTES, formatMegabytes } from "@/lib/api";
 import { tapFeedback } from "@/lib/haptics";
 import {
   useAddConversationNote,
@@ -59,7 +60,6 @@ type PendingReceipt = {
 };
 
 const EMPTY_LABEL_IDS: string[] = [];
-const MAX_RECEIPT_BYTES = 20 * 1024 * 1024;
 const CS_STATUS_OPTIONS: readonly CsStatus[] = ["open", "waiting", "resolved"];
 const SECTION_OPTIONS: { value: ConversationSection | null; label: string }[] = [
   { value: "orders", label: "قسم الطلبات" },
@@ -234,8 +234,10 @@ export function ConversationActionsButton({
     if (result.canceled) return;
     const asset = result.assets[0];
     if (!asset) return;
-    if ((asset.size ?? 0) > MAX_RECEIPT_BYTES) {
-      setReceiptError("الفاتورة أكبر من الحد المسموح (20 ميجابايت).");
+    if ((asset.size ?? 0) > MAX_UPLOAD_BYTES) {
+      setReceiptError(
+        `الفاتورة أكبر من الحد المسموح (${formatMegabytes(MAX_UPLOAD_BYTES)}).`,
+      );
       return;
     }
 
