@@ -2,7 +2,7 @@
   "expo": {
     "name": "كيارا للعمليات",
     "slug": "kiara-operations",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "kiara",
