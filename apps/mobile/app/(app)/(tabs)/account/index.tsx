@@ -30,6 +30,7 @@ const capabilityLabels = {
   canTakeConversations: "استلام المحادثات",
   canManageTeam: "إدارة الفريق",
   canViewOrderPrices: "عرض أسعار الطلبات",
+  canViewReports: "تقارير المالكة",
 } as const;
 
 export default function AccountScreen() {
@@ -39,6 +40,7 @@ export default function AccountScreen() {
   const queryClient = useQueryClient();
   const notification = useNotificationStatus();
   const notificationsOn = notification.registration?.state === "registered";
+  const notificationsMuted = notification.registration?.state === "muted";
 
   if (bootstrap.isLoading) return <LoadingScreen />;
   if (bootstrap.isError || !bootstrap.data) {
@@ -141,12 +143,23 @@ export default function AccountScreen() {
               : "جارٍ التحقق من حالة الإشعارات…"}
           </Text>
           <Text style={{ ...type.footnote, color: colors.textTertiary, ...rtlText }}>
-            تصلك تنبيهات المحادثات الجديدة غير المستلمة، والمحادثات المتأخرة (خطر)، وكل رسالة
-            في محادثاتك.
+            {notificationsMuted
+              ? "لن تصلك تنبيهات على هذا الجهاز حتى تعيدي تفعيلها. باقي أجهزتك لا تتأثر."
+              : "تصلك تنبيهات المحادثات الجديدة غير المستلمة، والمحادثات المتأخرة (خطر)، وكل رسالة في محادثاتك."}
           </Text>
-          {notificationsOn ? null : (
+          {notificationsOn ? (
+            // Off is a real choice — a phone on a shared floor, or a shift that
+            // has ended — and without it the only way to stop the alerts was
+            // the OS settings, where turning them back on is nobody's guess.
             <PrimaryButton
-              label="تفعيل الإشعارات"
+              label="إيقاف الإشعارات على هذا الجهاز"
+              variant="tinted"
+              icon="bell.slash"
+              onPress={() => void notification.disable()}
+            />
+          ) : (
+            <PrimaryButton
+              label={notificationsMuted ? "إعادة تفعيل الإشعارات" : "تفعيل الإشعارات"}
               variant="tinted"
               icon="bell"
               onPress={() => void notification.refresh()}

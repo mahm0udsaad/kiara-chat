@@ -32,6 +32,7 @@ export type IconName =
   | "pencil"
   | "paperplane.fill"
   | "bell"
+  | "bell.slash"
   | "moon"
   | "sun.max"
   | "gearshape"
@@ -84,6 +85,7 @@ const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcon
   pencil: "edit",
   "paperplane.fill": "send",
   bell: "notifications",
+  "bell.slash": "notifications-off",
   moon: "dark-mode",
   "sun.max": "light-mode",
   gearshape: "settings",

@@ -12,8 +12,11 @@ import {
 } from "react";
 
 import {
+  isInboxMuted,
   registerFieldNotifications,
   registerInboxNotifications,
+  setInboxMuted,
+  unregisterInboxNotifications,
   type NotificationRegistration,
 } from "@/lib/notifications";
 import { queryKeys, useBootstrap } from "@/lib/queries";
@@ -34,13 +37,17 @@ Notifications.setNotificationHandler({
 
 type NotificationStatus = {
   registration: NotificationRegistration | null;
-  /** Re-run registration — the account screen's retry after fixing settings. */
+  /** Re-run registration — the account screen's retry after fixing settings.
+   *  Also clears a mute, so one button can mean "turn these back on". */
   refresh: () => Promise<void>;
+  /** Stop alerts on this device and remember that it was deliberate. */
+  disable: () => Promise<void>;
 };
 
 const NotificationStatusContext = createContext<NotificationStatus>({
   registration: null,
   refresh: async () => {},
+  disable: async () => {},
 });
 
 /** Whether this device is actually reachable by push, and why not if it isn't. */
@@ -63,6 +70,21 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   // Bumped by the account screen's retry, after the employee has gone into the
   // system settings and turned notifications back on.
   const [attempt, setAttempt] = useState(0);
+  // null while the stored preference is still being read — registering before
+  // it lands would re-arm a device the employee had switched off.
+  const [muted, setMuted] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void isInboxMuted()
+      .catch(() => false)
+      .then((value) => {
+        if (!cancelled) setMuted(value);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const accountId = session?.user.id ?? null;
   const register = useMemo(() => {
     if (!accountId) return null;
@@ -74,6 +96,10 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   }, [accountId, fieldStaff, inboxStaff, teamMemberId]);
 
   useEffect(() => {
+    // Only the inbox registration answers to the switch: field staff register
+    // through a different screen that does not offer one, and must not be left
+    // waiting on a preference that will never apply to them.
+    if (inboxStaff && muted !== false) return;
     if (!register) return;
 
     let cancelled = false;
@@ -90,13 +116,13 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     return () => {
       cancelled = true;
     };
-  }, [attempt, register]);
+  }, [attempt, register, muted, inboxStaff]);
 
   // APNs/FCM can rotate the native token while the app is running. Recreate
   // and upload the derived Expo token immediately instead of waiting for the
   // employee to restart or sign in again.
   useEffect(() => {
-    if (!register) return;
+    if (!register || (inboxStaff && muted !== false)) return;
     let lastSeen: string | null = null;
     const subscription = Notifications.addPushTokenListener((token) => {
       // Acquiring a token can itself emit this event, so re-registering on every
@@ -116,15 +142,33 @@ export function NotificationProvider({ children }: PropsWithChildren) {
       });
     });
     return () => subscription.remove();
-  }, [register]);
+  }, [register, muted, inboxStaff]);
 
   const refresh = useCallback(async () => {
+    await setInboxMuted(false).catch(() => undefined);
+    setMuted(false);
     setAttempt((previous) => previous + 1);
   }, []);
 
+  const disable = useCallback(async () => {
+    // Remember the choice first: if the unregister call fails on a bad
+    // connection the device still stops re-arming itself on next launch, and
+    // the server drops the token the next time Expo rejects it.
+    await setInboxMuted(true).catch(() => undefined);
+    setMuted(true);
+    await unregisterInboxNotifications().catch(() => undefined);
+  }, []);
+
+  // Derived, not stored: a muted device may still hold the "registered" result
+  // of the attempt that ran before the employee switched it off.
+  const exposed = useMemo<NotificationRegistration | null>(
+    () => (inboxStaff && muted ? { state: "muted" } : registration),
+    [inboxStaff, muted, registration],
+  );
+
   const status = useMemo(
-    () => ({ registration, refresh }),
-    [registration, refresh],
+    () => ({ registration: exposed, refresh, disable }),
+    [exposed, refresh, disable],
   );
 
   useEffect(() => {

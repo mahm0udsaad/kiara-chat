@@ -250,6 +250,8 @@ export async function getCustomerServiceReport(
   const input = validateOperationsReportInput(raw);
   const rangeStart = boundary(input.from, "00:00");
   const rangeEnd = boundary(input.to, "23:59");
+  const rangeStartMs = new Date(rangeStart).getTime();
+  const rangeEndMs = new Date(rangeEnd).getTime();
   const startMinute = timeToMinutes(input.startTime);
   const endMinute = timeToMinutes(input.endTime);
   const admin = getAdminSupabaseClient();
@@ -345,6 +347,7 @@ export async function getCustomerServiceReport(
   const presenceByMember = new Map(presence.map((row) => [row.team_member_id, row]));
   const memberByUser = new Map(members.map((row) => [row.user_id, row.id]));
   const conversationById = new Map(conversations.map((row) => [row.id, row]));
+  const orderById = new Map(orders.map((row) => [row.id, row]));
   const now = Date.now();
   const employees = new Map<string, MutableEmployee>();
 
@@ -469,7 +472,7 @@ export async function getCustomerServiceReport(
     const reply = rows
       .slice(firstInboundIndex + 1)
       .find((row) => row.role === "agent" && row.sender_team_member_id);
-    if (!reply?.sender_team_member_id) continue;
+    if (!reply?.sender_team_member_id || !insideWindow(reply.created_at, startMinute, endMinute)) continue;
     const employee = employees.get(reply.sender_team_member_id);
     if (!employee) continue;
     const responseMinutes = Math.max(
@@ -497,7 +500,7 @@ export async function getCustomerServiceReport(
       row.aggregate_type === "conversation"
         ? row.aggregate_id
         : row.aggregate_type === "driver_order"
-          ? orders.find((order) => order.id === row.aggregate_id)?.conversation_id
+          ? orderById.get(row.aggregate_id)?.conversation_id
           : null;
     if (!relatedConversationId) continue;
     const memberId = row.actor_team_member_id ?? (row.actor_user_id ? memberByUser.get(row.actor_user_id) : null);
@@ -541,7 +544,8 @@ export async function getCustomerServiceReport(
     });
   }
   for (const row of orders) {
-    if (row.created_at < rangeStart || row.created_at > rangeEnd) continue;
+    const createdAtMs = new Date(row.created_at).getTime();
+    if (createdAtMs < rangeStartMs || createdAtMs > rangeEndMs) continue;
     const memberId = row.created_by ? memberByUser.get(row.created_by) : null;
     if (memberId && insideWindow(row.created_at, startMinute, endMinute)) {
       const employee = employees.get(memberId);

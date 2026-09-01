@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { relativeTimeLabel } from "@/lib/format";
-import { REPORT_LOCALE, reportInteger } from "@/lib/operations-report";
+import { REPORT_LOCALE, reportDecimal, reportInteger } from "@/lib/operations-report";
 import { useBootstrap, useCustomerServiceReport } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { CustomerServiceActionKind } from "@/types/api";
@@ -34,7 +34,7 @@ function one(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
 
-function Metric({ icon, label, value }: { icon: IconName; label: string; value: number }) {
+function Metric({ icon, label, value }: { icon: IconName; label: string; value: number | string }) {
   const { colors } = useTheme();
   return (
     <View
@@ -50,7 +50,7 @@ function Metric({ icon, label, value }: { icon: IconName; label: string; value: 
       <IconSymbol name={icon} size={18} color={colors.brand} />
       <Text style={{ ...type.caption, ...rtlText, color: colors.textTertiary }}>{label}</Text>
       <Text selectable style={{ ...type.title3, ...numeric, ...rtlText, color: colors.text }}>
-        {reportInteger.format(value)}
+        {typeof value === "number" ? reportInteger.format(value) : value}
       </Text>
     </View>
   );
@@ -164,6 +164,16 @@ export default function CustomerServiceEmployeeReportScreen() {
               <Metric icon="message" label="محادثات تعاملت معها" value={employee.handledConversations} />
               <Metric icon="paperplane.fill" label="ردود أرسلتها" value={employee.messagesSent} />
               <Metric icon="pencil" label="إجراءات نفّذتها" value={employee.actions} />
+              <Metric icon="checkmark.circle" label="أغلقتها خلال الفترة" value={employee.resolvedConversations} />
+              <Metric
+                icon="clock"
+                label="متوسط أول رد"
+                value={
+                  employee.averageFirstResponseMinutes == null
+                    ? "—"
+                    : `${reportDecimal.format(employee.averageFirstResponseMinutes)} د`
+                }
+              />
               <Metric icon="tray" label="مسندة الآن" value={employee.currentAssigned} />
               <Metric icon="clock" label="جارية الآن" value={employee.currentRunning} />
               <Metric icon="checkmark.circle" label="منتهية الآن" value={employee.currentResolved} />

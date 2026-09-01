@@ -58,6 +58,7 @@ function projectId(): string | undefined {
  */
 export type NotificationRegistration =
   | { state: "registered" }
+  | { state: "muted" }
   | { state: "simulator" }
   | { state: "no_project_id" }
   | { state: "denied" }
@@ -68,6 +69,7 @@ export const notificationStateLabel: Record<
   string
 > = {
   registered: "الإشعارات مفعّلة على هذا الجهاز.",
+  muted: "الإشعارات موقوفة على هذا الجهاز باختيارك.",
   simulator: "الإشعارات لا تعمل على المحاكي — جرّبي على جهاز حقيقي.",
   no_project_id: "إعداد المشروع ناقص (EAS project id).",
   denied: "الإشعارات محظورة. فعّليها من إعدادات الجهاز ثم أعيدي المحاولة.",
@@ -215,6 +217,28 @@ export async function registerInboxNotifications(
     accountId,
     { platform: process.env.EXPO_OS === "ios" ? "ios" : "android" },
   );
+}
+
+/**
+ * The employee's own "not on this phone" choice.
+ *
+ * Kept on the device rather than inferred from the absence of a token: the
+ * provider re-registers on mount, on sign-in and whenever the OS rotates the
+ * native token, so an unregister with nothing remembering *why* is undone by
+ * the next one of those — the switch would turn itself back on.
+ */
+const INBOX_MUTED_KEY = "kiara.inbox.notifications.muted";
+
+export async function isInboxMuted(): Promise<boolean> {
+  return (await SecureStore.getItemAsync(INBOX_MUTED_KEY)) === "1";
+}
+
+export async function setInboxMuted(muted: boolean): Promise<void> {
+  if (muted) {
+    await SecureStore.setItemAsync(INBOX_MUTED_KEY, "1");
+    return;
+  }
+  await SecureStore.deleteItemAsync(INBOX_MUTED_KEY);
 }
 
 export async function unregisterInboxNotifications(): Promise<void> {

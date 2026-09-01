@@ -423,9 +423,14 @@ export default function ConversationScreen() {
       >
         {/* A group has no CS lifecycle: nobody claims it, the assistant never
             replies in it, and no one is waiting on it — so the status would
-            read as stale on every group, forever. */}
-        {isGroup ? null : (
+            read as stale on every group, forever.
+
+            An unclaimed thread has no lifecycle yet either: "جاري المحادثة"
+            over the استلام المحادثة button contradicts the button itself. */}
+        {isGroup ? null : current.assigned_to ? (
           <Badge label={csStatusLabel[current.csStatus]} tone={csStatusTone[current.csStatus]} />
+        ) : (
+          <Badge tone="warning" icon="person.crop.circle" label="غير مستلمة" />
         )}
         {current.bookingStage ? (
           <Badge label={bookingStageLabel[current.bookingStage]} tone="neutral" />

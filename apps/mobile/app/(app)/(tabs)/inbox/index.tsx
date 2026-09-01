@@ -261,10 +261,11 @@ const ConversationRow = memo(function ConversationRow({
                   paddingTop: spacing.xs,
                 }}
               >
-                {/* A group has no CS lifecycle to report: no claim, no bot
-                    reply, nobody waiting. The "مجموعة" badge below is the
-                    whole story. */}
-                {isGroup ? null : (
+                {/* Only once somebody owns it. "جاري المحادثة" on a thread no
+                    employee has claimed says a conversation is underway when
+                    nobody is having it — the "غير مستلمة" badge below is the
+                    true state. Groups have no lifecycle at all. */}
+                {isGroup || !conversation.assigned_to ? null : (
                   <Badge
                     label={csStatusLabel[conversation.csStatus]}
                     tone={csStatusTone[conversation.csStatus]}

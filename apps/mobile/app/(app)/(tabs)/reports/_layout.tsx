@@ -13,7 +13,7 @@ export default function ReportsLayout() {
         contentStyle: { backgroundColor: colors.background },
       }}
     >
-      <Stack.Screen name="index" options={{ title: "تقارير العمليات" }} />
+      <Stack.Screen name="index" options={{ title: "تقارير الأداء" }} />
       <Stack.Screen
         name="[role]/[personId]"
         options={{ title: "تفاصيل الأداء", headerBackButtonDisplayMode: "minimal" }}
