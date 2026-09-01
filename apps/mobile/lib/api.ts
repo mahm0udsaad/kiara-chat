@@ -206,64 +206,98 @@ export async function apiUpload<T>(
     else form.append(key, value as unknown as Blob);
   }
 
-  // An upload that never answers used to hang the screen forever — there was
-  // no deadline here at all. Callers that send on a person's behalf name their
-  // own; the rest get the ordinary one.
-  let response: Response;
-  try {
-    response = await globalThis.fetch(`${apiUrl}/api/mobile/v1${path}`, {
-      method: "POST",
-      body: form,
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-  } catch {
-    // A body the platform refuses is dropped mid-flight, which surfaces here
-    // as an ordinary transport failure. Naming the size keeps the message
-    // honest — telling her to check the internet sent people to the router
-    // over a photo that was only ever too large.
-    throw new ApiError(
-      controller.signal.aborted
-        ? "الخادم تأخر في الرد. حاولي مرة أخرى."
-        : `تعذر رفع الملف. تأكدي من الإنترنت، وأن حجم الملف أقل من ${formatMegabytes(
-            MAX_UPLOAD_BYTES,
-          )}.`,
-      0,
-      controller.signal.aborted ? "TIMEOUT" : "NETWORK",
-    );
-  } finally {
-    clearTimeout(timer);
-  }
+  /**
+   * Uploads go over `XMLHttpRequest`, not `fetch`.
+   *
+   * This used to call `globalThis.fetch`, on the reasoning that React Native's
+   * networking is the only thing that can stream a `file://` part. That was
+   * right about the requirement and wrong about the global: Expo installs a
+   * WinterCG `fetch`, which accepts only strings, Blobs and objects exposing
+   * `bytes()`. Handed React Native's `{ uri, name, type }` descriptor it threw
+   * `Unsupported FormDataPart implementation`, so every photo, document and
+   * voice note failed — and because it threw rather than answering, the app
+   * could only report it as a lost connection.
+   *
+   * `XMLHttpRequest` really is React Native's, and it uploads the file from
+   * disk without loading it into JS memory. The deadline above still applies —
+   * an upload that never answers used to hang the screen with no way back.
+   */
+  const { status, body: raw } = await new Promise<{ status: number; body: string }>(
+    (resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${apiUrl}/api/mobile/v1${path}`);
+      xhr.responseType = "text";
+      xhr.setRequestHeader("Accept", "application/json");
+      xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+      // Content-Type is left unset so React Native attaches the multipart
+      // boundary it generated for this body.
+      xhr.onload = () =>
+        resolve({ status: xhr.status, body: xhr.responseText ?? "" });
+      xhr.onerror = () => reject(new Error("network"));
+      xhr.onabort = () => reject(new Error("aborted"));
+      const abort = () => xhr.abort();
+      if (controller.signal.aborted) abort();
+      else controller.signal.addEventListener("abort", abort, { once: true });
+      xhr.send(form);
+    },
+  )
+    .catch((cause: unknown) => {
+      if (controller.signal.aborted) {
+        throw new ApiError("الخادم تأخر في الرد. حاولي مرة أخرى.", 0, "TIMEOUT");
+      }
+      throw new ApiError(
+        `تعذر رفع الملف. تحققي من الإنترنت. (${
+          cause instanceof Error ? cause.message : String(cause)
+        })`,
+        0,
+        "NETWORK",
+      );
+    })
+    .finally(() => clearTimeout(timer));
 
-  return unwrap<T>(response);
+  return unwrapPayload<T>(status, raw);
 }
 
 /** Reads the `{ data } | { error }` envelope every mobile endpoint returns. */
 async function unwrap<T>(response: Response): Promise<T> {
+  const raw = await response.text().catch(() => "");
+  return unwrapPayload<T>(response.status, raw);
+}
+
+/**
+ * The envelope, from a status and a raw body.
+ *
+ * Split out because uploads do not go through `fetch` at all (see
+ * `apiUpload`), and a second copy of this would be a second place for the
+ * error contract to drift.
+ */
+async function unwrapPayload<T>(status: number, raw: string): Promise<T> {
   // Vercel answers an oversized body itself, in plain text, so this never
   // reaches the JSON envelope every route of ours returns.
-  if (response.status === 413) {
+  if (status === 413) {
     throw new ApiError(
       `الملف أكبر من الحد المسموح (${formatMegabytes(MAX_UPLOAD_BYTES)}).`,
       413,
       "FILE_TOO_LARGE",
     );
   }
-  const payload = (await response.json().catch(() => ({}))) as ApiEnvelope<T>;
-  if (!response.ok) {
-    if (response.status === 401) await supabase.auth.signOut({ scope: "local" });
+  let payload: ApiEnvelope<T> = {};
+  try {
+    payload = JSON.parse(raw) as ApiEnvelope<T>;
+  } catch {
+    payload = {};
+  }
+  if (status < 200 || status >= 300) {
+    if (status === 401) await supabase.auth.signOut({ scope: "local" });
     throw new ApiError(
       payload.error?.message || "تعذر إكمال الطلب",
-      response.status,
+      status,
       payload.error?.code,
     );
   }
 
   if (!("data" in payload)) {
-    throw new ApiError("استجابة الخادم غير مكتملة", response.status, "INVALID_RESPONSE");
+    throw new ApiError("استجابة الخادم غير مكتملة", status, "INVALID_RESPONSE");
   }
   return payload.data as T;
 }
