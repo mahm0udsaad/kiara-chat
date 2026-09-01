@@ -8,7 +8,7 @@ import {
 export async function GET(request: Request) {
   const session = await getKiaraSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (session.role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!session.isOwner) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const params = new URL(request.url).searchParams;
   try {

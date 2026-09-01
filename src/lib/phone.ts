@@ -25,6 +25,35 @@ export function normalizePhone(value: string): string {
 }
 
 /**
+ * A deliverable phone address for Kiara's Saudi WhatsApp account.
+ *
+ * Local roster/Rekaz values commonly arrive as `05…` or bare `5…`; storing
+ * them as `+05…` creates an address WhatsApp cannot deliver to. Explicit
+ * international numbers keep their country code, while local mobile numbers
+ * receive Saudi Arabia's `966` prefix.
+ */
+export function canonicalPhone(value: string): string | null {
+  const raw = value.trim();
+  let digits = digitsOf(raw);
+  if (!digits) return null;
+  if (raw.startsWith("00")) digits = digits.slice(2);
+
+  // Some integrations accidentally prepend `+` to a local trunk number
+  // (`+050…`). Treat that as local rather than preserving an undeliverable
+  // pseudo-country code.
+  if ((raw.startsWith("+") && !digits.startsWith("0")) || raw.startsWith("00")) {
+    return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : null;
+  }
+  if (digits.startsWith("966") && digits.length === 12) return `+${digits}`;
+
+  const national = digits.replace(/^0+/, "");
+  if (national.startsWith("5") && national.length === 9) {
+    return `+966${national}`;
+  }
+  return null;
+}
+
+/**
  * Does this phone answer to what was typed? Partial input matches, so typing
  * the last few digits is enough to find a chat.
  */

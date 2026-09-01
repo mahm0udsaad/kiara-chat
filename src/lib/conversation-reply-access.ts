@@ -10,8 +10,15 @@
  * `TAKEOVER_REQUIRED` is the signal for the client to collect a reason and call
  * the takeover endpoint, after which she is the assignee and replies normally.
  *
+ * Groups are the one exception to all of it: a WhatsApp group is nobody's
+ * ticket. Every agent reads and writes in it, so there is no claim to make and
+ * no takeover to record. That check lives here rather than in each route so
+ * the six callers cannot drift apart on it.
+ *
  * Pure function — no imports beyond types, so it is directly testable.
  */
+
+import { isGroupConversation } from "@/lib/conversation-meta";
 
 export type ReplyDenialCode =
   | "CONVERSATION_NOT_TAKEN"
@@ -29,9 +36,18 @@ export interface ReplyDenial {
 export function replyDenialFor(
   // `assigned_to` is optional on the domain type, and an absent column must
   // read as unclaimed rather than as "assigned to nobody in particular".
-  conversation: { assigned_to?: string | null },
+  conversation: {
+    assigned_to?: string | null;
+    metadata?: Record<string, unknown> | null;
+  },
   viewer: { role: "admin" | "agent"; teamMemberId: string | null },
 ): ReplyDenial | null {
+  // Shared by the whole team, so it is never withheld from anyone — including
+  // an agent with no team membership, who has no claim to make here.
+  if (isGroupConversation({ metadata: conversation.metadata ?? null })) {
+    return null;
+  }
+
   const assignedTo = conversation.assigned_to ?? null;
 
   if (assignedTo && viewer.teamMemberId && assignedTo === viewer.teamMemberId) {

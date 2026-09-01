@@ -9,6 +9,7 @@ import {
 } from "@/lib/mobile/http";
 
 const MAX_REPLY_LENGTH = 4_096;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function POST(
   request: Request,
@@ -31,6 +32,17 @@ export async function POST(
       400,
       "REPLY_TOO_LONG",
       `body cannot exceed ${MAX_REPLY_LENGTH} characters`
+    );
+  }
+  const idempotencyKey =
+    payload && typeof payload === "object" && "idempotencyKey" in payload
+      ? (payload as { idempotencyKey?: unknown }).idempotencyKey
+      : null;
+  if (typeof idempotencyKey !== "string" || !UUID.test(idempotencyKey)) {
+    return mobileError(
+      400,
+      "INVALID_IDEMPOTENCY_KEY",
+      "idempotencyKey must be a UUID",
     );
   }
 
@@ -61,7 +73,8 @@ export async function POST(
         email: auth.session.email,
         teamMemberId: auth.session.teamMemberId,
       },
-      text
+      text,
+      idempotencyKey,
     );
     return mobileData(
       {

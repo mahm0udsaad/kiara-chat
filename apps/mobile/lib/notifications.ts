@@ -4,7 +4,7 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 
-import { apiRequest } from "@/lib/api";
+import { apiRequest, publicApiRequest } from "@/lib/api";
 
 const FIELD_DEVICE_ID_KEY = "kiara-field-device-id";
 const FIELD_REGISTERED_TOKEN_KEY = "kiara-field-expo-token";
@@ -114,13 +114,17 @@ function once(
 async function registerPush(
   keys: { device: string; token: string },
   path: string,
+  accountId: string,
   extra: Record<string, string> = {},
 ): Promise<NotificationRegistration> {
   return once(path, async () => {
     const identity = await notificationIdentity(true, keys);
     if (!isIdentity(identity)) return identity;
 
-    const fingerprint = `${identity.expoToken}|${identity.deviceId}`;
+    // The same physical phone may be shared by two employees. The account is
+    // part of the receipt so signing in as somebody else always rebinds the
+    // Expo token on the server instead of trusting the previous user's upload.
+    const fingerprint = `${accountId}|${identity.expoToken}|${identity.deviceId}`;
     const sentKey = `${keys.token}${SENT_SUFFIX}`;
     // Only a previously *accepted* upload short-circuits, so the account
     // screen's retry after a failure still reaches the server.
@@ -176,10 +180,13 @@ function isIdentity(
   return "expoToken" in value;
 }
 
-export async function registerFieldNotifications(): Promise<NotificationRegistration> {
+export async function registerFieldNotifications(
+  accountId: string,
+): Promise<NotificationRegistration> {
   return registerPush(
     { device: FIELD_DEVICE_ID_KEY, token: FIELD_REGISTERED_TOKEN_KEY },
     "/field/push-token",
+    accountId,
   );
 }
 
@@ -199,10 +206,13 @@ export async function fieldNotificationDeviceId(): Promise<string | null> {
   return SecureStore.getItemAsync(FIELD_DEVICE_ID_KEY);
 }
 
-export async function registerInboxNotifications(): Promise<NotificationRegistration> {
+export async function registerInboxNotifications(
+  accountId: string,
+): Promise<NotificationRegistration> {
   return registerPush(
     { device: INBOX_DEVICE_ID_KEY, token: INBOX_REGISTERED_TOKEN_KEY },
     "/push-token",
+    accountId,
     { platform: process.env.EXPO_OS === "ios" ? "ios" : "android" },
   );
 }
@@ -217,4 +227,53 @@ export async function unregisterInboxNotifications(): Promise<void> {
   });
   await SecureStore.deleteItemAsync(INBOX_REGISTERED_TOKEN_KEY);
   await SecureStore.deleteItemAsync(`${INBOX_REGISTERED_TOKEN_KEY}${SENT_SUFFIX}`);
+}
+
+/**
+ * Forget only the local "server accepted this" receipts on an identity change.
+ * Device ids and OS tokens remain available for a real unregister/re-register;
+ * deleting the receipts guarantees the next signed-in account reaches the
+ * server even when the previous session expired before it could unregister.
+ */
+export async function clearNotificationRegistrationHints(): Promise<void> {
+  await Promise.all([
+    SecureStore.deleteItemAsync(`${FIELD_REGISTERED_TOKEN_KEY}${SENT_SUFFIX}`),
+    SecureStore.deleteItemAsync(`${INBOX_REGISTERED_TOKEN_KEY}${SENT_SUFFIX}`),
+  ]).catch(() => undefined);
+}
+
+async function revokeStored(
+  kind: "field" | "inbox",
+  keys: { device: string; token: string },
+): Promise<void> {
+  const [expoToken, storedDeviceId] = await Promise.all([
+    SecureStore.getItemAsync(keys.token),
+    SecureStore.getItemAsync(keys.device),
+  ]);
+  if (!expoToken || !storedDeviceId) return;
+  await publicApiRequest<{ data: { revoked: true } }>(
+    "/api/mobile/v1/push-token/revoke",
+    {
+      method: "POST",
+      body: JSON.stringify({ kind, expoToken, deviceId: storedDeviceId }),
+    },
+  );
+  await Promise.all([
+    SecureStore.deleteItemAsync(keys.token),
+    SecureStore.deleteItemAsync(`${keys.token}${SENT_SUFFIX}`),
+  ]);
+}
+
+/** Best-effort cleanup that still works after Supabase has removed the session. */
+export async function revokeLocalNotificationRegistrations(): Promise<void> {
+  await Promise.allSettled([
+    revokeStored("field", {
+      device: FIELD_DEVICE_ID_KEY,
+      token: FIELD_REGISTERED_TOKEN_KEY,
+    }),
+    revokeStored("inbox", {
+      device: INBOX_DEVICE_ID_KEY,
+      token: INBOX_REGISTERED_TOKEN_KEY,
+    }),
+  ]);
 }

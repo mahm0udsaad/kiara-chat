@@ -5,6 +5,7 @@
  * the API routes enforce that; these helpers assume it and use the admin client.
  */
 import { after } from "next/server";
+import { randomUUID } from "crypto";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID, type KiaraSession } from "@/lib/tenant";
@@ -223,20 +224,22 @@ export async function transferConversation(
 
 /** Clear the unread badge when an agent opens the thread. */
 export async function markConversationRead(conversationId: string) {
-  await getAdminSupabaseClient()
+  const { error } = await getAdminSupabaseClient()
     .from("conversations")
     .update({ unread_count: 0 })
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
+  if (error) throw new Error(error.message);
 }
 
 /** Release = back to the shared queue (unassigned). */
 export async function releaseConversation(conversationId: string) {
-  await getAdminSupabaseClient()
+  const { error } = await getAdminSupabaseClient()
     .from("conversations")
     .update({ handler_mode: "unassigned", assigned_to: null, assigned_at: null })
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
+  if (error) throw new Error(error.message);
 }
 
 /**
@@ -247,32 +250,35 @@ export async function releaseConversation(conversationId: string) {
  * Unlike the ingest path, this overwrites: it's a deliberate correction.
  */
 export async function setCustomerName(conversationId: string, name: string | null) {
-  await getAdminSupabaseClient()
+  const { error } = await getAdminSupabaseClient()
     .from("conversations")
     .update({ customer_name: name })
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
+  if (error) throw new Error(error.message);
 }
 
 /** Set Kiara CS status; mirrors the DB status column to satisfy its CHECK. */
 export async function setCsStatus(conversationId: string, csStatus: CsStatus) {
   const admin = getAdminSupabaseClient();
-  const { data } = await admin
+  const { data, error: readError } = await admin
     .from("conversations")
     .select("metadata")
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
+  if (readError) throw new Error(readError.message);
   const metadata = {
     ...((data?.metadata as Record<string, unknown>) ?? {}),
     cs_status: csStatus,
   };
   const dbStatus = csStatus === "resolved" ? "resolved" : "active";
-  await admin
+  const { error } = await admin
     .from("conversations")
     .update({ metadata, status: dbStatus })
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
+  if (error) throw new Error(error.message);
 }
 
 /**
@@ -284,12 +290,13 @@ export async function setBookingStage(
   bookingStage: BookingStage
 ) {
   const admin = getAdminSupabaseClient();
-  const { data } = await admin
+  const { data, error: readError } = await admin
     .from("conversations")
     .select("metadata")
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
+  if (readError) throw new Error(readError.message);
   const completed = bookingStage === "completed";
   const metadata = {
     ...((data?.metadata as Record<string, unknown>) ?? {}),
@@ -310,16 +317,17 @@ async function patchMetadata(
   patch: Record<string, unknown>
 ): Promise<Conversation | null> {
   const admin = getAdminSupabaseClient();
-  const { data } = await admin
+  const { data, error: readError } = await admin
     .from("conversations")
     .select("metadata")
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
+  if (readError) throw new Error(readError.message);
   const metadata = { ...((data?.metadata as Record<string, unknown>) ?? {}), ...patch };
   for (const [k, v] of Object.entries(patch)) if (v === null) delete metadata[k];
 
-  const { data: updated } = await admin
+  const { data: updated, error } = await admin
     .from("conversations")
     .update({ metadata })
     .eq("id", conversationId)
@@ -328,6 +336,7 @@ async function patchMetadata(
       "id, restaurant_id, customer_phone, customer_name, status, started_at, last_message_at, last_inbound_at, handler_mode, assigned_to, unread_count, metadata"
     )
     .maybeSingle();
+  if (error) throw new Error(error.message);
   return (updated as Conversation) ?? null;
 }
 
@@ -358,7 +367,7 @@ export async function setConversationRouting(
   });
   if (!targetTeamMemberId) return conversation;
 
-  const { data } = await getAdminSupabaseClient()
+  const { data, error } = await getAdminSupabaseClient()
     .from("conversations")
     .update({
       assigned_to: targetTeamMemberId,
@@ -371,6 +380,7 @@ export async function setConversationRouting(
       "id, restaurant_id, customer_phone, customer_name, status, started_at, last_message_at, last_inbound_at, handler_mode, assigned_to, unread_count, metadata"
     )
     .maybeSingle();
+  if (error) throw new Error(error.message);
   return ((data as Conversation) ?? conversation) ?? null;
 }
 
@@ -378,7 +388,8 @@ export async function setConversationRouting(
 export async function sendReply(
   conversationId: string,
   sender: { email: string | null; teamMemberId?: string | null },
-  body: string
+  body: string,
+  clientRequestId: string = randomUUID(),
 ): Promise<{ messageId: string | null; sent: boolean }> {
   const admin = getAdminSupabaseClient();
   const { data: conv } = await admin
@@ -402,9 +413,22 @@ export async function sendReply(
       sender_team_member_id: sender.teamMemberId ?? null,
       channel: "whatsapp",
       delivery_status: "queued",
+      client_request_id: clientRequestId,
     })
     .select("id")
     .single();
+  if (error?.code === "23505") {
+    const { data: existing, error: existingError } = await admin
+      .from("messages")
+      .select("id")
+      .eq("conversation_id", conversationId)
+      .eq("client_request_id", clientRequestId)
+      .maybeSingle();
+    if (existingError || !existing?.id) {
+      throw new Error(existingError?.message ?? "Unable to resolve duplicate reply");
+    }
+    return { messageId: existing.id as string, sent: false };
+  }
   if (error) throw new Error(`Failed to record reply: ${error.message}`);
 
   const messageId = msg!.id as string;
@@ -427,7 +451,7 @@ export async function sendMediaReply(
   sender: { email: string | null; teamMemberId?: string | null },
   file: { buffer: Buffer; contentType: string; filename: string | null },
   caption: string,
-  options: { ptt?: boolean } = {}
+  options: { ptt?: boolean; clientRequestId?: string } = {},
 ): Promise<{ messageId: string | null; sent: boolean }> {
   const admin = getAdminSupabaseClient();
   const { data: conv } = await admin
@@ -437,6 +461,18 @@ export async function sendMediaReply(
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
   if (!conv) throw new Error("Conversation not found");
+
+  const clientRequestId = options.clientRequestId ?? randomUUID();
+  const { data: alreadyRecorded, error: lookupError } = await admin
+    .from("messages")
+    .select("id")
+    .eq("conversation_id", conversationId)
+    .eq("client_request_id", clientRequestId)
+    .maybeSingle();
+  if (lookupError) throw new Error(lookupError.message);
+  if (alreadyRecorded?.id) {
+    return { messageId: alreadyRecorded.id as string, sent: false };
+  }
 
   if (file.buffer.byteLength > MAX_MEDIA_BYTES) {
     throw new Error("الملف أكبر من الحد المسموح (20 ميجابايت)");
@@ -470,9 +506,22 @@ export async function sendMediaReply(
       sender_team_member_id: sender.teamMemberId ?? null,
       channel: "whatsapp",
       delivery_status: "queued",
+      client_request_id: clientRequestId,
     })
     .select("id")
     .single();
+  if (error?.code === "23505") {
+    const { data: existing, error: existingError } = await admin
+      .from("messages")
+      .select("id")
+      .eq("conversation_id", conversationId)
+      .eq("client_request_id", clientRequestId)
+      .maybeSingle();
+    if (existingError || !existing?.id) {
+      throw new Error(existingError?.message ?? "Unable to resolve duplicate media send");
+    }
+    return { messageId: existing.id as string, sent: false };
+  }
   if (error) throw new Error(`Failed to record media message: ${error.message}`);
 
   const messageId = msg!.id as string;

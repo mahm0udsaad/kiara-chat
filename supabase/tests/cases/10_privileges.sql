@@ -17,7 +17,7 @@ begin
     'command_receipts', 'operation_events', 'outbox_events',
     'field_location_checkpoints', 'rekaz_sync_runs', 'rekaz_reservations',
     'rekaz_changes', 'field_staff_accounts', 'field_order_progress',
-    'field_staff_push_tokens'
+    'field_staff_push_tokens', 'team_member_app_presence'
   ] loop
     perform kiara_test.ok(
       (select relrowsecurity from pg_class

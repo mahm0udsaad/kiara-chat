@@ -161,9 +161,22 @@ export async function apiUpload<T>(
     throw new ApiError("أضيفي EXPO_PUBLIC_API_URL في ملف .env", 0, "NO_API_URL");
   }
 
-  const { data, error } = await supabase.auth.getSession();
-  if (error || !data.session?.access_token) {
-    throw new ApiError("انتهت الجلسة. سجّلي الدخول مرة أخرى.", 401, "NO_SESSION");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? TIMEOUT_MS);
+  let accessToken: string;
+  try {
+    const { data, error } = await untilAborted(
+      supabase.auth.getSession(),
+      controller.signal,
+    );
+    if (error || !data.session?.access_token) {
+      throw new ApiError("انتهت الجلسة. سجّلي الدخول مرة أخرى.", 401, "NO_SESSION");
+    }
+    accessToken = data.session.access_token;
+  } catch (cause) {
+    clearTimeout(timer);
+    if (cause instanceof ApiError) throw cause;
+    throw new ApiError("الخادم تأخر في الرد. حاولي مرة أخرى.", 0, "TIMEOUT");
   }
 
   const form = new FormData();
@@ -177,9 +190,6 @@ export async function apiUpload<T>(
   // An upload that never answers used to hang the screen forever — there was
   // no deadline here at all. Callers that send on a person's behalf name their
   // own; the rest get the ordinary one.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? TIMEOUT_MS);
-
   let response: Response;
   try {
     response = await globalThis.fetch(`${apiUrl}/api/mobile/v1${path}`, {
@@ -188,7 +198,7 @@ export async function apiUpload<T>(
       signal: controller.signal,
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${data.session.access_token}`,
+        Authorization: `Bearer ${accessToken}`,
       },
     });
   } catch {
@@ -226,24 +236,36 @@ async function unwrap<T>(response: Response): Promise<T> {
 
 export async function publicApiRequest<T>(
   path: string,
-  init: RequestInit = {},
+  init: ApiRequestOptions = {},
 ): Promise<T> {
   if (!apiUrl) {
     throw new ApiError("تعذر تحديد عنوان خادم كيارا", 0, "NO_API_URL");
   }
 
+  const { timeoutMs = TIMEOUT_MS, ...requestInit } = init;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
     response = await fetch(`${apiUrl}${path}`, {
-      ...init,
+      ...requestInit,
+      signal: controller.signal,
       headers: {
         Accept: "application/json",
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-        ...init.headers,
+        ...(requestInit.body ? { "Content-Type": "application/json" } : {}),
+        ...requestInit.headers,
       },
     });
   } catch {
-    throw new ApiError("تعذر الاتصال بالخادم. تحققي من الإنترنت.", 0, "NETWORK");
+    throw new ApiError(
+      controller.signal.aborted
+        ? "الخادم تأخر في الرد. حاولي مرة أخرى."
+        : "تعذر الاتصال بالخادم. تحققي من الإنترنت.",
+      0,
+      controller.signal.aborted ? "TIMEOUT" : "NETWORK",
+    );
+  } finally {
+    clearTimeout(timer);
   }
 
   const payload = (await response.json().catch(() => ({}))) as {

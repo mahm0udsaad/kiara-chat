@@ -1,4 +1,4 @@
-import { requireAdmin } from "@/lib/tenant";
+import { requireOwner } from "@/lib/tenant";
 import { getTeamReport } from "@/lib/analytics";
 import { ReportsClient } from "@/components/reports-client";
 import { getOperationsReport } from "@/lib/operations-report";
@@ -6,7 +6,7 @@ import { getOperationsReport } from "@/lib/operations-report";
 export const dynamic = "force-dynamic";
 
 export default async function ReportsPage() {
-  await requireAdmin();
+  await requireOwner();
   const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Riyadh",
     year: "numeric",

@@ -15,7 +15,7 @@ import { queryKeys, useBootstrap } from "@/lib/queries";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/providers/auth-provider";
 
-const PRESENCE_CHANNEL = "inbox-presence";
+const PRESENCE_CHANNEL = "kiara-presence";
 const PRESENCE_EVENT = "typing";
 const TYPING_TTL_MS = 8_000;
 const INBOX_TOPIC_PREFIX = "kiara-inbox:";
@@ -118,8 +118,10 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
   );
 
   useEffect(() => {
-    if (!operationsStaff) return;
+    if (!operationsStaff || !session?.access_token) return;
     const pendingTimers = timers.current;
+    let presence: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
 
     // Presence is ephemeral and the WhatsApp engine loses watches on restart,
     // so every mobile inbox session re-requests the visible phone set.
@@ -127,31 +129,36 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
       () => undefined,
     );
 
-    const presence = supabase
-      .channel(PRESENCE_CHANNEL)
-      .on("broadcast", { event: PRESENCE_EVENT }, ({ payload }) => {
-        const event = (payload ?? {}) as TypingPayload;
-        if (!event.conversationId) return;
-        if (!activeTypingState(event.state)) {
-          clearTyping(event.conversationId);
-          return;
-        }
-        markTyping(event.conversationId);
-        const existing = timers.current.get(event.conversationId);
-        if (existing) clearTimeout(existing);
-        timers.current.set(
-          event.conversationId,
-          setTimeout(() => clearTyping(event.conversationId!), TYPING_TTL_MS),
-        );
-      })
-      .subscribe();
+    void (async () => {
+      await supabase.realtime.setAuth(session.access_token);
+      if (cancelled) return;
+      presence = supabase
+        .channel(PRESENCE_CHANNEL, { config: { private: true } })
+        .on("broadcast", { event: PRESENCE_EVENT }, ({ payload }) => {
+          const event = (payload ?? {}) as TypingPayload;
+          if (!event.conversationId) return;
+          if (!activeTypingState(event.state)) {
+            clearTyping(event.conversationId);
+            return;
+          }
+          markTyping(event.conversationId);
+          const existing = timers.current.get(event.conversationId);
+          if (existing) clearTimeout(existing);
+          timers.current.set(
+            event.conversationId,
+            setTimeout(() => clearTyping(event.conversationId!), TYPING_TTL_MS),
+          );
+        })
+        .subscribe();
+    })();
 
     return () => {
+      cancelled = true;
       pendingTimers.forEach((timer) => clearTimeout(timer));
       pendingTimers.clear();
-      void supabase.removeChannel(presence);
+      if (presence) void supabase.removeChannel(presence);
     };
-  }, [clearTyping, markTyping, operationsStaff]);
+  }, [clearTyping, markTyping, operationsStaff, session?.access_token]);
 
   useEffect(() => {
     if (!operationsStaff || !teamMemberId || !session?.access_token) return;
@@ -173,6 +180,9 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
             queryClient.invalidateQueries({ queryKey: ["conversations"] }),
             queryClient.invalidateQueries({
               queryKey: queryKeys.conversation(event.conversationId),
+            }),
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.conversationMessages(event.conversationId),
             }),
           ]);
         })

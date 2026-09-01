@@ -63,11 +63,15 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   // Bumped by the account screen's retry, after the employee has gone into the
   // system settings and turned notifications back on.
   const [attempt, setAttempt] = useState(0);
-  const register = fieldStaff
-    ? registerFieldNotifications
-    : inboxStaff && teamMemberId
-      ? registerInboxNotifications
-      : null;
+  const accountId = session?.user.id ?? null;
+  const register = useMemo(() => {
+    if (!accountId) return null;
+    if (fieldStaff) return () => registerFieldNotifications(accountId);
+    if (inboxStaff && teamMemberId) {
+      return () => registerInboxNotifications(accountId);
+    }
+    return null;
+  }, [accountId, fieldStaff, inboxStaff, teamMemberId]);
 
   useEffect(() => {
     if (!register) return;
@@ -144,6 +148,9 @@ export function NotificationProvider({ children }: PropsWithChildren) {
       if (typeof data.conversationId === "string") {
         void queryClient.invalidateQueries({
           queryKey: queryKeys.conversation(data.conversationId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.conversationMessages(data.conversationId),
         });
       }
     });

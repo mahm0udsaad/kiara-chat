@@ -1,6 +1,18 @@
 import type { Session } from "@supabase/supabase-js";
-import { createContext, type PropsWithChildren, use, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  createContext,
+  type PropsWithChildren,
+  use,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
+import {
+  clearNotificationRegistrationHints,
+  revokeLocalNotificationRegistrations,
+} from "@/lib/notifications";
 import { supabase } from "@/lib/supabase";
 
 type AuthContextValue = {
@@ -19,8 +31,10 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const AUTH_INIT_TIMEOUT_MS = 8_000;
 
 export function AuthProvider({ children }: PropsWithChildren) {
+  const queryClient = useQueryClient();
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const currentUserId = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
@@ -43,11 +57,29 @@ export function AuthProvider({ children }: PropsWithChildren) {
      * which is wrong-but-recoverable; if the real session arrives late,
      * `onAuthStateChange` still delivers it and the app corrects itself.
      */
+    const applySession = (next: Session | null) => {
+      const nextUserId = next?.user.id ?? null;
+      const previousUserId = currentUserId.current;
+      // Query keys intentionally describe resources, not identities. Clear the
+      // process-wide cache before a different identity can render those keys.
+      if (previousUserId !== undefined && previousUserId !== nextUserId) {
+        queryClient.clear();
+        if (nextUserId === null) void revokeLocalNotificationRegistrations();
+        void clearNotificationRegistrationHints();
+      }
+      if (previousUserId === undefined && nextUserId === null) {
+        // A prior process may have died immediately after session expiry.
+        void revokeLocalNotificationRegistrations();
+      }
+      currentUserId.current = nextUserId;
+      setSession(next);
+      setLoading(false);
+    };
+
     const open = (next: Session | null) => {
       if (!active || opened) return;
       opened = true;
-      setSession(next);
-      setLoading(false);
+      applySession(next);
     };
 
     const timer = setTimeout(() => open(null), AUTH_INIT_TIMEOUT_MS);
@@ -63,8 +95,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (!active) return;
       opened = true;
       clearTimeout(timer);
-      setSession(nextSession);
-      setLoading(false);
+      applySession(nextSession);
     });
 
     return () => {
@@ -72,7 +103,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       clearTimeout(timer);
       data.subscription.unsubscribe();
     };
-  }, []);
+  }, [queryClient]);
 
   return (
     <AuthContext.Provider

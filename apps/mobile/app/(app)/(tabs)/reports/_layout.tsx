@@ -18,6 +18,10 @@ export default function ReportsLayout() {
         name="[role]/[personId]"
         options={{ title: "تفاصيل الأداء", headerBackButtonDisplayMode: "minimal" }}
       />
+      <Stack.Screen
+        name="customer-service/[personId]"
+        options={{ title: "مساءلة الموظفة", headerBackButtonDisplayMode: "minimal" }}
+      />
     </Stack>
   );
 }

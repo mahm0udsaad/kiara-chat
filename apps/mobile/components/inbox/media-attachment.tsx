@@ -55,7 +55,12 @@ export function MediaAttachment({
     );
   }
   if (media.isError || !media.data) {
-    return <Note text={media.error?.message ?? "تعذّر تحميل الملف"} />;
+    // Whatever the server says goes to the console, not into the bubble: this
+    // line used to print storage's own "Object not found" between two Arabic
+    // messages, telling an employee a file was gone when it was simply not
+    // signed for her.
+    if (media.error) console.warn("[media] load failed", media.error.message);
+    return <Note text="تعذّر تحميل الملف" />;
   }
 
   const url = media.data.url;

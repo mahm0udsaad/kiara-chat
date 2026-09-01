@@ -5,6 +5,7 @@ import { View } from "react-native";
 import { PrimaryButton } from "@/components/primary-button";
 import { EmptyState, ErrorState, LoadingScreen } from "@/components/screen-state";
 import { spacing } from "@/constants/theme";
+import { useEmployeePresence } from "@/lib/employee-presence";
 import { useBootstrap, useConversations } from "@/lib/queries";
 import { useAuth } from "@/providers/auth-provider";
 import { useTheme } from "@/providers/theme-provider";
@@ -19,6 +20,9 @@ export default function TabsLayout() {
   // Powers the tab badge; shares the inbox screen's cache entry, so this adds
   // no extra traffic.
   const newConversations = useConversations("new", "", { enabled: bootstrap.isSuccess });
+  useEmployeePresence(
+    bootstrap.data?.session.role === "admin" || bootstrap.data?.session.role === "agent",
+  );
 
   if (bootstrap.isLoading) return <LoadingScreen label="جارٍ تجهيز حسابك…" />;
 
@@ -95,7 +99,7 @@ export default function TabsLayout() {
         <NativeTabs.Trigger.Label>الطلبات</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
-      {bootstrap.data.session.role === "admin" ? (
+      {bootstrap.data.capabilities.canViewReports ? (
         <NativeTabs.Trigger name="reports">
           <NativeTabs.Trigger.Icon
             sf={{ default: "chart.bar", selected: "chart.bar.fill" }}

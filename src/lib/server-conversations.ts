@@ -6,6 +6,7 @@
  */
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import { canonicalPhone } from "@/lib/phone";
 
 /**
  * A WhatsApp display name worth storing: not blank, not just the phone number
@@ -27,13 +28,15 @@ export async function findOrCreateConversation(
   /** The sender's WhatsApp display name, when the engine forwarded one. */
   customerName?: string | null
 ): Promise<{ id: string; is_new: boolean }> {
+  const canonical = canonicalPhone(customerPhone);
+  if (!canonical) throw new Error("Invalid customer phone");
   const admin = getAdminSupabaseClient();
-  const name = usableCustomerName(customerName, customerPhone);
+  const name = usableCustomerName(customerName, canonical);
   const { data: existing } = await admin
     .from("conversations")
     .select("id, customer_name")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq("customer_phone", customerPhone)
+    .eq("customer_phone", canonical)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -56,7 +59,7 @@ export async function findOrCreateConversation(
     .from("conversations")
     .insert({
       restaurant_id: KIARA_RESTAURANT_ID,
-      customer_phone: customerPhone,
+      customer_phone: canonical,
       customer_name: name,
       status: "active",
       started_at: now,
@@ -171,11 +174,13 @@ export async function rememberChatLid(
 export async function findConversationByPhone(
   customerPhone: string
 ): Promise<{ id: string } | null> {
+  const canonical = canonicalPhone(customerPhone);
+  if (!canonical) return null;
   const { data } = await getAdminSupabaseClient()
     .from("conversations")
     .select("id")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq("customer_phone", customerPhone)
+    .eq("customer_phone", canonical)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();

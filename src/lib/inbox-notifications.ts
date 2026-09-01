@@ -148,6 +148,24 @@ export async function unregisterInboxPushToken(input: {
   if (error) throw new Error(error.message);
 }
 
+/** Disable one physical device even when its user session is already gone. */
+export async function revokeInboxPushTokenByIdentity(input: {
+  expoToken: string;
+  deviceId: string;
+}): Promise<void> {
+  const modern = await supportsAppScopedTokens();
+  const { error } = await getAdminSupabaseClient()
+    .from("user_push_tokens")
+    .update({
+      disabled: true,
+      ...(modern ? { disabled_reason: "session_ended" } : {}),
+    })
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("expo_token", input.expoToken)
+    .eq("device_id", storedDeviceId(input.deviceId));
+  if (error) throw new Error(error.message);
+}
+
 async function activeInboxTokens(
   teamMemberIds: string | string[]
 ): Promise<string[]> {

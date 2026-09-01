@@ -26,6 +26,7 @@ export interface MobileSession {
   userId: string;
   email: string | null;
   role: "admin" | "agent" | "specialist" | "driver";
+  isOwner: boolean;
   teamMemberId: string | null;
   fieldStaffAccountId: string | null;
   rosterId: string | null;
@@ -85,12 +86,14 @@ export function toMobileSession(session: {
   userId: string;
   email: string | null;
   role: "admin" | "agent";
+  isOwner: boolean;
   teamMemberId: string | null;
 }): MobileSession {
   return {
     userId: session.userId,
     email: session.email,
     role: session.role,
+    isOwner: session.isOwner,
     teamMemberId: session.teamMemberId,
     fieldStaffAccountId: null,
     rosterId: null,
@@ -103,6 +106,7 @@ export function fieldStaffToMobileSession(session: FieldStaffSession): MobileSes
     userId: session.userId,
     email: null,
     role: session.role,
+    isOwner: false,
     teamMemberId: null,
     fieldStaffAccountId: session.accountId,
     rosterId: session.rosterId,

@@ -1,12 +1,12 @@
 import { bookingStageOf } from "@/lib/booking-stage";
-import { sectionOf } from "@/lib/conversation-meta";
+import { isGroupConversation, sectionOf } from "@/lib/conversation-meta";
 import {
   getConversationLabelIds,
   getLabelAssignments,
   listLabels,
 } from "@/lib/labels";
 import { listDrivers, listSpecialists } from "@/lib/dispatch";
-import { listConversations } from "@/lib/inbox";
+import { listAllConversations } from "@/lib/inbox";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import {
   MOBILE_DANGER_AFTER_SECONDS,
@@ -25,7 +25,6 @@ import type {
   CsStatus,
 } from "@/lib/types";
 
-const MAX_MOBILE_CONVERSATION_SCAN = 500;
 const EMPTY_PHONE_SET: ReadonlySet<string> = new Set();
 const EMPTY_CONVERSATION_ID_SET: ReadonlySet<string> = new Set();
 
@@ -45,19 +44,9 @@ export function conversationCsStatus(
   return conversation.status === "resolved" ? "resolved" : "open";
 }
 
-/**
- * A WhatsApp group thread. The group's jid sits in `customer_phone` — it is
- * the address we send to, exactly as a phone is — and this flag is what keeps
- * it out of the customer queue.
- */
-export function isGroupConversation(
-  conversation: Pick<Conversation, "metadata">
-): boolean {
-  return (
-    (conversation.metadata as { chat_kind?: unknown } | null)?.chat_kind ===
-    "group"
-  );
-}
+// Re-exported so existing importers of this module keep working; the
+// predicate itself now lives with the other metadata readers.
+export { isGroupConversation };
 
 /**
  * True once someone answered this thread from the WhatsApp app on the phone
@@ -388,7 +377,7 @@ export async function listMobileConversations(options: {
   const now = Date.now();
   const filters = options.filters ?? NO_FILTERS;
   const [conversations, classification] = await Promise.all([
-    listConversations(MAX_MOBILE_CONVERSATION_SCAN, {
+    listAllConversations({
       isAdmin: options.isAdmin,
       teamMemberId: options.teamMemberId,
     }),

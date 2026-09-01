@@ -1,4 +1,5 @@
 import { createBooking } from "@/lib/dispatch";
+import { replyDenialFor } from "@/lib/conversation-reply-access";
 import { getConversationById } from "@/lib/inbox";
 import {
   authorizeMobileRequest,
@@ -59,6 +60,13 @@ export async function POST(
     });
     if (!conversation) {
       return mobileError(404, "CONVERSATION_NOT_FOUND", "Conversation not found");
+    }
+    const denial = replyDenialFor(conversation, {
+      role: auth.session.role,
+      teamMemberId: auth.session.teamMemberId,
+    });
+    if (denial) {
+      return mobileError(denial.status, denial.code, denial.message);
     }
 
     const order = await createBooking(auth.session.userId, {

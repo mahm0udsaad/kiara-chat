@@ -24,6 +24,8 @@ export type PendingAttachment = {
   mimeType: string;
   isImage: boolean;
   caption: string;
+  /** Captured microphone audio should remain a WhatsApp push-to-talk note. */
+  voiceNote?: boolean;
 };
 
 /**

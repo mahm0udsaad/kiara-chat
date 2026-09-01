@@ -55,6 +55,24 @@ export function routedToOf(c: Pick<Conversation, "metadata">): string | null {
  * The single visibility rule, shared by the list query and the per-conversation
  * API guard so they can never disagree.
  */
+/**
+ * A WhatsApp group thread. The group's jid sits in `customer_phone` — it is
+ * the address we send to, exactly as a phone is — and this flag is what keeps
+ * it out of the customer queue.
+ *
+ * Canonical home for the check: reply access, the mobile list and the web
+ * inbox all ask it, and a group that reads as a normal chat in any one of
+ * them would put the claim/assignment machinery back on a thread that has no
+ * single owner by design.
+ */
+export function isGroupConversation(
+  c: Pick<Conversation, "metadata">,
+): boolean {
+  return (
+    (c.metadata as { chat_kind?: unknown } | null)?.chat_kind === "group"
+  );
+}
+
 export function canViewConversation(
   c: Pick<Conversation, "metadata">,
   viewer: { isAdmin: boolean; teamMemberId: string | null }

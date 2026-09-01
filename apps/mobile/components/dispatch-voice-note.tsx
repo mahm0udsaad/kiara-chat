@@ -121,10 +121,15 @@ export function DispatchVoiceNote({
 
   // A note that runs long is cut at the cap rather than refused on send.
   useEffect(() => {
-    if (recording && seconds >= MAX_SECONDS) {
+    if (!recording || seconds < MAX_SECONDS) return;
+    // Run after the effect has committed. Apart from satisfying React's effect
+    // contract, this lets the last recorder-state sample settle before `stop`
+    // reads its duration and prevents a cascading render at the cutoff.
+    const timer = setTimeout(() => {
       warningFeedback();
       void stop(true);
-    }
+    }, 0);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recording, seconds]);
 

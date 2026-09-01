@@ -36,6 +36,7 @@ export type BootstrapResponse = {
     userId: string;
     email: string | null;
     role: StaffRole;
+    isOwner: boolean;
     teamMemberId: string | null;
     fieldStaffAccountId: string | null;
     rosterId: string | null;
@@ -45,6 +46,7 @@ export type BootstrapResponse = {
     canTakeConversations: boolean;
     canManageTeam: boolean;
     canViewOrderPrices: boolean;
+    canViewReports: boolean;
   };
   inbox: {
     dangerAfterSeconds: number;
@@ -222,6 +224,13 @@ export type ConversationDetail = {
   messages: ConversationMessage[];
   /** Detail-only; older API builds omit it. */
   sharedLocation?: SharedLocation | null;
+  hasMore: boolean;
+  nextBefore: string | null;
+};
+
+export type ConversationMessagesPage = {
+  conversationId: string;
+  messages: ConversationMessage[];
   hasMore: boolean;
   nextBefore: string | null;
 };
@@ -451,6 +460,86 @@ export type OperationsReport = {
   generatedAt: string;
   people: Record<OperationsRole, OperationsPerson[]>;
   events: Record<OperationsRole, OperationsEvent[]>;
+};
+
+export type CustomerServiceActionKind =
+  | "reply"
+  | "claim"
+  | "release"
+  | "transfer"
+  | "takeover"
+  | "status"
+  | "booking"
+  | "note"
+  | "order"
+  | "other";
+
+export type CustomerServiceActivity = {
+  id: string;
+  at: string;
+  kind: CustomerServiceActionKind;
+  title: string;
+  conversationId: string;
+  customerName: string | null;
+  customerPhone: string | null;
+};
+
+export type CustomerServiceDailyActivity = {
+  day: string;
+  handledConversations: number;
+  messagesSent: number;
+  actions: number;
+};
+
+export type CustomerServiceEmployee = {
+  teamMemberId: string;
+  name: string;
+  email: string | null;
+  role: "admin" | "agent";
+  isEmploymentActive: boolean;
+  activeNow: boolean;
+  appState: "active" | "background" | null;
+  platform: "ios" | "android" | "web" | null;
+  lastSeenAt: string | null;
+  lastActionAt: string | null;
+  currentAssigned: number;
+  currentRunning: number;
+  currentWaiting: number;
+  currentResolved: number;
+  handledConversations: number;
+  resolvedConversations: number;
+  averageFirstResponseMinutes: number | null;
+  messagesSent: number;
+  actions: number;
+  claims: number;
+  releases: number;
+  transfers: number;
+  takeovers: number;
+  statusChanges: number;
+  bookingActions: number;
+  notesAdded: number;
+  ordersCreated: number;
+  daily: CustomerServiceDailyActivity[];
+  recentActivity: CustomerServiceActivity[];
+};
+
+export type CustomerServiceReport = {
+  from: string;
+  to: string;
+  startTime: string;
+  endTime: string;
+  timeZone: "Asia/Riyadh";
+  generatedAt: string;
+  onlineWindowSeconds: number;
+  totals: {
+    employees: number;
+    activeNow: number;
+    handledConversations: number;
+    currentAssigned: number;
+    messagesSent: number;
+    actions: number;
+  };
+  employees: CustomerServiceEmployee[];
 };
 
 /**

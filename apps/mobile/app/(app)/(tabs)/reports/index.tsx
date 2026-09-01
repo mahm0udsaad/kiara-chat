@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { PrimaryButton } from "@/components/primary-button";
+import { CustomerServiceTeam } from "@/components/reports/customer-service-team";
 import { ErrorState } from "@/components/screen-state";
 import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
@@ -11,11 +12,14 @@ import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { addDays, dayKeyFromToday } from "@/lib/calendar";
 import { REPORT_LOCALE, reportDecimal, reportInteger } from "@/lib/operations-report";
-import { useBootstrap, useOperationsReport } from "@/lib/queries";
+import { useBootstrap, useCustomerServiceReport, useOperationsReport } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { OperationsPerson, OperationsRole } from "@/types/api";
 
-const roleOptions: SegmentOption<OperationsRole>[] = [
+type ReportTeam = OperationsRole | "customer-service";
+
+const roleOptions: SegmentOption<ReportTeam>[] = [
+  { value: "customer-service", label: "خدمة العملاء" },
   { value: "specialist", label: "الأخصائيات" },
   { value: "driver", label: "السائقون" },
 ];
@@ -78,18 +82,34 @@ export default function ReportsScreen() {
   const { colors } = useTheme();
   const bootstrap = useBootstrap();
   const today = dayKeyFromToday(0);
-  const [role, setRole] = useState<OperationsRole>("specialist");
+  const [role, setRole] = useState<ReportTeam>("customer-service");
   const [draft, setDraft] = useState({ from: today, to: addDays(today, 6), startTime: "08:00", endTime: "22:00" });
   const [applied, setApplied] = useState(draft);
   const [picker, setPicker] = useState<PickerField | null>(null);
-  const report = useOperationsReport(applied.from, applied.to, applied.startTime, applied.endTime, bootstrap.data?.session.role === "admin");
+  const canViewReports = bootstrap.data?.capabilities.canViewReports === true;
+  const operationsReport = useOperationsReport(
+    applied.from,
+    applied.to,
+    applied.startTime,
+    applied.endTime,
+    canViewReports && role !== "customer-service",
+  );
+  const customerServiceReport = useCustomerServiceReport(
+    applied.from,
+    applied.to,
+    applied.startTime,
+    applied.endTime,
+    canViewReports && role === "customer-service",
+  );
+  const activeReport = role === "customer-service" ? customerServiceReport : operationsReport;
 
-  if (bootstrap.isSuccess && bootstrap.data.session.role !== "admin") return <Redirect href="/inbox" />;
-  if (report.isError) {
-    return <ErrorState title="تعذّر تحميل التقرير" message={report.error.message} onRetry={() => void report.refetch()} />;
+  if (bootstrap.isSuccess && !bootstrap.data.capabilities.canViewReports) return <Redirect href="/inbox" />;
+  if (activeReport.isError) {
+    return <ErrorState title="تعذّر تحميل التقرير" message={activeReport.error.message} onRetry={() => void activeReport.refetch()} />;
   }
 
-  const people = report.data?.people[role] ?? [];
+  const operationsRole: OperationsRole = role === "driver" ? "driver" : "specialist";
+  const people = operationsReport.data?.people[operationsRole] ?? [];
   const totals = people.reduce(
       (value, person) => ({
         assigned: value.assigned + person.assignedCount,
@@ -115,7 +135,7 @@ export default function ReportsScreen() {
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
-      refreshControl={<RefreshControl refreshing={report.isRefetching} onRefresh={() => void report.refetch()} tintColor={colors.brand} />}
+      refreshControl={<RefreshControl refreshing={activeReport.isRefetching} onRefresh={() => void activeReport.refetch()} tintColor={colors.brand} />}
       contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["5xl"], gap: spacing.lg }}
     >
       <Segmented
@@ -124,6 +144,7 @@ export default function ReportsScreen() {
         onChange={setRole}
         accessibilityLabel="اختيار فريق التقرير"
         testIDPrefix="reports-role"
+        layout="scroll"
       />
 
       <Card>
@@ -157,9 +178,11 @@ export default function ReportsScreen() {
         />
       ) : null}
 
-      {report.isLoading ? <ActivityIndicator size="large" color={colors.brand} /> : null}
+      {activeReport.isLoading ? <ActivityIndicator size="large" color={colors.brand} /> : null}
 
-      {report.data ? (
+      {role === "customer-service" && customerServiceReport.data ? (
+        <CustomerServiceTeam report={customerServiceReport.data} />
+      ) : operationsReport.data && role !== "customer-service" ? (
         <>
           <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
             <Metric icon="person.2" label="مسند" value={reportInteger.format(totals.assigned)} />
@@ -193,7 +216,7 @@ export default function ReportsScreen() {
                   <Link
                     href={{
                       pathname: "/reports/[role]/[personId]",
-                      params: { role, personId: person.id, name: person.name },
+                      params: { role: operationsRole, personId: person.id, name: person.name },
                     }}
                     asChild
                   >

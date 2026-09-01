@@ -3,6 +3,7 @@ import { getKiaraSession } from "@/lib/tenant";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AppNav } from "@/components/app-nav";
 import { ViewportHeight } from "@/components/viewport-height";
+import { AppPresenceHeartbeat } from "@/components/app-presence-heartbeat";
 
 export default async function AppLayout({
   children,
@@ -17,6 +18,7 @@ export default async function AppLayout({
     // composer stays above the on-screen keyboard instead of behind it. The
     // header keeps its size and <main> takes the rest.
     <div className="app-shell">
+      <AppPresenceHeartbeat />
       <header className="safe-t shrink-0 border-b bg-[var(--surface)]">
         <div className="flex items-center justify-between gap-3 px-3 py-2 sm:px-5 sm:py-3">
           <div className="flex min-w-0 items-center gap-2">
@@ -38,7 +40,7 @@ export default async function AppLayout({
             <SignOutButton />
           </div>
         </div>
-        <AppNav isAdmin={session.role === "admin"} />
+        <AppNav isAdmin={session.role === "admin"} isOwner={session.isOwner} />
       </header>
       <main className="scroll-pane min-h-0 flex-1">{children}</main>
       <ViewportHeight />

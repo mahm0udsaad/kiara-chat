@@ -5,7 +5,7 @@ import {
   mobileError,
   mobileServerError,
 } from "@/lib/mobile/http";
-import { normalizePhone } from "@/lib/phone";
+import { canonicalPhone, normalizePhone } from "@/lib/phone";
 import { findOrCreateConversation } from "@/lib/server-conversations";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 
@@ -40,23 +40,50 @@ export async function POST(request: Request) {
   // typed. Matching on the national part is what the Rekaz booking path
   // already does, and an exact comparison here would miss every thread.
   const national = normalizePhone(raw);
-  if (!national) return mobileError(400, "PHONE_INVALID", "phone is invalid");
+  const canonical = canonicalPhone(raw);
+  if (!canonical || national.length < 8) {
+    return mobileError(400, "PHONE_INVALID", "phone is invalid");
+  }
 
   try {
-    const { data: existing } = await getAdminSupabaseClient()
+    const admin = getAdminSupabaseClient();
+    const { data: exact, error: exactError } = await admin
       .from("conversations")
       .select("id")
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .ilike("customer_phone", `%${national}%`)
+      .eq("customer_phone", canonical)
       .order("last_message_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (exactError) throw new Error(exactError.message);
+    const { data: legacy, error: legacyError } = exact
+      ? { data: null, error: null }
+      : await admin
+          .from("conversations")
+          .select("id, customer_phone")
+          .eq("restaurant_id", KIARA_RESTAURANT_ID)
+          // Compatibility for old rows stored with punctuation or a trunk 0.
+          // The full-number minimum above prevents a short suffix collision.
+          .ilike("customer_phone", `%${national}`)
+          .order("last_message_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+    if (legacyError) throw new Error(legacyError.message);
+    const existing = exact ?? legacy;
     if (existing?.id) {
+      // Repair old `+05…`/punctuated rows when they are encountered. An exact
+      // canonical row was checked first, so this cannot collide with it.
+      if (legacy && legacy.customer_phone !== canonical) {
+        const { error: repairError } = await admin
+          .from("conversations")
+          .update({ customer_phone: canonical })
+          .eq("id", legacy.id);
+        if (repairError) throw new Error(repairError.message);
+      }
       return mobileData({ conversationId: existing.id as string, created: false });
     }
 
-    const digits = raw.replace(/\D/g, "");
-    const created = await findOrCreateConversation(`+${digits}`, name || null);
+    const created = await findOrCreateConversation(canonical, name || null);
     return mobileData({ conversationId: created.id, created: created.is_new });
   } catch (error) {
     return mobileServerError(

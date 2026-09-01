@@ -119,9 +119,15 @@ const ConversationRow = memo(function ConversationRow({
   // that chat's row and leaves the other fifteen on screen untouched.
   const typing = useIsTyping(conversation.id);
 
-  const overdue = conversation.dangerMinutes !== null && conversation.dangerMinutes >= 6;
-  const unread = conversation.unread_count ?? 0;
   const isGroup = conversation.isGroup ?? false;
+  // Nobody owes a group a reply — chatter in it is not an unanswered customer —
+  // so the overdue clock is off here, in the row's spoken label as well as its
+  // badge.
+  const overdue =
+    !isGroup &&
+    conversation.dangerMinutes !== null &&
+    conversation.dangerMinutes >= 6;
+  const unread = conversation.unread_count ?? 0;
   // A group's "phone" is its jid, which is not something to show anybody — an
   // unnamed group says so instead.
   const displayName =
@@ -255,10 +261,15 @@ const ConversationRow = memo(function ConversationRow({
                   paddingTop: spacing.xs,
                 }}
               >
-                <Badge
-                  label={csStatusLabel[conversation.csStatus]}
-                  tone={csStatusTone[conversation.csStatus]}
-                />
+                {/* A group has no CS lifecycle to report: no claim, no bot
+                    reply, nobody waiting. The "مجموعة" badge below is the
+                    whole story. */}
+                {isGroup ? null : (
+                  <Badge
+                    label={csStatusLabel[conversation.csStatus]}
+                    tone={csStatusTone[conversation.csStatus]}
+                  />
+                )}
                 {conversation.bookingStage ? (
                   <Badge
                     label={bookingStageLabel[conversation.bookingStage]}
@@ -281,7 +292,7 @@ const ConversationRow = memo(function ConversationRow({
                 ) : null}
                 {/* Otherwise the thread reads as ignored: the reply exists,
                     it was just typed on the phone and never recorded here. */}
-                {conversation.handledOnWhatsApp ? (
+                {conversation.handledOnWhatsApp && !isGroup ? (
                   <Badge tone="info" icon="message" label="رُدّ من واتساب" />
                 ) : null}
                 {conversation.labels?.map((label) => (

@@ -69,9 +69,15 @@ export default function EmployeeReportScreen() {
   const bootstrap = useBootstrap();
   const [period, setPeriod] = useState<ReportPeriod>("month");
   const range = reportRange(period, dayKeyFromToday(0));
-  const report = useOperationsReport(range.from, range.to, "08:00", "22:00", bootstrap.data?.session.role === "admin" && Boolean(personId));
+  const report = useOperationsReport(
+    range.from,
+    range.to,
+    "08:00",
+    "22:00",
+    bootstrap.data?.capabilities.canViewReports === true && Boolean(personId),
+  );
 
-  if (bootstrap.isSuccess && bootstrap.data.session.role !== "admin") return <Redirect href="/inbox" />;
+  if (bootstrap.isSuccess && !bootstrap.data.capabilities.canViewReports) return <Redirect href="/inbox" />;
   if (report.isError) {
     return <ErrorState title="تعذّر تحميل تقرير الموظف" message={report.error.message} onRetry={() => void report.refetch()} />;
   }

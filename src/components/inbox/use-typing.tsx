@@ -37,7 +37,7 @@ export function useTyping(): (conversationId: string) => boolean {
     const pending = timers.current;
     const supabase = createClient();
     const channel = supabase
-      .channel(PRESENCE_CHANNEL)
+      .channel(PRESENCE_CHANNEL, { config: { private: true } })
       .on("broadcast", { event: PRESENCE_EVENT }, ({ payload }) => {
         const { conversationId, state } = (payload ?? {}) as TypingBroadcast;
         if (!conversationId || !state) return;

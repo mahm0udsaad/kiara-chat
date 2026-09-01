@@ -934,21 +934,23 @@ export async function dispatchBooking(
 /** Drop the bot-collected booking_request flag from a conversation, if any. */
 export async function clearBookingRequest(conversationId: string): Promise<void> {
   const admin = getAdminSupabaseClient();
-  const { data: conv } = await admin
+  const { data: conv, error: readError } = await admin
     .from("conversations")
     .select("metadata")
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
+  if (readError) throw new Error(readError.message);
   const metadata = (conv?.metadata as Record<string, unknown> | null) ?? null;
   if (!metadata || !("booking_request" in metadata)) return;
   const rest = { ...metadata };
   delete rest.booking_request;
-  await admin
+  const { error } = await admin
     .from("conversations")
     .update({ metadata: rest })
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
+  if (error) throw new Error(error.message);
 }
 
 /** Recent orders for a conversation. */

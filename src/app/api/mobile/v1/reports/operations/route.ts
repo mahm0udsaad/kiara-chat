@@ -12,8 +12,8 @@ import {
 export async function GET(request: Request) {
   const auth = await authorizeMobileRequest(request);
   if (auth.response) return auth.response;
-  if (auth.session.role !== "admin") {
-    return mobileError(403, "ADMIN_REQUIRED", "صلاحية الإدارة مطلوبة");
+  if (!auth.session.isOwner) {
+    return mobileError(403, "OWNER_REQUIRED", "هذا التقرير متاح للمالكة فقط");
   }
 
   const params = new URL(request.url).searchParams;

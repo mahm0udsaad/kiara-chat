@@ -6,18 +6,20 @@ import { MessageSquare, QrCode, Users, BarChart3, Settings, CalendarDays } from 
 import { cn } from "@/lib/utils";
 
 const ITEMS = [
-  { href: "/inbox", label: "المحادثات", Icon: MessageSquare, adminOnly: false },
+  { href: "/inbox", label: "المحادثات", Icon: MessageSquare, adminOnly: false, ownerOnly: false },
   // Employees create the orders, so they get the log too (prices are stripped).
-  { href: "/orders", label: "طلبات اليوم", Icon: CalendarDays, adminOnly: false },
-  { href: "/reports", label: "التقارير", Icon: BarChart3, adminOnly: true },
-  { href: "/team", label: "الموظفون", Icon: Users, adminOnly: true },
-  { href: "/connect", label: "ربط واتساب", Icon: QrCode, adminOnly: true },
-  { href: "/settings", label: "الإعدادات", Icon: Settings, adminOnly: true },
+  { href: "/orders", label: "طلبات اليوم", Icon: CalendarDays, adminOnly: false, ownerOnly: false },
+  { href: "/reports", label: "التقارير", Icon: BarChart3, adminOnly: false, ownerOnly: true },
+  { href: "/team", label: "الموظفون", Icon: Users, adminOnly: true, ownerOnly: false },
+  { href: "/connect", label: "ربط واتساب", Icon: QrCode, adminOnly: true, ownerOnly: false },
+  { href: "/settings", label: "الإعدادات", Icon: Settings, adminOnly: true, ownerOnly: false },
 ];
 
-export function AppNav({ isAdmin }: { isAdmin: boolean }) {
+export function AppNav({ isAdmin, isOwner }: { isAdmin: boolean; isOwner: boolean }) {
   const pathname = usePathname();
-  const items = ITEMS.filter((i) => !i.adminOnly || isAdmin);
+  const items = ITEMS.filter(
+    (item) => (!item.adminOnly || isAdmin) && (!item.ownerOnly || isOwner),
+  );
   if (items.length < 2) return null;
 
   return (

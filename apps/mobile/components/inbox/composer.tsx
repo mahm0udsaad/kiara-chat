@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
+import * as Crypto from "expo-crypto";
 import * as ImagePicker from "expo-image-picker";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import {
@@ -66,6 +67,7 @@ export function Composer({ conversationId }: { conversationId: string }) {
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 250);
   const [recording, setRecording] = useState(false);
+  const textAttempt = useRef<{ text: string; idempotencyKey: string } | null>(null);
 
   const canSendText = Boolean(draft.trim()) && !reply.isPending;
 
@@ -118,7 +120,7 @@ export function Composer({ conversationId }: { conversationId: string }) {
         .map((asset, index) => {
           const isImage = asset.type !== "video";
           return {
-            id: `${asset.assetId ?? asset.uri}-${index}`,
+            id: Crypto.randomUUID(),
             uri: asset.uri,
             name: asset.fileName ?? fallbackName(asset.uri, isImage ? "jpg" : "mp4"),
             mimeType: asset.mimeType ?? (isImage ? "image/jpeg" : "video/mp4"),
@@ -140,7 +142,7 @@ export function Composer({ conversationId }: { conversationId: string }) {
     if (!asset) return;
     stage([
       {
-        id: asset.uri,
+        id: Crypto.randomUUID(),
         uri: asset.uri,
         name: asset.fileName ?? fallbackName(asset.uri, "jpg"),
         mimeType: asset.mimeType ?? "image/jpeg",
@@ -163,7 +165,7 @@ export function Composer({ conversationId }: { conversationId: string }) {
     const mimeType = asset.mimeType ?? "application/octet-stream";
     stage([
       {
-        id: asset.uri,
+        id: Crypto.randomUUID(),
         uri: asset.uri,
         name: asset.name || fallbackName(asset.uri, "bin"),
         mimeType,
@@ -199,7 +201,7 @@ export function Composer({ conversationId }: { conversationId: string }) {
         return [
           ...previous,
           {
-            id: `${item.id}-${previous.length}`,
+            id: Crypto.randomUUID(),
             uri,
             name: `${item.name.replace(/[^\p{L}\p{N}\s-]/gu, "").trim().slice(0, 40) || "service"}.jpg`,
             mimeType: "image/jpeg",
@@ -240,17 +242,22 @@ export function Composer({ conversationId }: { conversationId: string }) {
             type: attachment.mimeType,
           },
           caption: attachment.caption.trim(),
+          voiceNote: attachment.voiceNote,
+          idempotencyKey: attachment.id,
         });
+        // Remove each success immediately. If a later file fails, retrying the
+        // modal contains only work the server has not already accepted.
+        removePending(attachment.id);
       }
       commitFeedback();
-      discardPending();
+      setMediaError(null);
     } catch (error) {
       errorFeedback();
       setMediaError(error instanceof Error ? error.message : "تعذّر إرسال الملف");
     } finally {
       setUploading(false);
     }
-  }, [pending, sendMedia, discardPending]);
+  }, [pending, sendMedia, removePending]);
 
   const startRecording = useCallback(async () => {
     setMediaError(null);
@@ -285,14 +292,29 @@ export function Composer({ conversationId }: { conversationId: string }) {
       if (!send || !uri) return;
 
       setUploading(true);
+      const idempotencyKey = Crypto.randomUUID();
       try {
         await sendMedia.mutateAsync({
           file: { uri, name: `voice-${Date.now()}.m4a`, type: "audio/mp4" },
           voiceNote: true,
+          idempotencyKey,
         });
         commitFeedback();
       } catch (error) {
         errorFeedback();
+        // Keep the exact recording and request id. The employee can retry it
+        // from the ordinary attachment review instead of recording it again.
+        setPending([
+          {
+            id: idempotencyKey,
+            uri,
+            name: `voice-${Date.now()}.m4a`,
+            mimeType: "audio/mp4",
+            isImage: false,
+            caption: "",
+            voiceNote: true,
+          },
+        ]);
         setMediaError(
           error instanceof Error ? error.message : "تعذّر إرسال الملاحظة الصوتية",
         );
@@ -306,8 +328,18 @@ export function Composer({ conversationId }: { conversationId: string }) {
   const sendText = () => {
     const text = draft.trim();
     if (!text || reply.isPending) return;
+    const attempt =
+      textAttempt.current?.text === text
+        ? textAttempt.current
+        : { text, idempotencyKey: Crypto.randomUUID() };
+    textAttempt.current = attempt;
     commitFeedback();
-    reply.mutate(text, { onSuccess: () => setDraft("") });
+    reply.mutate(attempt, {
+      onSuccess: () => {
+        textAttempt.current = null;
+        setDraft("");
+      },
+    });
   };
 
   const runFromMenu = (action: () => void | Promise<void>) => {

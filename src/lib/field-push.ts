@@ -373,11 +373,12 @@ export async function registerFieldPushToken(input: {
     throw new Error("معرّف الجهاز غير صحيح");
   }
   const admin = getAdminSupabaseClient();
-  await admin
+  const { error: cleanupError } = await admin
     .from("field_staff_push_tokens")
     .delete()
     .eq("expo_token", input.expoToken)
     .neq("field_staff_account_id", input.accountId);
+  if (cleanupError) throw new Error(cleanupError.message);
   const { error } = await admin.from("field_staff_push_tokens").upsert(
     {
       field_staff_account_id: input.accountId,
@@ -397,9 +398,24 @@ export async function unregisterFieldPushToken(input: {
   accountId: string;
   deviceId: string;
 }): Promise<void> {
-  await getAdminSupabaseClient()
+  const { error } = await getAdminSupabaseClient()
     .from("field_staff_push_tokens")
     .update({ disabled: true, disabled_reason: "logout" })
     .eq("field_staff_account_id", input.accountId)
     .eq("device_id", input.deviceId);
+  if (error) throw new Error(error.message);
+}
+
+/** Disable one physical device after its authenticated session has expired. */
+export async function revokeFieldPushTokenByIdentity(input: {
+  expoToken: string;
+  deviceId: string;
+}): Promise<void> {
+  const { error } = await getAdminSupabaseClient()
+    .from("field_staff_push_tokens")
+    .update({ disabled: true, disabled_reason: "session_ended" })
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("expo_token", input.expoToken)
+    .eq("device_id", input.deviceId);
+  if (error) throw new Error(error.message);
 }

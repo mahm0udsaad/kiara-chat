@@ -34,6 +34,7 @@ import {
 import {
   useBootstrap,
   useConversation,
+  useConversationMessages,
   useDismissBookingRequest,
   useMarkConversationRead,
   useTakeConversation,
@@ -243,6 +244,7 @@ export default function ConversationScreen() {
   const typing = useIsTyping(id);
 
   const conversation = useConversation(id);
+  const messageHistory = useConversationMessages(id);
   const bootstrap = useBootstrap();
   const { mutate: markRead } = useMarkConversationRead(id);
   const take = useTakeConversation(id);
@@ -252,7 +254,27 @@ export default function ConversationScreen() {
   const [takeoverReason, setTakeoverReason] = useState("");
   const [bookingOpen, setBookingOpen] = useState(false);
 
-  const messages = conversation.data?.messages;
+  const messages = useMemo(() => {
+    const pages = messageHistory.data?.pages;
+    if (!pages?.length) return conversation.data?.messages;
+    const seen = new Set<string>();
+    return [
+      ...[...pages].reverse().flatMap((page) => page.messages),
+      ...(conversation.data?.messages ?? []),
+    ]
+      .filter((message) => {
+        if (seen.has(message.id)) return false;
+        seen.add(message.id);
+        return true;
+      })
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }, [conversation.data?.messages, messageHistory.data?.pages]);
+  const currentConversation = conversation.data?.conversation;
+  const myTeamMemberId = bootstrap.data?.session.teamMemberId ?? null;
+  const canMarkRead = Boolean(
+    currentConversation?.isGroup ||
+      (myTeamMemberId && currentConversation?.assigned_to === myTeamMemberId),
+  );
   const chatItems = useMemo(() => buildChatItems(messages ?? []), [messages]);
   // Read from the thread the same way the web inbox does, so a pin or a maps
   // link she already sent fills the booking sheet instead of being retyped.
@@ -264,8 +286,8 @@ export default function ConversationScreen() {
   );
 
   useEffect(() => {
-    if ((conversation.data?.conversation.unread_count ?? 0) > 0) markRead();
-  }, [conversation.data?.conversation.unread_count, markRead]);
+    if (canMarkRead && (currentConversation?.unread_count ?? 0) > 0) markRead();
+  }, [canMarkRead, currentConversation?.unread_count, markRead]);
 
   if (conversation.isLoading) return <LoadingScreen label="جارٍ فتح المحادثة…" />;
   if (conversation.isError || !conversation.data) {
@@ -295,7 +317,13 @@ export default function ConversationScreen() {
   // Being an admin is not itself permission to reply into someone else's
   // thread. The server returns TAKEOVER_REQUIRED for that, and the composer
   // below offers the takeover instead of a text box.
-  const canReply = isAssignedToMe;
+  //
+  // A group is the exception: it belongs to the whole team, so every employee
+  // writes in it directly and there is no claim step to pass through first.
+  const canReply = isGroup || isAssignedToMe;
+  // Replying is not the same as raising a ticket: the booking form needs a
+  // customer phone, which a group does not have.
+  const canBook = canReply && !isGroup;
   const assignedName =
     bootstrap.data?.agents.find((agent) => agent.id === current.assigned_to)
       ?.fullName ?? "موظفة أخرى";
@@ -393,7 +421,12 @@ export default function ConversationScreen() {
           backgroundColor: colors.surface,
         }}
       >
-        <Badge label={csStatusLabel[current.csStatus]} tone={csStatusTone[current.csStatus]} />
+        {/* A group has no CS lifecycle: nobody claims it, the assistant never
+            replies in it, and no one is waiting on it — so the status would
+            read as stale on every group, forever. */}
+        {isGroup ? null : (
+          <Badge label={csStatusLabel[current.csStatus]} tone={csStatusTone[current.csStatus]} />
+        )}
         {current.bookingStage ? (
           <Badge label={bookingStageLabel[current.bookingStage]} tone="neutral" />
         ) : null}
@@ -416,11 +449,15 @@ export default function ConversationScreen() {
         {/* Confirming an appointment is the most common thing an employee does
             mid-chat, so it sits in the pinned strip rather than behind the
             composer's attachment menu — reachable whether or not the assistant
-            collected a booking first. */}
+            collected a booking first.
+
+            Not on a group, though: a booking is raised against the customer's
+            phone, and a group's `customer_phone` is its jid. */}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="تأكيد الحجز وطلب السائق"
           accessibilityHint="يفتح نموذج حفظ الموعد"
+          disabled={!canBook}
           onPress={() => setBookingOpen(true)}
           style={({ pressed }) => ({
             flexDirection: "row-reverse",
@@ -430,6 +467,7 @@ export default function ConversationScreen() {
             paddingHorizontal: spacing.sm + 2,
             borderRadius: radius.full,
             backgroundColor: pressed ? colors.brand : colors.brandSoft,
+            opacity: canBook ? 1 : 0.45,
           })}
         >
           {({ pressed }) => (
@@ -511,7 +549,7 @@ export default function ConversationScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="تجاهل طلب الحجز"
-              disabled={dismissBooking.isPending}
+              disabled={!canReply || dismissBooking.isPending}
               onPress={() => dismissBooking.mutate()}
               hitSlop={spacing.sm}
               style={({ pressed }) => ({
@@ -520,7 +558,7 @@ export default function ConversationScreen() {
                 alignItems: "center",
                 justifyContent: "center",
                 borderRadius: radius.full,
-                opacity: pressed || dismissBooking.isPending ? 0.5 : 1,
+                opacity: !canReply || pressed || dismissBooking.isPending ? 0.5 : 1,
               })}
             >
               <IconSymbol name="xmark" color={colors.onBrandSoft} size={15} />
@@ -543,6 +581,7 @@ export default function ConversationScreen() {
           <PrimaryButton
             label="تأكيد الحجز وطلب السائق"
             icon="checkmark.circle"
+            disabled={!canReply}
             onPress={() => setBookingOpen(true)}
           />
           {dismissBooking.error ? (
@@ -579,6 +618,44 @@ export default function ConversationScreen() {
           justifyContent: "flex-start",
         }}
         keyboardDismissMode="interactive"
+        onEndReachedThreshold={0.25}
+        onEndReached={() => {
+          if (messageHistory.hasNextPage && !messageHistory.isFetchingNextPage) {
+            void messageHistory.fetchNextPage();
+          }
+        }}
+        ListFooterComponent={
+          messageHistory.isFetchingNextPage ? (
+            <Text
+              style={{
+                paddingVertical: spacing.md,
+                ...type.footnote,
+                color: colors.textTertiary,
+                ...rtlText,
+                textAlign: "center",
+              }}
+            >
+              جارٍ تحميل الرسائل الأقدم…
+            </Text>
+          ) : messageHistory.isFetchNextPageError ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void messageHistory.fetchNextPage()}
+              style={{ paddingVertical: spacing.md }}
+            >
+              <Text
+                style={{
+                  ...type.footnote,
+                  color: colors.danger,
+                  ...rtlText,
+                  textAlign: "center",
+                }}
+              >
+                تعذّر تحميل الرسائل الأقدم — اضغطي للمحاولة
+              </Text>
+            </Pressable>
+          ) : null
+        }
       />
 
       {typing ? (

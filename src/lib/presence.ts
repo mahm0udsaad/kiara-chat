@@ -13,7 +13,7 @@ import type { WaPresence } from "@/lib/transport/types";
  * a serverless request that ends immediately after; opening a socket just to
  * send one message would usually lose the race with the function shutting down.
  */
-export const PRESENCE_CHANNEL = "inbox-presence";
+export const PRESENCE_CHANNEL = "kiara-presence";
 export const PRESENCE_EVENT = "typing";
 
 /** How long an indicator survives without a refresh — `paused` can go missing. */
@@ -47,6 +47,7 @@ export async function broadcastTyping(payload: TypingBroadcast): Promise<void> {
           topic: PRESENCE_CHANNEL,
           event: PRESENCE_EVENT,
           payload,
+          private: true,
         },
       ],
     }),

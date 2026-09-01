@@ -62,7 +62,12 @@ export async function GET(request: Request) {
   }
 
   const search = (url.searchParams.get("q") ?? "").trim().slice(0, 100);
-  const offset = parseIntegerParam(url.searchParams.get("offset"), 0, 0, 500);
+  const offset = parseIntegerParam(
+    url.searchParams.get("offset"),
+    0,
+    0,
+    1_000_000,
+  );
   const limit = parseIntegerParam(url.searchParams.get("limit"), 50, 1, 100);
   const filters = readFilters(url.searchParams);
 

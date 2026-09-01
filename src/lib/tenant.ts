@@ -16,6 +16,8 @@ export type AgentRole = "admin" | "agent";
 export interface KiaraSession {
   userId: string;
   role: AgentRole;
+  /** True only when auth.uid() is restaurants.owner_id for the Kiara tenant. */
+  isOwner: boolean;
   email: string | null;
   /**
    * The caller's `team_members.id`, resolved as part of the same lookup that
@@ -87,6 +89,7 @@ export const getKiaraSession = cache(async function getKiaraSession(): Promise<K
     return {
       userId: identity.userId,
       role,
+      isOwner: Boolean(owned),
       email: identity.email,
       teamMemberId: (member.id as string) ?? null,
     };
@@ -96,6 +99,7 @@ export const getKiaraSession = cache(async function getKiaraSession(): Promise<K
     return {
       userId: identity.userId,
       role: "admin",
+      isOwner: true,
       email: identity.email,
       teamMemberId: null,
     };
@@ -115,5 +119,12 @@ export async function requireKiaraSession(): Promise<KiaraSession> {
 export async function requireAdmin(): Promise<KiaraSession> {
   const session = await requireKiaraSession();
   if (session.role !== "admin") redirect("/inbox");
+  return session;
+}
+
+/** Reports contain employee-accountability data and belong to Hanan alone. */
+export async function requireOwner(): Promise<KiaraSession> {
+  const session = await requireKiaraSession();
+  if (!session.isOwner) redirect("/inbox");
   return session;
 }

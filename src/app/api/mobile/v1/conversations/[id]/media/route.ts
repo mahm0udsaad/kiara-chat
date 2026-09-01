@@ -23,6 +23,7 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const MAX_CAPTION_LENGTH = 1_024;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function POST(
   request: Request,
@@ -60,6 +61,14 @@ export async function POST(
   // Only audio captured with the microphone becomes a WhatsApp voice note; an
   // audio file picked from storage stays an ordinary attachment.
   const voiceNote = form.get("voiceNote") === "true";
+  const idempotencyKey = String(form.get("idempotencyKey") ?? "");
+  if (!UUID.test(idempotencyKey)) {
+    return mobileError(
+      400,
+      "INVALID_IDEMPOTENCY_KEY",
+      "idempotencyKey must be a UUID",
+    );
+  }
   const contentType = file.type || "application/octet-stream";
   if (voiceNote && !contentType.toLowerCase().startsWith("audio/")) {
     return mobileError(
@@ -104,7 +113,7 @@ export async function POST(
         filename: file.name || null,
       },
       caption,
-      { ptt: voiceNote }
+      { ptt: voiceNote, clientRequestId: idempotencyKey }
     );
 
     return mobileData(

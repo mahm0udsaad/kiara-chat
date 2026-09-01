@@ -21,12 +21,14 @@ import type {
   CatalogItem,
   ConversationActionsInput,
   ConversationDetail,
+  ConversationMessagesPage,
   ConversationSummary,
   ConversationSection,
   ConversationFilters,
   ConversationsResponse,
   CreateOrderInput,
   CustomerAnalysisResult,
+  CustomerServiceReport,
   ConversationAuditReport,
   CustomerTimeline,
   InboxView,
@@ -74,10 +76,13 @@ export const queryKeys = {
       filters.handling ?? "",
     ] as const,
   conversation: (id: string) => ["conversation", id] as const,
+  conversationMessages: (id: string) => ["conversation-messages", id] as const,
   orders: (search: string) => ["orders", search] as const,
   ordersCalendar: (from: string, to: string) => ["orders-calendar", from, to] as const,
   operationsReport: (from: string, to: string, startTime: string, endTime: string) =>
     ["operations-report", from, to, startTime, endTime] as const,
+  customerServiceReport: (from: string, to: string, startTime: string, endTime: string) =>
+    ["customer-service-report", from, to, startTime, endTime] as const,
   rekazCheck: ["rekaz-check"] as const,
   order: (id: string) => ["order", id] as const,
   orderReminder: (id: string) => ["order-reminder", id] as const,
@@ -168,6 +173,23 @@ export function useConversation(id: string) {
   });
 }
 
+/** The thread history, newest page first and older pages on upward scroll. */
+export function useConversationMessages(id: string, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.conversationMessages(id),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({ limit: "25" });
+      if (pageParam) params.set("before", pageParam);
+      return apiRequest<ConversationMessagesPage>(
+        `/conversations/${id}/messages?${params.toString()}`,
+      );
+    },
+    getNextPageParam: (lastPage) => lastPage.nextBefore ?? undefined,
+    enabled: Boolean(id) && enabled,
+  });
+}
+
 export function useTakeConversation(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -227,6 +249,7 @@ export function useMarkConversationRead(id: string) {
         `/conversations/${id}/read`,
         { method: "POST" },
       ),
+    retry: 2,
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["conversations"] }),
   });
@@ -235,10 +258,13 @@ export function useMarkConversationRead(id: string) {
 export function useReply(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (text: string) =>
+    mutationFn: (input: { text: string; idempotencyKey: string }) =>
       apiRequest<{ conversationId: string; messageId: string; deliveryStatus: string }>(`/conversations/${id}/reply`, {
         method: "POST",
-        body: JSON.stringify({ body: text }),
+        body: JSON.stringify({
+          body: input.text,
+          idempotencyKey: input.idempotencyKey,
+        }),
       }),
     onSuccess: async () => {
       // The open thread is awaited because the screen renders it: the reply
@@ -247,6 +273,9 @@ export function useReply(id: string) {
       // on its own — awaiting it meant every send also waited on a refetch of
       // every page of the inbox the employee had scrolled through.
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.conversationMessages(id),
+      });
       await queryClient.invalidateQueries({
         queryKey: queryKeys.conversation(id),
       });
@@ -268,6 +297,7 @@ export function useSendMedia(id: string) {
       file: UploadFile;
       caption?: string;
       voiceNote?: boolean;
+      idempotencyKey: string;
     }) =>
       apiUpload<{
         conversationId: string;
@@ -277,7 +307,8 @@ export function useSendMedia(id: string) {
         file: input.file,
         ...(input.caption ? { caption: input.caption } : {}),
         ...(input.voiceNote ? { voiceNote: "true" } : {}),
-      }),
+        idempotencyKey: input.idempotencyKey,
+      }, { timeoutMs: SEND_TIMEOUT_MS }),
     onSuccess: async () => {
       // The open thread is awaited because the screen renders it: the reply
       // should be in the list before the composer clears. The inbox list is
@@ -285,6 +316,9 @@ export function useSendMedia(id: string) {
       // on its own — awaiting it meant every send also waited on a refetch of
       // every page of the inbox the employee had scrolled through.
       void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.conversationMessages(id),
+      });
       await queryClient.invalidateQueries({
         queryKey: queryKeys.conversation(id),
       });
@@ -461,6 +495,27 @@ export function useOperationsReport(
     },
     enabled: enabled && Boolean(from && to && startTime && endTime),
     staleTime: 30_000,
+  });
+}
+
+export function useCustomerServiceReport(
+  from: string,
+  to: string,
+  startTime: string,
+  endTime: string,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.customerServiceReport(from, to, startTime, endTime),
+    queryFn: () => {
+      const params = new URLSearchParams({ from, to, startTime, endTime });
+      return apiRequest<CustomerServiceReport>(
+        `/reports/customer-service?${params.toString()}`,
+      );
+    },
+    enabled: enabled && Boolean(from && to && startTime && endTime),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
   });
 }
 

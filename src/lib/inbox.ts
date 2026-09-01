@@ -41,6 +41,34 @@ export async function listConversations(
 }
 
 /**
+ * Every visible conversation, read in bounded database pages.
+ *
+ * Mobile search and its tab counts must describe the whole inbox. A single
+ * `.limit(500)` silently made older customers impossible to find, so the full
+ * classification path walks the ordered result set in predictable batches.
+ */
+export async function listAllConversations(
+  viewer: ConversationViewer = { isAdmin: true, teamMemberId: null },
+  batchSize = 1_000,
+): Promise<Conversation[]> {
+  const supabase = await createServerSupabaseClient();
+  const visible: Conversation[] = [];
+  for (let offset = 0; ; offset += batchSize) {
+    const { data, error } = await supabase
+      .from("conversations")
+      .select(CONVERSATION_COLS)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .order("last_message_at", { ascending: false })
+      .range(offset, offset + batchSize - 1);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as Conversation[];
+    visible.push(...rows.filter((conversation) => canViewConversation(conversation, viewer)));
+    if (rows.length < batchSize) break;
+  }
+  return visible;
+}
+
+/**
  * One conversation by id, or null if it isn't there — or isn't ours to see.
  *
  * `listConversations` returns only the most recently active threads, so a

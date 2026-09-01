@@ -89,6 +89,24 @@ create table if not exists public.conversations (
   archived_at timestamptz
 );
 
+create table if not exists public.messages (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  role text not null check (role in ('customer', 'agent', 'system')),
+  content text not null,
+  message_type text default 'text',
+  metadata jsonb default '{}'::jsonb,
+  created_at timestamptz default now(),
+  delivery_status text,
+  error_message text,
+  external_message_sid text,
+  twilio_message_sid text,
+  twilio_status text,
+  external_error_code text,
+  channel text not null default 'whatsapp',
+  sender_team_member_id uuid
+);
+
 create table if not exists public.customers (
   id uuid primary key default gen_random_uuid(),
   restaurant_id uuid not null references public.restaurants(id) on delete cascade,
@@ -132,6 +150,7 @@ alter table public.team_members enable row level security;
 alter table public.specialists enable row level security;
 alter table public.drivers enable row level security;
 alter table public.conversations enable row level security;
+alter table public.messages enable row level security;
 alter table public.customers enable row level security;
 alter table public.driver_orders enable row level security;
 
