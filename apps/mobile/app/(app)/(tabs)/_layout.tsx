@@ -1,4 +1,4 @@
-import { Redirect, usePathname } from "expo-router";
+import { Redirect } from "expo-router";
 import { NativeTabs } from "expo-router/unstable-native-tabs";
 import { View } from "react-native";
 
@@ -13,7 +13,6 @@ import { useTheme } from "@/providers/theme-provider";
 const customerServiceRoles = new Set(["admin", "agent"]);
 
 export default function TabsLayout() {
-  const pathname = usePathname();
   const bootstrap = useBootstrap();
   const { signOut } = useAuth();
   const { colors } = useTheme();
@@ -69,11 +68,9 @@ export default function TabsLayout() {
   }
 
   const unreadCount = newConversations.data?.pages[0]?.counts.new ?? 0;
-  const isConversationScreen = /^\/inbox\/[^/]+\/?$/.test(pathname);
 
   return (
     <NativeTabs
-      hidden={isConversationScreen}
       tintColor={colors.brand}
       minimizeBehavior="onScrollDown"
     >

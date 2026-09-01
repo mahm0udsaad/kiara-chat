@@ -606,6 +606,10 @@ export default function ConversationScreen() {
       <FlatList
         // Inverted so new messages land at the bottom without manual scrolling.
         inverted
+        // Bounded on purpose: React Native defaults `flexShrink` to 0, so
+        // without this the list sizes to its full content height in this
+        // column and a long thread pushes the action bar past the parent.
+        style={{ flex: 1 }}
         contentInsetAdjustmentBehavior="automatic"
         data={chatItems}
         keyExtractor={keyOfChatItem}

@@ -513,7 +513,7 @@ export default function CustomerProfileScreen() {
                   <Divider />
                   <Link
                     href={{
-                      pathname: "/inbox/[id]",
+                      pathname: "/conversation/[id]",
                       params: { id: customer.conversationId },
                     }}
                     asChild

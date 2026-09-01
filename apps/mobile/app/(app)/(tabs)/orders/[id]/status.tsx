@@ -335,7 +335,7 @@ export default function OrderStatusScreen() {
       { phone, name },
       {
         onSuccess: ({ conversationId }) => {
-          router.push({ pathname: "/inbox/[id]", params: { id: conversationId } });
+          router.push({ pathname: "/conversation/[id]", params: { id: conversationId } });
         },
         onSettled: () => setOpeningFor(null),
       },

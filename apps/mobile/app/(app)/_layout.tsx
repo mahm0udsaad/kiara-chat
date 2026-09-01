@@ -14,6 +14,25 @@ export default function AppLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" />
+      {/* The chat sits above the tabs for the same reason, plus one of its
+          own: it is the only screen whose bottom edge is interactive all the
+          way down (claim button, then the composer). Inside a tab, the native
+          Android tab bar stays in the hierarchy even when `hidden`, and it
+          swallows every touch in that strip — the claim button rendered and
+          its `onPress` never fired. Pushed here there is no tab bar to hide. */}
+      <Stack.Screen
+        name="conversation/[id]"
+        options={{
+          headerShown: true,
+          title: "المحادثة",
+          headerTintColor: colors.brand,
+          headerTitleStyle: { color: colors.text },
+          headerStyle: { backgroundColor: colors.surface },
+          headerShadowVisible: false,
+          headerBackButtonDisplayMode: "minimal",
+          contentStyle: { backgroundColor: colors.background },
+        }}
+      />
       {/* The customer profile sits above the tabs, not inside one: it is
           opened from a chat and from the calendar alike, and neither tab owns
           a customer. Pushed here, it keeps one instance and one back stack. */}

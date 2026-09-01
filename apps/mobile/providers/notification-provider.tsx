@@ -1,4 +1,5 @@
-import * as Notifications from "expo-notifications";
+import Constants, { ExecutionEnvironment } from "expo-constants";
+import type * as NotificationsModule from "expo-notifications";
 import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -26,14 +27,37 @@ import { useAuth } from "@/providers/auth-provider";
 const INBOX_ALERTS = new Set(["inbox_message", "inbox_unassigned", "inbox_danger"]);
 const FIELD_ALERTS = new Set(["field_order", "field_push_test"]);
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+/**
+ * Expo Go on SDK 53+ throws the moment `expo-notifications` is even
+ * imported on Android (and blocks remote push on iOS too), so this module
+ * must never be reached in Expo Go — the listeners below all become no-ops
+ * there instead.
+ */
+function isExpoGo(): boolean {
+  return (
+    Constants.executionEnvironment === ExecutionEnvironment.StoreClient ||
+    Constants.appOwnership === "expo"
+  );
+}
+
+let notificationsPromise: Promise<typeof NotificationsModule> | null = null;
+function loadNotifications(): Promise<typeof NotificationsModule> | null {
+  if (isExpoGo()) return null;
+  if (!notificationsPromise) {
+    notificationsPromise = import("expo-notifications").then((mod) => {
+      mod.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+        }),
+      });
+      return mod;
+    });
+  }
+  return notificationsPromise;
+}
 
 type NotificationStatus = {
   registration: NotificationRegistration | null;
@@ -73,6 +97,23 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   // null while the stored preference is still being read — registering before
   // it lands would re-arm a device the employee had switched off.
   const [muted, setMuted] = useState<boolean | null>(null);
+  // null in Expo Go, where the module must never load; the listener effects
+  // below all short-circuit on that.
+  const [Notifications, setNotifications] = useState<typeof NotificationsModule | null>(
+    null,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const promise = loadNotifications();
+    if (!promise) return;
+    void promise.then((mod) => {
+      if (!cancelled) setNotifications(mod);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,7 +163,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   // and upload the derived Expo token immediately instead of waiting for the
   // employee to restart or sign in again.
   useEffect(() => {
-    if (!register || (inboxStaff && muted !== false)) return;
+    if (!Notifications || !register || (inboxStaff && muted !== false)) return;
     let lastSeen: string | null = null;
     const subscription = Notifications.addPushTokenListener((token) => {
       // Acquiring a token can itself emit this event, so re-registering on every
@@ -142,7 +183,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
       });
     });
     return () => subscription.remove();
-  }, [register, muted, inboxStaff]);
+  }, [Notifications, register, muted, inboxStaff]);
 
   const refresh = useCallback(async () => {
     await setInboxMuted(false).catch(() => undefined);
@@ -172,6 +213,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   );
 
   useEffect(() => {
+    if (!Notifications) return;
     const subscription = Notifications.addNotificationReceivedListener((notification) => {
       const data = notification.request.content.data;
       if (typeof data?.type !== "string") return;
@@ -199,31 +241,42 @@ export function NotificationProvider({ children }: PropsWithChildren) {
       }
     });
     return () => subscription.remove();
-  }, [queryClient]);
+  }, [Notifications, queryClient]);
 
   const openNotification = useCallback(
-    (response: Notifications.NotificationResponse) => {
+    (response: NotificationsModule.NotificationResponse) => {
       const url = response.notification.request.content.data?.url;
       if (typeof url === "string" && url.startsWith("/field/orders/")) {
         router.push(url as never);
       } else if (url === "/field/account") {
         router.push("/field/account");
       } else if (typeof url === "string" && url.startsWith("/inbox/")) {
-        router.push(url as never);
+        // The server still addresses a thread as `/inbox/<id>`, and so do
+        // notifications already sitting on older installs. The screen moved
+        // out of the tabs group, so translate rather than break those.
+        const conversationId = url.slice("/inbox/".length);
+        if (conversationId) {
+          router.push({
+            pathname: "/conversation/[id]",
+            params: { id: conversationId },
+          });
+        }
       }
     },
     [router],
   );
 
   useEffect(() => {
+    if (!Notifications) return;
     const subscription = Notifications.addNotificationResponseReceivedListener(openNotification);
     return () => subscription.remove();
-  }, [openNotification]);
+  }, [Notifications, openNotification]);
 
   // The listener above only catches taps while the JS runtime exists. Handle
   // the notification that launched a killed app once, then clear it so a later
   // cold start does not reopen the same order.
   useEffect(() => {
+    if (!Notifications) return;
     let active = true;
     void Notifications.getLastNotificationResponseAsync()
       .then(async (response) => {
@@ -239,7 +292,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     return () => {
       active = false;
     };
-  }, [openNotification]);
+  }, [Notifications, openNotification]);
 
   return (
     <NotificationStatusContext value={status}>{children}</NotificationStatusContext>

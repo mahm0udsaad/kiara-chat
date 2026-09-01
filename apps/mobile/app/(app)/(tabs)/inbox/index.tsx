@@ -150,7 +150,7 @@ const ConversationRow = memo(function ConversationRow({
   return (
     // `asChild` keeps the row a real View tree. A plain <Link> renders its
     // children inside a <Text>, which drops the flex layout.
-    <Link href={{ pathname: "/inbox/[id]", params: { id: conversation.id } }} asChild>
+    <Link href={{ pathname: "/conversation/[id]", params: { id: conversation.id } }} asChild>
       <Pressable
         testID={`conversation-row-${conversation.id}`}
         accessibilityRole="button"

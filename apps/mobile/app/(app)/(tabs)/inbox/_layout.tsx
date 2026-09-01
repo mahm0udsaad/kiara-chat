@@ -17,7 +17,6 @@ export default function InboxLayout() {
       }}
     >
       <Stack.Screen name="index" options={{ title: "المحادثات" }} />
-      <Stack.Screen name="[id]" options={{ title: "المحادثة" }} />
     </Stack>
   );
 }

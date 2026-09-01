@@ -1,10 +1,31 @@
-import Constants from "expo-constants";
+import Constants, { ExecutionEnvironment } from "expo-constants";
 import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
-import * as Notifications from "expo-notifications";
+import type * as NotificationsModule from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 
 import { apiRequest, publicApiRequest } from "@/lib/api";
+
+/**
+ * Expo Go on SDK 53+ throws the moment `expo-notifications` is even imported
+ * on Android (and blocks remote push on iOS too) — so the module must never
+ * be reached in Expo Go, not just left unused. Every path that could load it
+ * checks this first.
+ */
+function isExpoGo(): boolean {
+  return (
+    Constants.executionEnvironment === ExecutionEnvironment.StoreClient ||
+    Constants.appOwnership === "expo"
+  );
+}
+
+let notificationsPromise: Promise<typeof NotificationsModule> | null = null;
+function loadNotifications(): Promise<typeof NotificationsModule> {
+  if (!notificationsPromise) {
+    notificationsPromise = import("expo-notifications");
+  }
+  return notificationsPromise;
+}
 
 const FIELD_DEVICE_ID_KEY = "kiara-field-device-id";
 const FIELD_REGISTERED_TOKEN_KEY = "kiara-field-expo-token";
@@ -19,7 +40,9 @@ async function deviceId(key: string): Promise<string> {
   return created;
 }
 
-async function ensureAndroidChannel(): Promise<void> {
+async function ensureAndroidChannel(
+  Notifications: typeof NotificationsModule,
+): Promise<void> {
   if (process.env.EXPO_OS !== "android") return;
   await Notifications.setNotificationChannelAsync("default", {
     name: "تنبيهات كيارا",
@@ -31,7 +54,10 @@ async function ensureAndroidChannel(): Promise<void> {
   });
 }
 
-function permissionGranted(permission: Notifications.NotificationPermissionsStatus): boolean {
+function permissionGranted(
+  Notifications: typeof NotificationsModule,
+  permission: NotificationsModule.NotificationPermissionsStatus,
+): boolean {
   if (process.env.EXPO_OS !== "ios") return permission.status === "granted";
   const iosStatus = permission.ios?.status;
   return (
@@ -60,6 +86,7 @@ export type NotificationRegistration =
   | { state: "registered" }
   | { state: "muted" }
   | { state: "simulator" }
+  | { state: "unsupported" }
   | { state: "no_project_id" }
   | { state: "denied" }
   | { state: "failed"; message: string };
@@ -71,6 +98,7 @@ export const notificationStateLabel: Record<
   registered: "الإشعارات مفعّلة على هذا الجهاز.",
   muted: "الإشعارات موقوفة على هذا الجهاز باختيارك.",
   simulator: "الإشعارات لا تعمل على المحاكي — جرّبي على جهاز حقيقي.",
+  unsupported: "الإشعارات غير مدعومة على Expo Go — استخدمي نسخة تطوير (development build).",
   no_project_id: "إعداد المشروع ناقص (EAS project id).",
   denied: "الإشعارات محظورة. فعّليها من إعدادات الجهاز ثم أعيدي المحاولة.",
   failed: "تعذّر تفعيل الإشعارات.",
@@ -162,15 +190,19 @@ async function notificationIdentity(
   // fails here, which is the single most common reason for "no alerts".
   if (!Device.isDevice) return { state: "simulator" };
   if (!id) return { state: "no_project_id" };
-  await ensureAndroidChannel();
+  // Must come before any import of expo-notifications — the package throws
+  // on load in Expo Go (Android SDK 53+), not just when its APIs are called.
+  if (isExpoGo()) return { state: "unsupported" };
+  const Notifications = await loadNotifications();
+  await ensureAndroidChannel(Notifications);
   const current = await Notifications.getPermissionsAsync();
   const permission =
-    permissionGranted(current)
+    permissionGranted(Notifications, current)
       ? current
       : requestPermission
         ? await Notifications.requestPermissionsAsync()
         : current;
-  if (!permissionGranted(permission)) return { state: "denied" };
+  if (!permissionGranted(Notifications, permission)) return { state: "denied" };
   const expoToken = (await Notifications.getExpoPushTokenAsync({ projectId: id })).data;
   await SecureStore.setItemAsync(keys.token, expoToken);
   return { expoToken, deviceId: await deviceId(keys.device) };

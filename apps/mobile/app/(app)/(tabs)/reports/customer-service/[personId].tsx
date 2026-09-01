@@ -247,7 +247,7 @@ export default function CustomerServiceEmployeeReportScreen() {
                 employee.recentActivity.map((activity) => (
                   <Link
                     key={activity.id}
-                    href={{ pathname: "/inbox/[id]", params: { id: activity.conversationId } }}
+                    href={{ pathname: "/conversation/[id]", params: { id: activity.conversationId } }}
                     asChild
                   >
                     <Pressable

@@ -7,7 +7,25 @@
  * punctuation, no international prefix, no trunk zero.
  */
 
-const digitsOf = (value: string) => value.replace(/\D/g, "");
+/**
+ * Arabic-Indic (`٠١٢`) and Persian (`۰۱۲`) digits, folded to ASCII.
+ *
+ * The app is Arabic throughout, so a number pasted from WhatsApp or the
+ * contacts app on an Arabic-locale keyboard arrives in Arabic-Indic digits.
+ * Treating those as punctuation reduced the whole paste to an empty string,
+ * and an empty needle matches nothing — the search came back blank for a
+ * customer who was sitting right there in the inbox.
+ */
+const ARABIC_INDIC_ZERO = 0x0660;
+const PERSIAN_ZERO = 0x06f0;
+
+const toAsciiDigits = (value: string) =>
+  value.replace(/[\u0660-\u0669\u06f0-\u06f9]/g, (char) => {
+    const code = char.charCodeAt(0);
+    return String(code - (code >= PERSIAN_ZERO ? PERSIAN_ZERO : ARABIC_INDIC_ZERO));
+  });
+
+const digitsOf = (value: string) => toAsciiDigits(value).replace(/\D/g, "");
 
 /**
  * `+966 50 237 6231`, `00966502376231`, `0502376231` and `502376231` all
@@ -33,7 +51,9 @@ export function normalizePhone(value: string): string {
  * receive Saudi Arabia's `966` prefix.
  */
 export function canonicalPhone(value: string): string | null {
-  const raw = value.trim();
+  // Folded before the `+`/`00` tests below, which read the raw string:
+  // an Arabic-digit `٠٠٩٦٦…` is the same international prefix as `00966…`.
+  const raw = toAsciiDigits(value.trim());
   let digits = digitsOf(raw);
   if (!digits) return null;
   if (raw.startsWith("00")) digits = digits.slice(2);

@@ -300,7 +300,7 @@ export default function OrderDetailScreen() {
               label="المحادثة"
               onPress={() =>
                 router.push({
-                  pathname: "/inbox/[id]",
+                  pathname: "/conversation/[id]",
                   params: { id: order.conversation_id },
                 })
               }
