@@ -22,6 +22,9 @@ export async function POST(
   const specialistId = String(body.specialistId ?? "").trim();
   const driverId = String(body.driverId ?? "").trim();
   const specialistNote = String(body.specialistNote ?? "").trim().slice(0, 500);
+  // The preview must quote the address that is about to be committed, not the
+  // one stored before the employee corrected it.
+  const customerLocation = String(body.customerLocation ?? "").trim().slice(0, 500);
   const driverMessage = String(body.driverMessage ?? "").trim().slice(0, 3_000);
   const tripType: TripType | undefined =
     body.tripType === "one_way" || body.tripType === "round_trip"
@@ -45,6 +48,7 @@ export async function POST(
     const preview = await previewBookingDispatch(id, {
       specialistId,
       driverId,
+      customerLocation,
       specialistNote,
       driverMessage,
       tripType,

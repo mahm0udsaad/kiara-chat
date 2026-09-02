@@ -91,3 +91,30 @@ export function locationLabel(location: string): string {
   const withoutLink = location.replace(EMBEDDED_LINK, "").trim();
   return withoutLink.replace(/[—–-]\s*$/, "").trim() || "موقع على الخريطة";
 }
+
+/**
+ * What the order says when nobody has given us an address yet.
+ *
+ * Deliberately not "—": this text reaches the employee on the order screen and
+ * the field team in the app, and it has to read as a missing field somebody
+ * must fill, not as a place.
+ */
+export const LOCATION_UNSET = "لم يُحدد الموقع — حدّديه قبل الإرسال";
+
+/**
+ * Is this order still without an address?
+ *
+ * Mirrors the rule the dispatch command enforces, so a form can refuse the same
+ * values the database will rather than letting an employee fill in the whole
+ * sheet and be turned away at the end. The placeholder counts as unset: it is a
+ * missing field wearing a value's clothes.
+ *
+ * Lives here, beside the other shared formatters, because both the server that
+ * enforces it and the client dialog that gates on it need it — and the dialog
+ * cannot import it from `@/lib/dispatch` without dragging the admin Supabase
+ * client into the browser bundle.
+ */
+export function isLocationUnset(value: string | null | undefined): boolean {
+  const trimmed = (value ?? "").trim();
+  return trimmed.length < 3 || trimmed.startsWith("لم يُحدد الموقع");
+}

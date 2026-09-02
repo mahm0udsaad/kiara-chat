@@ -13,7 +13,7 @@ import { RosterPicker } from "@/components/roster-picker";
 import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-state";
 import { Card } from "@/components/ui/card";
 import { Segmented } from "@/components/ui/segmented";
-import { TextAreaField } from "@/components/ui/field";
+import { Field, TextAreaField } from "@/components/ui/field";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
@@ -151,6 +151,10 @@ function DispatchForm({ id }: { id: string }) {
   const dispatch = useDispatchOrder(id);
   const preparePreview = useDispatchPreview(id);
 
+  // The address is the first thing this form settles. A ركاز booking arrives
+  // with the placeholder, which must not be offered as a value she can leave
+  // alone — she starts from an empty box in that case.
+  const [customerLocation, setCustomerLocation] = useState<string | null>(null);
   const [specialistId, setSpecialistId] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -209,12 +213,19 @@ function DispatchForm({ id }: { id: string }) {
     outcome ?? (current.dispatch_state === "sent" || current.sent_at ? "already" : null);
   if (finished) return <OutcomeScreen kind={finished} sentAt={current.sent_at} />;
 
+  // Seeded from the order the first time through, blank when the order still
+  // carries the placeholder.
+  const location =
+    customerLocation ??
+    (isLocationMissing(current.customer_location) ? "" : current.customer_location);
+  const locationMissing = isLocationMissing(location);
   const specialistName =
     options.data.specialists.find((person) => person.id === specialistId)?.full_name ?? null;
   const driverName =
     options.data.drivers.find((person) => person.id === driverId)?.full_name ?? null;
 
   const review = () => {
+    if (locationMissing) return setValidation("حدّدي موقع العميلة أولًا.");
     if (!specialistId) return setValidation("اختاري الأخصائية.");
     if (!driverId) return setValidation("اختاري السائق.");
     if (noteMode === "text" && !note.trim()) {
@@ -230,6 +241,7 @@ function DispatchForm({ id }: { id: string }) {
       {
         specialistId,
         driverId,
+        customerLocation: location.trim(),
         // The preview writes the booking copy in her language; in voice mode
         // there is no written note to fold into it.
         specialistNote: noteMode === "text" ? note.trim() : "",
@@ -260,6 +272,7 @@ function DispatchForm({ id }: { id: string }) {
   };
 
   const send = () => {
+    if (locationMissing) return setValidation("حدّدي موقع العميلة أولًا.");
     if (!specialistId || !driverId) return;
     if (!driverMessage.trim() || !specialistMessage.trim()) {
       return setSendError("راجعي نص الرسالتين قبل الإرسال.");
@@ -269,6 +282,7 @@ function DispatchForm({ id }: { id: string }) {
       {
         specialistId,
         driverId,
+        customerLocation: location.trim(),
         driverMessage: driverMessage.trim(),
         specialistMessage: specialistMessage.trim(),
         specialistVoice:
@@ -351,16 +365,6 @@ function DispatchForm({ id }: { id: string }) {
           />
         </Card>
 
-        {/* The driver message carries this line verbatim. A booking raised from
-            ركاز usually arrives with no address at all, and the send is the
-            last moment anyone can notice before a car is sent nowhere. */}
-        {isLocationMissing(current.customer_location) ? (
-          <InlineAlert
-            tone="warning"
-            message="لا يوجد موقع للعميلة — سيصل السائق بلا عنوان. عدّلي بيانات الطلب وأضيفي الموقع أولًا."
-          />
-        ) : null}
-
         {!reviewing ? (
           <>
             <InlineAlert
@@ -368,20 +372,46 @@ function DispatchForm({ id }: { id: string }) {
               message="سننشئ الرسالة النهائية ونترجمها حسب جنسية الأخصائية، ثم ستراجعين النصين وتعدّلينهما قبل الإرسال."
             />
 
-            <RosterPicker
-              label="الأخصائية"
-              options={options.data.specialists}
-              value={specialistId}
-              onChange={setSpecialistId}
-              error={validation && !specialistId ? validation : null}
+            {/* First, and gating the roster. A booking raised from ركاز carries
+                no address, and the placeholder used to travel into the driver's
+                instructions as though it were a place. */}
+            <Field
+              label="موقع العميلة"
+              icon="mappin.and.ellipse"
+              value={location}
+              onChangeText={(value) => {
+                setCustomerLocation(value);
+                setValidation(null);
+                setReviewing(false);
+              }}
+              maxLength={500}
+              placeholder="الحي والشارع، أو رابط الموقع من واتساب"
+              hint={
+                locationMissing
+                  ? "لا يمكن اختيار الأخصائية والسائق قبل تحديد الموقع."
+                  : "هذا هو العنوان الذي سيصل السائق إليه."
+              }
+              error={validation && locationMissing ? validation : null}
             />
-            <RosterPicker
-              label="السائق"
-              options={options.data.drivers}
-              value={driverId}
-              onChange={setDriverId}
-              error={validation && specialistId && !driverId ? validation : null}
-            />
+
+            {locationMissing ? null : (
+              <>
+                <RosterPicker
+                  label="الأخصائية"
+                  options={options.data.specialists}
+                  value={specialistId}
+                  onChange={setSpecialistId}
+                  error={validation && !specialistId ? validation : null}
+                />
+                <RosterPicker
+                  label="السائق"
+                  options={options.data.drivers}
+                  value={driverId}
+                  onChange={setDriverId}
+                  error={validation && specialistId && !driverId ? validation : null}
+                />
+              </>
+            )}
 
             <View style={{ gap: spacing.sm }}>
               <Segmented

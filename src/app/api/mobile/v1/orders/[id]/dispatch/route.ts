@@ -3,6 +3,7 @@ import {
   orderExists,
   type DispatchBookingInput,
 } from "@/lib/dispatch";
+import { isLocationUnset } from "@/lib/format";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -68,6 +69,10 @@ export async function POST(
   const specialistId =
     typeof body.specialistId === "string" ? body.specialistId.trim() : "";
   const driverId = typeof body.driverId === "string" ? body.driverId.trim() : "";
+  const customerLocation =
+    typeof body.customerLocation === "string"
+      ? body.customerLocation.trim().slice(0, 500)
+      : "";
   const driverMessage =
     typeof body.driverMessage === "string" ? body.driverMessage.trim() : "";
   const specialistMessage =
@@ -76,6 +81,15 @@ export async function POST(
   const idempotencyKey =
     typeof body.idempotencyKey === "string" ? body.idempotencyKey.trim() : "";
 
+  // Checked ahead of the roster: the form asks for the address first, and a
+  // dispatch without one is refused by the command anyway.
+  if (isLocationUnset(customerLocation)) {
+    return mobileError(
+      400,
+      "ORDER_LOCATION_REQUIRED",
+      "حدّدي موقع العميلة قبل اختيار الأخصائية والسائق",
+    );
+  }
   if (!specialistId) {
     return mobileError(400, "SPECIALIST_REQUIRED", "specialistId is required");
   }
@@ -115,6 +129,7 @@ export async function POST(
     const result = await dispatchBooking(id, {
       specialistId,
       driverId,
+      customerLocation,
       driverMessage,
       specialistMessage,
       specialistVoice,

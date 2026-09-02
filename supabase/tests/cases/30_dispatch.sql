@@ -28,6 +28,7 @@ begin
     'b0000000-0000-0000-0000-000000000002'::uuid,
     'c0000000-0000-0000-0000-000000000002'::uuid,
     'round_trip', 450,
+    'حي الملقا — شارع الأمير سلطان',
     'موعد العميلة الساعة 5 مساءً في حي الملقا',
     'Appointment at 5pm, Al Malqa district',
     '2ba8f6c8-aff9-4147-8f13-cdcb732de698/conv/2026/09/note.m4a'
@@ -51,6 +52,12 @@ begin
       where id = 'e0000000-0000-0000-0000-000000000002')
       = 'موعد العميلة الساعة 5 مساءً في حي الملقا',
     'the order stores the exact confirmed driver note'
+  );
+  perform kiara_test.ok(
+    (select customer_location from public.driver_orders
+      where id = 'e0000000-0000-0000-0000-000000000002')
+      = 'حي الملقا — شارع الأمير سلطان',
+    'the dispatch commits the address the employee settled'
   );
   perform kiara_test.ok(
     (select specialist_note from public.driver_orders
@@ -84,9 +91,46 @@ begin
         'agent',
         'b0000000-0000-0000-0000-000000000002'::uuid,
         'c0000000-0000-0000-0000-000000000002'::uuid,
-        'one_way', 450, 'ملاحظة ثانية', 'second note', null)$q$,
+        'one_way', 450, 'حي الملقا', 'ملاحظة ثانية', 'second note', null)$q$,
     'ORDER_DISPATCH_IN_PROGRESS',
     'a second employee cannot dispatch an order already dispatching'
+  );
+
+  -- A car cannot be sent to a placeholder. The UI orders the form so this is
+  -- unreachable; the command refuses it anyway, because the ordering is a
+  -- convenience and this is the rule.
+  perform kiara_test.raises(
+    $q$select public.kiara_command_prepare_order_dispatch(
+        '2ba8f6c8-aff9-4147-8f13-cdcb732de698'::uuid,
+        'e0000000-0000-0000-0000-000000000001'::uuid,
+        (select version from public.driver_orders
+           where id = 'e0000000-0000-0000-0000-000000000001'),
+        gen_random_uuid(),
+        '11111111-1111-1111-1111-111111111111'::uuid,
+        'a0000000-0000-0000-0000-000000000001'::uuid,
+        'admin',
+        'b0000000-0000-0000-0000-000000000001'::uuid,
+        'c0000000-0000-0000-0000-000000000001'::uuid,
+        'one_way', 350, 'لم يُحدد الموقع — حدّديه قبل الإرسال',
+        'ملاحظة السائق', 'specialist note', null)$q$,
+    'ORDER_LOCATION_REQUIRED',
+    'the placeholder address is refused like a blank one'
+  );
+  perform kiara_test.raises(
+    $q$select public.kiara_command_prepare_order_dispatch(
+        '2ba8f6c8-aff9-4147-8f13-cdcb732de698'::uuid,
+        'e0000000-0000-0000-0000-000000000001'::uuid,
+        (select version from public.driver_orders
+           where id = 'e0000000-0000-0000-0000-000000000001'),
+        gen_random_uuid(),
+        '11111111-1111-1111-1111-111111111111'::uuid,
+        'a0000000-0000-0000-0000-000000000001'::uuid,
+        'admin',
+        'b0000000-0000-0000-0000-000000000001'::uuid,
+        'c0000000-0000-0000-0000-000000000001'::uuid,
+        'one_way', 350, '   ', 'ملاحظة السائق', 'specialist note', null)$q$,
+    'ORDER_LOCATION_REQUIRED',
+    'a blank address is refused'
   );
 
   -- A note is the whole hand-off, so an empty one is not a dispatch.
@@ -102,7 +146,7 @@ begin
         'admin',
         'b0000000-0000-0000-0000-000000000001'::uuid,
         'c0000000-0000-0000-0000-000000000001'::uuid,
-        'one_way', 350, '  ', 'specialist note', null)$q$,
+        'one_way', 350, 'حي النرجس', '  ', 'specialist note', null)$q$,
     'DRIVER_MESSAGE_INVALID',
     'a blank driver note is refused'
   );
@@ -165,7 +209,7 @@ begin
         'admin',
         'b0000000-0000-0000-0000-000000000002'::uuid,
         'c0000000-0000-0000-0000-000000000002'::uuid,
-        'one_way', 450, 'ملاحظة مكررة', 'duplicate', null)$q$,
+        'one_way', 450, 'حي الملقا', 'ملاحظة مكررة', 'duplicate', null)$q$,
     'ORDER_ALREADY_DISPATCHED',
     'a sent order cannot be dispatched twice'
   );

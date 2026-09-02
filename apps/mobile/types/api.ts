@@ -349,13 +349,15 @@ export type OrderPatch = {
 export type DispatchInput = {
   specialistId: string;
   driverId: string;
+  /** Settled at dispatch — the server refuses a blank or placeholder address. */
+  customerLocation: string;
   driverMessage: string;
   specialistMessage: string;
   expectedVersion: number;
   /**
-   * A recording for the specialist, sent as a WhatsApp voice note right after
-   * the booking copy. Spoken instructions carry further than written ones for
-   * a specialist who reads little Arabic.
+   * A recording for the specialist, stored with her written note and played
+   * back in her app. Spoken instructions carry further than written ones for a
+   * specialist who reads little Arabic.
    */
   specialistVoice?: { uri: string; name: string; type: string } | null;
 };

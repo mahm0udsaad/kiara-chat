@@ -104,6 +104,8 @@ export async function prepareOrderDispatchCommand(input: {
   driverId: string;
   tripType: TripType;
   price: number | null;
+  /** Settled at dispatch: the command refuses a blank or placeholder address. */
+  customerLocation: string;
   /** Shown to the driver inside the app — nothing is sent over WhatsApp. */
   driverNote: string;
   specialistNote: string;
@@ -122,6 +124,7 @@ export async function prepareOrderDispatchCommand(input: {
     p_driver_id: input.driverId,
     p_trip_type: input.tripType,
     p_price: input.price,
+    p_customer_location: input.customerLocation,
     p_driver_note: input.driverNote,
     p_specialist_note: input.specialistNote,
     p_specialist_voice_path: input.specialistVoicePath,

@@ -44,6 +44,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -52,7 +53,7 @@ import {
   type VoiceNote,
 } from "@/components/voice-note-recorder";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
-import { formatDuration, TRIP_TYPE_LABEL } from "@/lib/format";
+import { formatDuration, isLocationUnset, TRIP_TYPE_LABEL } from "@/lib/format";
 import { nationalityOf } from "@/lib/nationalities";
 import type { Driver, DriverOrderRow, Specialist, TripType } from "@/lib/types";
 
@@ -71,6 +72,7 @@ const TIME_FMT = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
 const isolateLtr = (value: string) => `\u2066${value}\u2069`;
 type NoteMode = "text" | "voice";
 const DRIVER_MESSAGE_REQUIRED = "اكتبي ملاحظة السائق قبل الإسناد";
+const LOCATION_REQUIRED = "حدّدي موقع العميلة أولًا";
 
 function normalizedRosterName(value: string): string {
   return value
@@ -86,7 +88,8 @@ function normalizedRosterName(value: string): string {
 function initialDriverMessage(
   order: DriverOrderRow,
   specialistName: string | null,
-  tripType: TripType
+  tripType: TripType,
+  customerLocation: string
 ): string {
   const customer = order.customer_name
     ? `${order.customer_name} (${isolateLtr(order.customer_phone)})`
@@ -100,7 +103,7 @@ function initialDriverMessage(
     )}`,
     `⏱️ مدة الجلسة: ${formatDuration(order.duration_minutes)}`,
     `🚕 نوع الرحلة: ${TRIP_TYPE_LABEL[tripType]}`,
-    `📍 موقع الزبونة: ${order.customer_location}`,
+    `📍 موقع الزبونة: ${customerLocation}`,
     `📞 الزبونة: ${customer}`,
   ].join("\n");
 }
@@ -125,6 +128,12 @@ export function DispatchDialog({
   const [specialistId, setSpecialistId] = useState("");
   const [driverId, setDriverId] = useState("");
   const [tripType, setTripType] = useState<TripType>(order.trip_type);
+  // The address is the first thing this form settles. An order raised from
+  // ركاز arrives with the placeholder, which must not be offered as a value
+  // she can leave alone — she starts from an empty box in that case.
+  const [customerLocation, setCustomerLocation] = useState(
+    isLocationUnset(order.customer_location) ? "" : order.customer_location
+  );
   const [specialistNote, setSpecialistNote] = useState("");
   const [driverMessage, setDriverMessage] = useState("");
   const [finalDriverMessage, setFinalDriverMessage] = useState("");
@@ -164,7 +173,12 @@ export function DispatchDialog({
         setDriverId(order.driver_id || options.drivers[0]?.id || "");
         setTripType(order.trip_type);
         setDriverMessage(
-          initialDriverMessage(order, nextSpecialist?.full_name ?? null, order.trip_type)
+          initialDriverMessage(
+            order,
+            nextSpecialist?.full_name ?? null,
+            order.trip_type,
+            isLocationUnset(order.customer_location) ? "" : order.customer_location
+          )
         );
         setConfirmed(false);
         setReviewing(false);
@@ -180,6 +194,7 @@ export function DispatchDialog({
     };
   }, [open, order, preferredSpecialistName]);
 
+  const locationMissing = isLocationUnset(customerLocation);
   const selectedSpecialist = specialists.find((item) => item.id === specialistId);
   const selectedDriver = drivers.find((item) => item.id === driverId);
   const language =
@@ -194,6 +209,9 @@ export function DispatchDialog({
     setSpecialistId("");
     setDriverId("");
     setTripType(order.trip_type);
+    setCustomerLocation(
+      isLocationUnset(order.customer_location) ? "" : order.customer_location
+    );
     setSpecialistNote("");
     setDriverMessage("");
     setFinalDriverMessage("");
@@ -212,7 +230,7 @@ export function DispatchDialog({
     setSubmitting(false);
     setError(null);
     setResult(null);
-  }, [order.trip_type]);
+  }, [order.customer_location, order.trip_type]);
 
   const changeOpen = useCallback(
     (nextOpen: boolean) => {
@@ -224,6 +242,7 @@ export function DispatchDialog({
 
   const send = useCallback(async () => {
     setError(null);
+    if (isLocationUnset(customerLocation)) return setError(LOCATION_REQUIRED);
     if (!specialistId) return setError("اختاري الأخصائية");
     if (!driverId) return setError("اختاري السائق");
     if (!finalDriverMessage.trim()) return setError(DRIVER_MESSAGE_REQUIRED);
@@ -241,6 +260,7 @@ export function DispatchDialog({
         form.append("specialistId", specialistId);
         form.append("driverId", driverId);
         form.append("tripType", tripType);
+        form.append("customerLocation", customerLocation.trim());
         form.append("driverMessage", finalDriverMessage.trim());
         form.append("specialistMessage", specialistMessage.trim());
         form.append("expectedVersion", String(order.version));
@@ -253,6 +273,7 @@ export function DispatchDialog({
           specialistId,
           driverId,
           tripType,
+          customerLocation: customerLocation.trim(),
           specialistNote: noteMode === "text" ? specialistNote : "",
           driverMessage: finalDriverMessage.trim(),
           specialistMessage: specialistMessage.trim(),
@@ -279,6 +300,7 @@ export function DispatchDialog({
     }
   }, [
     confirmed,
+    customerLocation,
     driverId,
     finalDriverMessage,
     noteMode,
@@ -295,6 +317,7 @@ export function DispatchDialog({
 
   const review = useCallback(async () => {
     setError(null);
+    if (isLocationUnset(customerLocation)) return setError(LOCATION_REQUIRED);
     if (!specialistId) return setError("اختاري الأخصائية");
     if (!driverId) return setError("اختاري السائق");
     if (!driverMessage.trim()) return setError(DRIVER_MESSAGE_REQUIRED);
@@ -308,6 +331,7 @@ export function DispatchDialog({
           specialistId,
           driverId,
           tripType,
+          customerLocation: customerLocation.trim(),
           specialistNote: noteMode === "text" ? specialistNote : "",
           driverMessage: driverMessage.trim(),
         }),
@@ -330,6 +354,7 @@ export function DispatchDialog({
     }
   }, [
     driverId,
+    customerLocation,
     driverMessage,
     language,
     noteMode,
@@ -396,6 +421,43 @@ export function DispatchDialog({
         ) : (
           <>
             <FieldGroup>
+              {/* First, and gating everything after it. A booking raised from
+                  ركاز carries no address, and the placeholder used to travel
+                  into the driver's instructions as though it were a place.
+                  Disabling the roster is not the rule — the command refuses a
+                  blank address too — it is what makes the order obvious. */}
+              <Field data-invalid={locationMissing && Boolean(error)}>
+                <FieldLabel htmlFor={`dispatch-location-${order.id}`}>
+                  موقع العميلة
+                </FieldLabel>
+                <Input
+                  id={`dispatch-location-${order.id}`}
+                  value={customerLocation}
+                  onChange={(event) => {
+                    setCustomerLocation(event.target.value);
+                    setDriverMessage(
+                      initialDriverMessage(
+                        order,
+                        selectedSpecialist?.full_name ?? null,
+                        tripType,
+                        event.target.value
+                      )
+                    );
+                    setConfirmed(false);
+                    setReviewing(false);
+                  }}
+                  maxLength={500}
+                  placeholder="الحي والشارع، أو رابط الموقع من واتساب"
+                  className="min-h-11"
+                  aria-invalid={locationMissing && Boolean(error)}
+                />
+                <FieldDescription>
+                  {locationMissing
+                    ? "لا يمكن اختيار الأخصائية والسائق قبل تحديد الموقع."
+                    : "هذا هو العنوان الذي سيصل السائق إليه."}
+                </FieldDescription>
+              </Field>
+
               <Field data-invalid={!specialistId && Boolean(error)}>
                 <FieldLabel htmlFor={`dispatch-specialist-${order.id}`}>
                   الأخصائية
@@ -409,7 +471,8 @@ export function DispatchDialog({
                       initialDriverMessage(
                         order,
                         specialist?.full_name ?? null,
-                        tripType
+                        tripType,
+                        customerLocation
                       )
                     );
                     setConfirmed(false);
@@ -419,6 +482,7 @@ export function DispatchDialog({
                   <SelectTrigger
                     id={`dispatch-specialist-${order.id}`}
                     className="min-h-11 w-full"
+                    disabled={locationMissing}
                     aria-invalid={!specialistId && Boolean(error)}
                   >
                     <SelectValue placeholder="اختاري الأخصائية" />
@@ -516,7 +580,8 @@ export function DispatchDialog({
                       initialDriverMessage(
                         order,
                         selectedSpecialist?.full_name ?? null,
-                        nextTripType
+                        nextTripType,
+                        customerLocation
                       )
                     );
                     setConfirmed(false);
@@ -552,6 +617,7 @@ export function DispatchDialog({
                   <SelectTrigger
                     id={`dispatch-driver-${order.id}`}
                     className="min-h-11 w-full"
+                    disabled={locationMissing}
                     aria-invalid={!driverId && Boolean(error)}
                   >
                     <SelectValue placeholder="اختاري السائق" />
@@ -682,7 +748,9 @@ export function DispatchDialog({
               </Button>
               <Button
                 onClick={reviewing ? send : review}
-                disabled={submitting || previewing || (reviewing && !confirmed)}
+                disabled={
+                  submitting || previewing || locationMissing || (reviewing && !confirmed)
+                }
               >
                 {submitting || previewing ? (
                   <Spinner data-icon="inline-start" />

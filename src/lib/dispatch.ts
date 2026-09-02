@@ -8,7 +8,7 @@
  * writes are additionally gated to admins by the API routes.
  */
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
-import { formatDuration, TRIP_TYPE_LABEL } from "@/lib/format";
+import { formatDuration, LOCATION_UNSET, TRIP_TYPE_LABEL } from "@/lib/format";
 import { fieldSessionStateOf } from "@/lib/field-session";
 import { ensureFieldOrderProgress } from "@/lib/field-staff";
 import { notifyFieldOrderAssigned } from "@/lib/field-push";
@@ -576,15 +576,6 @@ export async function createBookingFromReservation(
 }
 
 /**
- * What the order says when nobody has given us an address yet.
- *
- * Deliberately not "—": this text reaches the employee on the order screen and
- * the driver in the dispatch message, and it has to read as a missing field
- * she must fill, not as a place.
- */
-export const LOCATION_UNSET = "لم يُحدد الموقع — حدّديه قبل الإرسال";
-
-/**
  * A Rekaz booking's location as one line: her label plus a maps link built
  * from the coordinates, in the "label — url" shape the rest of the app already
  * uses for a location shared over WhatsApp.
@@ -604,6 +595,12 @@ function rekazLocationValue(
 export interface DispatchBookingInput {
   specialistId: string;
   driverId: string;
+  /**
+   * The customer's address, settled here rather than left to the edit sheet.
+   * A Rekaz booking arrives with none, and the placeholder used to ride into
+   * the driver's instructions as if it were a place.
+   */
+  customerLocation: string;
   /** Exact final note bodies confirmed by the employee, as the app shows them. */
   driverMessage: string;
   specialistMessage: string;
@@ -629,6 +626,8 @@ export interface DispatchBookingInput {
 export interface DispatchPreviewInput {
   specialistId: string;
   driverId: string;
+  /** The address as it stands in the form, so the preview quotes what will send. */
+  customerLocation?: string;
   tripType?: TripType;
   specialistNote?: string;
   driverMessage?: string;
@@ -684,6 +683,8 @@ export async function getOrderConversationId(id: string): Promise<string | null>
 type DispatchContext = {
   order: DriverOrder;
   tripType: TripType;
+  /** The address the dispatch will commit — the form's, or the stored one. */
+  customerLocation: string;
   price: number | null;
   specialist: {
     id: string;
@@ -697,7 +698,10 @@ type DispatchContext = {
 
 async function loadDispatchContext(
   id: string,
-  input: Pick<DispatchPreviewInput, "specialistId" | "driverId" | "tripType">,
+  input: Pick<
+    DispatchPreviewInput,
+    "specialistId" | "driverId" | "tripType" | "customerLocation"
+  >,
 ): Promise<DispatchContext> {
   const supabase = await createServerSupabaseClient();
   const { data: saved, error: orderErr } = await supabase
@@ -762,6 +766,7 @@ async function loadDispatchContext(
   return {
     order,
     tripType,
+    customerLocation: input.customerLocation?.trim() || order.customer_location,
     price,
     specialist,
     driver: driver as { id: string; full_name: string; phone: string | null },
@@ -778,7 +783,7 @@ export async function previewBookingDispatch(
     specialistName: context.specialist.full_name,
     arrivalAt: context.order.arrival_at,
     durationMinutes: context.order.duration_minutes,
-    customerLocation: context.order.customer_location,
+    customerLocation: context.customerLocation,
     customerName: context.customerName,
     customerPhone: context.order.customer_phone,
     tripType: context.tripType,
@@ -859,6 +864,7 @@ export async function dispatchBooking(
     driverId: input.driverId,
     tripType: context.tripType,
     price: context.price,
+    customerLocation: context.customerLocation,
     driverNote: input.driverMessage.trim(),
     specialistNote: specialistMessage,
     specialistVoicePath,

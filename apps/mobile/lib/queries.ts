@@ -789,6 +789,7 @@ export function useDispatchOrder(id: string) {
           {
             specialistId: input.specialistId,
             driverId: input.driverId,
+            customerLocation: input.customerLocation,
             driverMessage: input.driverMessage,
             specialistMessage: input.specialistMessage,
             expectedVersion: String(input.expectedVersion),
@@ -859,6 +860,8 @@ export function useDispatchPreview(id: string) {
     mutationFn: (input: {
       specialistId: string;
       driverId: string;
+      /** So the preview quotes the address about to be committed. */
+      customerLocation: string;
       specialistNote: string;
       tripType: TripType;
     }) =>

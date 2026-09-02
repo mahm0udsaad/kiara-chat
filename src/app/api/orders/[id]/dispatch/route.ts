@@ -4,6 +4,7 @@ import {
   orderExists,
   type DispatchBookingInput,
 } from "@/lib/dispatch";
+import { isLocationUnset } from "@/lib/format";
 import { getKiaraSession } from "@/lib/tenant";
 import { OperationalCommandError } from "@/lib/operational-commands";
 
@@ -30,6 +31,7 @@ export async function POST(
   // streams up instead of being inflated to base64 in the browser.
   let specialistId: string | undefined;
   let driverId: string | undefined;
+  let customerLocation: string | undefined;
   let specialistNote: string | undefined;
   let driverMessage: string | undefined;
   let specialistMessage: string | undefined;
@@ -47,6 +49,7 @@ export async function POST(
     }
     specialistId = (form.get("specialistId") as string | null)?.trim();
     driverId = (form.get("driverId") as string | null)?.trim();
+    customerLocation = (form.get("customerLocation") as string | null)?.trim().slice(0, 500);
     specialistNote = (form.get("specialistNote") as string | null)?.trim().slice(0, 500);
     driverMessage = (form.get("driverMessage") as string | null)?.trim().slice(0, 3000);
     specialistMessage = (form.get("specialistMessage") as string | null)?.trim().slice(0, 3000);
@@ -75,6 +78,7 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     specialistId = (body?.specialistId as string | undefined)?.trim();
     driverId = (body?.driverId as string | undefined)?.trim();
+    customerLocation = (body?.customerLocation as string | undefined)?.trim().slice(0, 500);
     specialistNote = (body?.specialistNote as string | undefined)?.trim().slice(0, 500);
     driverMessage = (body?.driverMessage as string | undefined)?.trim().slice(0, 3000);
     specialistMessage = (body?.specialistMessage as string | undefined)?.trim().slice(0, 3000);
@@ -86,6 +90,12 @@ export async function POST(
         : undefined;
   }
 
+  if (isLocationUnset(customerLocation)) {
+    return NextResponse.json(
+      { error: "حدّدي موقع العميلة قبل اختيار الأخصائية والسائق" },
+      { status: 400 },
+    );
+  }
   if (!specialistId) {
     return NextResponse.json({ error: "اختاري الأخصائية" }, { status: 400 });
   }
@@ -115,6 +125,7 @@ export async function POST(
     const result = await dispatchBooking(id, {
       specialistId,
       driverId,
+      customerLocation: customerLocation as string,
       specialistNote: specialistNote || undefined,
       specialistVoice,
       driverMessage,
