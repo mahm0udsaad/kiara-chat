@@ -213,19 +213,14 @@ function RecipientCard({
         </Text>
       ) : null}
 
-      {/* What a reminder can actually travel on. Told up front, because an
-          employee who taps "تذكير" for someone with no app and no number
+      {/* Whether a reminder can reach them at all. Told up front, because an
+          employee who taps "تذكير" for someone who never signed into the app
           should learn that here, not on the send button. */}
       <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.xs + 2 }}>
         <Badge
           label={recipient?.canPush ? "إشعار التطبيق متاح" : "لا يوجد جهاز مسجّل"}
           tone={recipient?.canPush ? "success" : "neutral"}
           icon="bell"
-        />
-        <Badge
-          label={recipient?.canWhatsapp ? "واتساب متاح" : "واتساب غير متاح"}
-          tone={recipient?.canWhatsapp ? "success" : "neutral"}
-          icon="message"
         />
       </View>
 
@@ -470,12 +465,6 @@ export default function OrderStatusScreen() {
       <View style={{ gap: spacing.sm }}>
         <SectionHeader title="تذكير الفريق" />
         {reminder.isError ? <InlineAlert message={reminder.error.message} /> : null}
-        {context && !context.whatsappConfigured ? (
-          <InlineAlert
-            tone="warning"
-            message="واتساب غير متصل حاليًا — التذكير سيصل عبر إشعار التطبيق فقط."
-          />
-        ) : null}
         {openChat.isError ? (
           <InlineAlert message={openChat.error.message} />
         ) : null}

@@ -112,13 +112,13 @@ function OutcomeScreen({ kind, sentAt }: { kind: Outcome; sentAt: string | null 
               size={26}
             />
             <Text style={{ flex: 1, ...type.headline, color: colors.text, ...rtlText }}>
-              {sent ? "تم إرسال الرسالتين" : "هذا الطلب أُرسل من قبل"}
+              {sent ? "تم إسناد الطلب" : "هذا الطلب مُسند من قبل"}
             </Text>
           </View>
           <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
             {sent
-              ? "وصلت رسالة السائق ورسالة الأخصائية عبر واتساب. لا حاجة لإرساله مرة أخرى."
-              : "رسالتا السائق والأخصائية أُرسلتا سابقًا؛ لم يُرسل شيء الآن. إذا لم تصلا، أعيدي الإرسال من صفحة الطلب."}
+              ? "الطلب وملاحظاته ظاهران الآن في تطبيق السائق والأخصائية."
+              : "الطلب أُسند سابقًا ولم يتغير شيء الآن. إذا لم ينتبها له، أرسلي التنبيه من صفحة الطلب."}
           </Text>
           {sentAt ? (
             <SummaryLine
@@ -282,20 +282,15 @@ function DispatchForm({ id }: { id: string }) {
         expectedVersion: current.version,
       },
       {
-        // A 200 means the order was processed, not that WhatsApp accepted it:
-        // when the engine is disconnected both messages come back unsent. The
-        // employee has to be told that here — she is the only one who can act
-        // on it, and she leaves this screen believing the driver has been
-        // told where to be.
-        onSuccess: ({ driverSent, specialistSent }) => {
-          if (!driverSent || specialistSent === false) {
-            errorFeedback();
+        // The order and its notes are stored before this answers, so the
+        // dispatch itself cannot half-succeed any more. Only the notification
+        // can miss — worth telling her, but never a failed dispatch: they will
+        // both find the order in their app either way.
+        onSuccess: ({ notified }) => {
+          if (notified === false) {
+            warningFeedback();
             setSendError(
-              !driverSent && specialistSent === false
-                ? "لم تصل أي رسالة — واتساب غير متصل. راجعي حالة الاتصال ثم أعيدي الإرسال."
-                : !driverSent
-                  ? "رسالة السائق لم تُرسل. الطلب محفوظ — أعيدي الإرسال من صفحة الطلب."
-                  : "رسالة الأخصائية لم تُرسل. الطلب محفوظ — أعيدي الإرسال من صفحة الطلب.",
+              "تم إسناد الطلب، لكن لم يصل التنبيه لأي جهاز. تأكدي من تسجيل دخولهما للتطبيق.",
             );
             return;
           }
@@ -412,8 +407,8 @@ function DispatchForm({ id }: { id: string }) {
                   disabled={dispatch.isPending}
                 />
                 <Text style={{ ...type.footnote, color: colors.textTertiary, ...rtlText }}>
-                  تفاصيل الحجز تصل مكتوبة بلغة الأخصائية، ويصلها التسجيل بعدها
-                  مباشرة كرسالة صوتية على واتساب.
+                  تفاصيل الحجز تظهر لها مكتوبة بلغتها، ويظهر التسجيل معها في
+                  تطبيقها لتسمعه.
                 </Text>
               </View>
             ) : (

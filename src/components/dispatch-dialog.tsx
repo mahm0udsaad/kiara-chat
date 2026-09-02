@@ -70,7 +70,7 @@ const TIME_FMT = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
 });
 const isolateLtr = (value: string) => `\u2066${value}\u2069`;
 type NoteMode = "text" | "voice";
-const DRIVER_MESSAGE_REQUIRED = "اكتبي رسالة السائق قبل الإرسال";
+const DRIVER_MESSAGE_REQUIRED = "اكتبي ملاحظة السائق قبل الإسناد";
 
 function normalizedRosterName(value: string): string {
   return value
@@ -139,10 +139,7 @@ export function DispatchDialog({
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{
-    sent: boolean;
-    specialistSent: boolean | null;
-  } | null>(null);
+  const [result, setResult] = useState<{ notified: boolean } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -230,9 +227,9 @@ export function DispatchDialog({
     if (!specialistId) return setError("اختاري الأخصائية");
     if (!driverId) return setError("اختاري السائق");
     if (!finalDriverMessage.trim()) return setError(DRIVER_MESSAGE_REQUIRED);
-    if (!specialistMessage.trim()) return setError("راجعي رسالة الأخصائية النهائية");
-    if (!reviewing) return setError("أنشئي الرسائل النهائية وراجعيها أولًا");
-    if (!confirmed) return setError("أكدي مراجعة رسالة السائق قبل الإرسال");
+    if (!specialistMessage.trim()) return setError("راجعي ملاحظة الأخصائية النهائية");
+    if (!reviewing) return setError("جهّزي الملاحظات النهائية وراجعيها أولًا");
+    if (!confirmed) return setError("أكدي مراجعة ملاحظة السائق قبل الإسناد");
 
     setSubmitting(true);
     try {
@@ -270,17 +267,13 @@ export function DispatchDialog({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError(data?.error ?? "تعذّر إرسال طلب السائق");
+        setError(data?.error ?? "تعذّر إسناد الطلب");
         return;
       }
       onUpdated(data.order as DriverOrderRow);
-      setResult({
-        sent: Boolean(data.sent),
-        specialistSent:
-          typeof data.specialistSent === "boolean" ? data.specialistSent : null,
-      });
+      setResult({ notified: Boolean(data.notified) });
     } catch {
-      setError("تعذّر إرسال طلب السائق");
+      setError("تعذّر إسناد الطلب");
     } finally {
       setSubmitting(false);
     }
@@ -350,38 +343,35 @@ export function DispatchDialog({
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>تأكيد الحجز وطلب السائق</DialogTitle>
+          <DialogTitle>تأكيد الحجز وإسناد السائق</DialogTitle>
           <DialogDescription>
             {result
               ? "اكتملت معالجة الطلب."
-              : "بيانات الحجز مأخوذة من ركاز. راجعي الأخصائية والسائق والرسالة ثم أرسلي."}
+              : "بيانات الحجز مأخوذة من ركاز. راجعي الأخصائية والسائق والملاحظات ثم أسندي الطلب."}
           </DialogDescription>
         </DialogHeader>
 
         {result ? (
           <div className="flex flex-col gap-4">
-            <Alert variant={result.sent ? "default" : "destructive"}>
-              {result.sent ? <CheckCircle2 /> : <AlertTriangle />}
-              <AlertTitle>
-                {result.sent ? "تم تأكيد الحجز وإرساله للسائق" : "تم حفظ الطلب ولم يُرسل"}
-              </AlertTitle>
+            <Alert>
+              <CheckCircle2 />
+              <AlertTitle>تم إسناد الطلب للسائق والأخصائية</AlertTitle>
               <AlertDescription>
-                {result.sent
-                  ? "وصلت رسالة تفاصيل الموعد إلى السائق."
-                  : "تحققي من ربط واتساب ثم استخدمي إعادة الإرسال من البطاقة."}
+                الطلب وملاحظاته ظاهران الآن في تطبيق كلٍّ منهما.
               </AlertDescription>
             </Alert>
-            {result.specialistSent !== null ? (
-              <Alert variant={result.specialistSent ? "default" : "destructive"}>
-                <MessageSquareText />
-                <AlertTitle>رسالة الأخصائية</AlertTitle>
+            {/* The notes are on the order the moment it is assigned; only the
+                nudge can miss, so that is the one thing worth reporting. */}
+            {result.notified ? null : (
+              <Alert variant="destructive">
+                <AlertTriangle />
+                <AlertTitle>لم يصل تنبيه التطبيق</AlertTitle>
                 <AlertDescription>
-                  {result.specialistSent
-                    ? `أُرسلت نسخة الموعد إلى الأخصائية باللغة ${language}.`
-                    : "تعذّر إرسال نسخة الأخصائية؛ راجعي رقمها وربط واتساب."}
+                  الطلب موجود في تطبيقهما، لكن التنبيه لم يصل لأي جهاز. تأكدي من
+                  تسجيل دخولهما للتطبيق، أو استخدمي «إعادة التنبيه» من البطاقة.
                 </AlertDescription>
               </Alert>
-            ) : null}
+            )}
             <DialogFooter>
               <Button onClick={() => changeOpen(false)}>تم</Button>
             </DialogFooter>
@@ -455,7 +445,7 @@ export function DispatchDialog({
                         <span dir="ltr">{selectedSpecialist.phone}</span>
                       </>
                     ) : (
-                      "الأخصائية المختارة ليس لها رقم واتساب مسجل."
+                      "الأخصائية المختارة بدون رقم — الرقم هو وسيلة دخولها للتطبيق."
                     )
                   ) : preferredSpecialistName ? (
                     `لم نجد «${preferredSpecialistName}» في قائمة الأخصائيات؛ اختاريها يدويًا.`
@@ -500,7 +490,7 @@ export function DispatchDialog({
                       className="min-h-20"
                     />
                     <FieldDescription>
-                      تفاصيل الحجز الأساسية ستصل تلقائيًا باللغة {language}.
+                      تفاصيل الحجز الأساسية ستظهر لها تلقائيًا باللغة {language}.
                     </FieldDescription>
                   </>
                 ) : (
@@ -508,7 +498,7 @@ export function DispatchDialog({
                     value={voiceNote}
                     onChange={setVoiceNote}
                     disabled={submitting}
-                    description={`تفاصيل الحجز ستصل مكتوبة باللغة ${language}، والتسجيل الصوتي اختياري.`}
+                    description={`تفاصيل الحجز ستظهر مكتوبة باللغة ${language}، والتسجيل الصوتي اختياري وتسمعه من التطبيق.`}
                   />
                 )}
               </Field>
@@ -580,7 +570,7 @@ export function DispatchDialog({
 
               <Field data-invalid={!driverMessage.trim() && Boolean(error)}>
                 <FieldLabel htmlFor={`driver-message-${order.id}`}>
-                  رسالة السائق
+                  ملاحظة السائق
                 </FieldLabel>
                 <Textarea
                   id={`driver-message-${order.id}`}
@@ -595,9 +585,9 @@ export function DispatchDialog({
                   aria-invalid={!driverMessage.trim() && Boolean(error)}
                 />
                 <FieldDescription>
-                  يمكنك تعديل النص قبل إرساله إلى{" "}
-                  {selectedDriver?.full_name ?? "السائق المختار"}. رابط تأكيد بداية
-                  ونهاية الجلسة سيُضاف تلقائيًا بعد الرسالة.
+                  يمكنك تعديل النص قبل إظهاره لـ{" "}
+                  {selectedDriver?.full_name ?? "السائق المختار"} في تطبيقه، مع
+                  خطوات تأكيد بداية الرحلة ونهايتها.
                 </FieldDescription>
               </Field>
 
@@ -605,16 +595,16 @@ export function DispatchDialog({
                 <>
                   <Alert>
                     <MessageSquareText />
-                    <AlertTitle>الرسائل النهائية قبل الإرسال</AlertTitle>
+                    <AlertTitle>الملاحظات النهائية قبل الإسناد</AlertTitle>
                     <AlertDescription>
-                      عدّلي النصين هنا. سيرسل النظام النص الظاهر حرفيًا، بما في ذلك
-                      إضافات التطبيق الموضحة أدناه.
+                      عدّلي النصين هنا. سيظهر النص كما هو في تطبيق السائق
+                      والأخصائية — لا تُرسل أي رسالة واتساب.
                     </AlertDescription>
                   </Alert>
 
                   <Field data-invalid={!finalDriverMessage.trim() && Boolean(error)}>
                     <FieldLabel htmlFor={`final-driver-message-${order.id}`}>
-                      رسالة السائق النهائية
+                      ملاحظة السائق النهائية
                     </FieldLabel>
                     <Textarea
                       id={`final-driver-message-${order.id}`}
@@ -630,7 +620,7 @@ export function DispatchDialog({
 
                   <Field data-invalid={!specialistMessage.trim() && Boolean(error)}>
                     <FieldLabel htmlFor={`final-specialist-message-${order.id}`}>
-                      رسالة الأخصائية النهائية · {previewLanguage}
+                      ملاحظة الأخصائية النهائية · {previewLanguage}
                     </FieldLabel>
                     <Textarea
                       id={`final-specialist-message-${order.id}`}
@@ -642,9 +632,11 @@ export function DispatchDialog({
                       maxLength={3000}
                       className="min-h-52 leading-7"
                     />
-                    <FieldDescription>
-                      الإضافات التلقائية الظاهرة: {automaticAdditions.join(" · ")}
-                    </FieldDescription>
+                    {automaticAdditions.length ? (
+                      <FieldDescription>
+                        الإضافات التلقائية الظاهرة: {automaticAdditions.join(" · ")}
+                      </FieldDescription>
+                    ) : null}
                   </Field>
 
                   {noteMode === "voice" && voiceNote ? (
@@ -652,7 +644,7 @@ export function DispatchDialog({
                       value={voiceNote}
                       onChange={setVoiceNote}
                       disabled={submitting}
-                      description="شغّلي التسجيل وراجعيه؛ سيُرسل بعد رسالة الأخصائية المكتوبة."
+                      description="شغّلي التسجيل وراجعيه؛ ستسمعه الأخصائية في تطبيقها مع الملاحظة المكتوبة."
                     />
                   ) : null}
                 </>
@@ -676,7 +668,7 @@ export function DispatchDialog({
                       </FieldLabel>
                     </FieldTitle>
                     <FieldDescription>
-                      أؤكد إرسال النصين والتسجيل الصوتي كما هي ظاهرة أعلاه.
+                      أؤكد إظهار النصين والتسجيل الصوتي في تطبيقهما كما هي أعلاه.
                     </FieldDescription>
                   </FieldContent>
                 </Field>
@@ -698,12 +690,12 @@ export function DispatchDialog({
                   <Send data-icon="inline-start" />
                 )}
                 {submitting
-                  ? "جارٍ الإرسال…"
+                  ? "جارٍ الإسناد…"
                   : previewing
-                    ? "جارٍ تجهيز الرسائل…"
+                    ? "جارٍ تجهيز الملاحظات…"
                     : reviewing
-                      ? "تأكيد وإرسال"
-                      : "إنشاء الرسائل ومراجعتها"}
+                      ? "تأكيد وإسناد"
+                      : "تجهيز الملاحظات ومراجعتها"}
               </Button>
             </DialogFooter>
           </>

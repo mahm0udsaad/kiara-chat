@@ -143,8 +143,7 @@ begin
         'admin',
         'b0000000-0000-0000-0000-000000000001'::uuid,
         'c0000000-0000-0000-0000-000000000001'::uuid,
-        'one_way', 350, '+966500000011', 'رسالة السائق',
-        '+966500000001', 'رسالة الأخصائية')$q$,
+        'one_way', 350, 'ملاحظة السائق', 'ملاحظة الأخصائية', null)$q$,
     'IDEMPOTENCY_KEY_REUSED',
     'a key reused for a different command type is rejected'
   );

@@ -1,6 +1,9 @@
 /**
- * Driver dispatch: the specialists + drivers rosters and the order that gets
- * pushed to a driver's WhatsApp. All reads/writes go through the RLS-respecting
+ * Driver dispatch: the specialists + drivers rosters and the order that lands
+ * in the field team's app. Nothing is sent to a driver's or a specialist's
+ * WhatsApp — the assignment, its note and its voice note live on the order and
+ * are read back by the app, with a push notification as the nudge. All
+ * reads/writes go through the RLS-respecting
  * authed client and are pinned to Kiara's tenant (RLS enforces it too). Roster
  * writes are additionally gated to admins by the API routes.
  */
@@ -13,7 +16,6 @@ import { findSharedLocationInConversation } from "@/lib/location";
 import { nationalityOf } from "@/lib/nationalities";
 import { normalizePhone } from "@/lib/phone";
 import {
-  claimOutboxEvent,
   finishOrderDispatchCommand,
   prepareOrderDispatchCommand,
   updateOrderCommand,
@@ -23,13 +25,12 @@ import { findOrCreateConversation } from "@/lib/server-conversations";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { translateMessage } from "@/lib/translate";
-import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
+import { uploadBase64Media } from "@/lib/storage-media";
 import type {
   Specialist,
   Driver,
   DriverOrder,
   DriverOrderRow,
-  DriverOrderStatus,
   DispatchSettings,
   FieldOrderProgressState,
   TripType,
@@ -59,10 +60,18 @@ const ORDER_COLS = `${ORDER_COLS_LEGACY}, version, dispatch_state, active_dispat
 const ORDER_COLS_WITH_EDITOR = `${ORDER_COLS}, updated_by`;
 /** Adds the Rekaz link. Falls back again until 20260811194500 runs. */
 const ORDER_COLS_WITH_REKAZ = `${ORDER_COLS_WITH_EDITOR}, rekaz_source_id`;
+/** Adds the app-only dispatch notes. Falls back until 20260902100000 runs. */
+const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_WITH_REKAZ}, driver_note, specialist_note, specialist_voice_path`;
 const missingUpdatedBy = (err: { message: string } | null) =>
   Boolean(err?.message.includes("updated_by"));
 const missingRekazLink = (err: { message: string } | null) =>
   Boolean(err?.message.includes("rekaz_source_id"));
+const missingDispatchNotes = (err: { message: string } | null) =>
+  Boolean(
+    err?.message.includes("driver_note") ||
+      err?.message.includes("specialist_note") ||
+      err?.message.includes("specialist_voice_path"),
+  );
 const missingOperationalColumns = (err: { message: string } | null) =>
   Boolean(
     err?.message.includes("version") ||
@@ -595,7 +604,7 @@ function rekazLocationValue(
 export interface DispatchBookingInput {
   specialistId: string;
   driverId: string;
-  /** Exact final WhatsApp bodies confirmed by the employee. */
+  /** Exact final note bodies confirmed by the employee, as the app shows them. */
   driverMessage: string;
   specialistMessage: string;
   expectedVersion: number;
@@ -606,8 +615,8 @@ export interface DispatchBookingInput {
   /** Optional staff note included in the translated specialist message. */
   specialistNote?: string;
   /**
-   * A recorded note for the specialist, sent as its own WhatsApp message right
-   * after the booking copy. Some things are faster said than typed — and a
+   * A recorded note for the specialist, stored alongside her written one and
+   * played back inside her app. Some things are faster said than typed — and a
    * specialist who reads little Arabic follows a voice far better than text.
    */
   specialistVoice?: {
@@ -668,9 +677,9 @@ export async function getOrderConversationId(id: string): Promise<string | null>
 }
 
 /**
- * Assign a specialist and driver to an existing booking, then send both
- * WhatsApp messages. The specialist receives the booking copy translated to
- * her mother language when configured; the driver receives the dispatch copy.
+ * Assign a specialist and driver to an existing booking and attach both notes.
+ * The specialist's copy is translated to her mother language when configured;
+ * the driver's is the dispatch copy. Both are read in the app, not sent.
  */
 type DispatchContext = {
   order: DriverOrder;
@@ -682,7 +691,7 @@ type DispatchContext = {
     phone: string | null;
     nationality?: string | null;
   };
-  driver: { id: string; full_name: string; phone: string };
+  driver: { id: string; full_name: string; phone: string | null };
   customerName: string | null;
 };
 
@@ -745,7 +754,9 @@ async function loadDispatchContext(
     priceForTrip(tripType),
   ]);
   if (!specialist) throw new Error("Specialist not found");
-  if (!driver?.phone) throw new Error("Driver not found");
+  // A phone is the driver's app login, not a delivery address any more, so a
+  // roster row without one still dispatches.
+  if (!driver) throw new Error("Driver not found");
   if (!conv) throw new Error("Conversation not found");
 
   return {
@@ -753,15 +764,10 @@ async function loadDispatchContext(
     tripType,
     price,
     specialist,
-    driver: driver as { id: string; full_name: string; phone: string },
+    driver: driver as { id: string; full_name: string; phone: string | null },
     customerName: (conv.customer_name as string | null) ?? null,
   };
 }
-
-const DRIVER_APP_ADDITION =
-  "📲 افتح تطبيق كيارا لتأكيد الرحلة ومتابعة خطوات الطلب.";
-const SPECIALIST_APP_ADDITION =
-  "📲 افتحي تطبيق كيارا لمتابعة خطوات الطلب.";
 
 export async function previewBookingDispatch(
   id: string,
@@ -777,20 +783,17 @@ export async function previewBookingDispatch(
     customerPhone: context.order.customer_phone,
     tripType: context.tripType,
   };
-  const driverBody =
+  // No "open the Kiara app" footer any more: this text is only ever read
+  // inside the app, so the line told the reader to open what they had open.
+  const driverMessage =
     input.driverMessage?.trim().slice(0, 3000) ||
     formatDriverOrderMessage(orderDetails);
-  const driverMessage = [driverBody, "", DRIVER_APP_ADDITION].join("\n");
-  const arabicSpecialistMessage = [
-    formatSpecialistOrderMessage({
-      ...orderDetails,
-      driverName: context.driver.full_name,
-      note: input.specialistNote?.trim() || null,
-      sessionLink: null,
-    }),
-    "",
-    SPECIALIST_APP_ADDITION,
-  ].join("\n");
+  const arabicSpecialistMessage = formatSpecialistOrderMessage({
+    ...orderDetails,
+    driverName: context.driver.full_name,
+    note: input.specialistNote?.trim() || null,
+    sessionLink: null,
+  });
   const nationality = nationalityOf(context.specialist.nationality);
   const translated = nationality?.targetLanguage
     ? await translateMessage(arabicSpecialistMessage, nationality.targetLanguage)
@@ -806,48 +809,18 @@ export async function previewBookingDispatch(
     specialistLanguage: translated
       ? (nationality?.languageLabel ?? "العربية")
       : "العربية",
-    automaticAdditions: [DRIVER_APP_ADDITION, SPECIALIST_APP_ADDITION],
+    automaticAdditions: [],
   };
 }
 
-async function deliverOutboxText(input: {
-  commandId: string;
-  eventId: string | null;
-}): Promise<{ sent: boolean; error: string | null }> {
-  if (!input.eventId) return { sent: false, error: "OUTBOX_EVENT_MISSING" };
-  const claimed = await claimOutboxEvent({
-    restaurantId: KIARA_RESTAURANT_ID,
-    commandId: input.commandId,
-    eventId: input.eventId,
-  });
-  if (!claimed.claimed) {
-    return {
-      sent: claimed.status === "sent",
-      error: claimed.status === "sent" ? null : `OUTBOX_${claimed.status ?? "NOT_CLAIMED"}`,
-    };
-  }
-  if (!isOpenWaConfigured()) {
-    return { sent: false, error: "OPENWA_NOT_CONFIGURED" };
-  }
-  try {
-    await openWaTransport.sendText(
-      claimed.event.payload.recipient,
-      claimed.event.payload.body,
-    );
-    return { sent: true, error: null };
-  } catch (error) {
-    return {
-      sent: false,
-      error: error instanceof Error ? error.message.slice(0, 500) : "OPENWA_SEND_FAILED",
-    };
-  }
-}
-
 /**
- * Atomically reserve a dispatch, persist its exact confirmed messages in the
- * outbox, deliver each claimed event at most once, then close the command.
- * A process crash after provider acceptance remains `processing` for explicit
- * review instead of automatically retrying and risking a duplicate message.
+ * Attach the assignment to the order, then tell the field team's phones.
+ *
+ * The command writes the assignment and both notes in one statement, so the
+ * moment an order is dispatched it is already complete in the app. The push is
+ * a nudge on top of that, never the delivery itself: a phone with notifications
+ * off or a stale token must not make the order look failed, because the driver
+ * will still find it when he next opens his list.
  */
 export async function dispatchBooking(
   id: string,
@@ -856,8 +829,26 @@ export async function dispatchBooking(
   order: DriverOrderRow;
   sent: boolean;
   specialistSent: boolean | null;
+  /** Did at least one device accept the nudge? Reported, never fatal. */
+  notified: boolean;
 }> {
   const context = await loadDispatchContext(id, input);
+  const specialistMessage = input.specialistMessage.trim();
+
+  // Uploaded before the command so the note and its recording commit together;
+  // a failed upload costs the recording, not the dispatch.
+  let specialistVoicePath: string | null = null;
+  if (input.specialistVoice) {
+    const stored = await uploadBase64Media({
+      restaurantId: KIARA_RESTAURANT_ID,
+      conversationId: context.order.conversation_id,
+      contentType: input.specialistVoice.contentType,
+      base64: input.specialistVoice.base64,
+      originalFilename: input.specialistVoice.filename ?? null,
+    });
+    specialistVoicePath = stored.storage_path;
+  }
+
   const prepared = await prepareOrderDispatchCommand({
     restaurantId: KIARA_RESTAURANT_ID,
     orderId: id,
@@ -868,54 +859,29 @@ export async function dispatchBooking(
     driverId: input.driverId,
     tripType: context.tripType,
     price: context.price,
-    driverPhone: context.driver.phone,
-    driverMessage: input.driverMessage.trim(),
-    specialistPhone: context.specialist.phone,
-    specialistMessage: input.specialistMessage.trim(),
+    driverNote: input.driverMessage.trim(),
+    specialistNote: specialistMessage,
+    specialistVoicePath,
   });
   const commandId = String(prepared.commandId);
-  const driverOutboxId =
-    typeof prepared.driverOutboxId === "string" ? prepared.driverOutboxId : null;
-  const specialistOutboxId =
-    typeof prepared.specialistOutboxId === "string"
-      ? prepared.specialistOutboxId
-      : null;
 
   await ensureFieldOrderProgress(id).catch(() => undefined);
 
-  const [driverDelivery, specialistDelivery] = await Promise.all([
-    deliverOutboxText({ commandId, eventId: driverOutboxId }),
-    specialistOutboxId
-      ? deliverOutboxText({ commandId, eventId: specialistOutboxId })
-      : Promise.resolve({ sent: false, error: null }),
-  ]);
-
-  if (specialistDelivery.sent && input.specialistVoice && context.specialist.phone) {
-    await openWaTransport
-      .sendMedia(context.specialist.phone, {
-        base64: input.specialistVoice.base64,
-        contentType: input.specialistVoice.contentType,
-        filename: input.specialistVoice.filename ?? undefined,
-        ptt: true,
-      })
-      .catch(() => undefined);
-  }
-
-  await notifyFieldOrderAssigned({
+  const push = await notifyFieldOrderAssigned({
     orderId: id,
     customerName: context.customerName,
     specialistId: input.specialistId,
     driverId: input.driverId,
-  }).catch(() => undefined);
+  }).catch(() => null);
 
   const finished = await finishOrderDispatchCommand({
     restaurantId: KIARA_RESTAURANT_ID,
     orderId: id,
     commandId,
-    driverSent: driverDelivery.sent,
-    specialistSent: specialistDelivery.sent,
-    driverError: driverDelivery.error,
-    specialistError: specialistDelivery.error,
+    driverSent: true,
+    specialistSent: Boolean(specialistMessage),
+    driverError: null,
+    specialistError: null,
   });
   const raw = finished.order;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -926,8 +892,9 @@ export async function dispatchBooking(
   ]);
   return {
     order: enriched,
-    sent: driverDelivery.sent,
-    specialistSent: specialistOutboxId ? specialistDelivery.sent : null,
+    sent: true,
+    specialistSent: specialistMessage ? true : null,
+    notified: Boolean(push && push.accepted > 0),
   };
 }
 
@@ -979,7 +946,10 @@ async function readOrders(
   supabase: AuthedClient,
   build: (cols: string) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
 ): Promise<DriverOrderRow[]> {
-  let { data, error } = await build(ORDER_COLS_WITH_REKAZ);
+  let { data, error } = await build(ORDER_COLS_WITH_NOTES);
+  if (error && missingDispatchNotes(error)) {
+    ({ data, error } = await build(ORDER_COLS_WITH_REKAZ));
+  }
   if (error && missingRekazLink(error)) {
     ({ data, error } = await build(ORDER_COLS_WITH_EDITOR));
   }
@@ -1091,87 +1061,40 @@ export async function updateDriverOrder(
 }
 
 /**
- * Push an existing order to its driver's WhatsApp again — the recovery path for
- * a send that failed (or a driver who lost the message). The message is rebuilt
- * from the stored row so a resend always mirrors the saved order, and the row's
- * status/sent_at follow the new attempt.
+ * Nudge the field team about an order they already have — the recovery path for
+ * a phone that never showed the notification (app closed on install, token
+ * refreshed, notifications off at the time).
+ *
+ * It re-sends the push only. The order itself, with its notes, has been in both
+ * their apps since dispatch, so nothing is rebuilt and the row's
+ * status/sent_at are left exactly as the dispatch left them.
  */
 export async function resendDriverOrder(
   id: string
 ): Promise<{ order: DriverOrderRow; sent: boolean }> {
   const supabase = await createServerSupabaseClient();
 
-  const { data: order, error } = await supabase
-    .from("driver_orders")
-    .select(ORDER_COLS)
-    .eq("id", id)
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!order) throw new Error("الطلب غير موجود");
-  if (!order.driver_id) throw new Error("لا يوجد سائق مرتبط بهذا الطلب");
-  if (!isOpenWaConfigured()) throw new Error("واتساب غير مربوط");
-
-  const row = order as DriverOrder;
-  const driverId = row.driver_id;
-  if (!driverId) throw new Error("لا يوجد سائق مرتبط بهذا الطلب");
-  const [{ data: driver }, specialists, { data: conv }] = await Promise.all([
+  const [row] = await readOrders(supabase, (cols) =>
     supabase
-      .from("drivers")
-      .select("id, full_name, phone")
-      .eq("id", driverId)
+      .from("driver_orders")
+      .select(cols)
+      .eq("id", id)
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .maybeSingle(),
-    rosterNames(supabase, "specialists", row.specialist_id ? [row.specialist_id] : []),
-    supabase
-      .from("conversations")
-      .select("id, customer_name")
-      .eq("id", row.conversation_id)
-      .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .maybeSingle(),
-  ]);
-  if (!driver?.phone) throw new Error("رقم السائق غير متوفر");
+      .limit(1),
+  );
+  if (!row) throw new Error("الطلب غير موجود");
+  if (!row.driver_id) throw new Error("لا يوجد سائق مرتبط بهذا الطلب");
+  if (!row.specialist_id) throw new Error("لا توجد أخصائية مرتبطة بهذا الطلب");
 
-  const message = [
-    formatDriverOrderMessage({
-      specialistName:
-        (row.specialist_id && specialists.get(row.specialist_id)?.fullName) || "—",
-      arrivalAt: row.arrival_at,
-      durationMinutes: row.duration_minutes,
-      customerLocation: row.customer_location,
-      customerName: (conv?.customer_name as string | null) ?? null,
-      customerPhone: row.customer_phone,
-      tripType: row.trip_type,
-      sessionLink: null,
-    }),
-    "",
-    "📲 افتح تطبيق كيارا لتأكيد الرحلة ومتابعة خطوات الطلب.",
-  ].join("\n");
+  const push = await notifyFieldOrderAssigned({
+    orderId: row.id,
+    customerName: row.customer_name ?? null,
+    specialistId: row.specialist_id,
+    driverId: row.driver_id,
+    repeat: true,
+  }).catch(() => null);
 
-  let sent = false;
-  try {
-    await openWaTransport.sendText(driver.phone as string, message);
-    sent = true;
-  } catch {
-    sent = false;
-  }
-
-  const status: DriverOrderStatus = sent ? "sent" : "failed";
-  const { data: updated } = await supabase
-    .from("driver_orders")
-    .update({
-      status,
-      // Keep the original send time when a resend fails — it still went out once.
-      sent_at: sent ? new Date().toISOString() : row.sent_at,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", row.id)
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .select(ORDER_COLS)
-    .single();
-
-  const [enriched] = await withNames(supabase, [(updated ?? row) as DriverOrder]);
-  return { order: enriched, sent };
+  return { order: row, sent: Boolean(push && push.accepted > 0) };
 }
 
 /** Batch-resolve specialist/driver/customer/editor names for a page of orders. */

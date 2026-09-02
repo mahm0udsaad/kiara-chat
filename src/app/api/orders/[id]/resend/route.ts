@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { resendDriverOrder } from "@/lib/dispatch";
 
-/** Re-push a saved order to its driver's WhatsApp (recovery for a failed send). */
+/** Re-send the app notification for a saved order (recovery for a missed push). */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -18,7 +18,7 @@ export async function POST(
     return NextResponse.json({ ok: true, order: safeOrder, sent });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "تعذّرت إعادة الإرسال" },
+      { error: e instanceof Error ? e.message : "تعذّر إرسال التنبيه" },
       { status: 500 }
     );
   }

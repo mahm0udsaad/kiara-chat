@@ -195,6 +195,15 @@ export interface DriverOrder {
    * sides on this id replaces the old phone-plus-day guess.
    */
   rekaz_source_id?: string | null;
+  /**
+   * What the field team reads in the app. Dispatch composes these; nothing is
+   * sent to a driver's or specialist's WhatsApp. Undefined on rows read before
+   * the 20260902100000 migration, null on orders never dispatched.
+   */
+  driver_note?: string | null;
+  specialist_note?: string | null;
+  /** `whatsapp-media` storage path — signed on read, never handed out raw. */
+  specialist_voice_path?: string | null;
 }
 
 /**

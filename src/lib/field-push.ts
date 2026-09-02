@@ -275,6 +275,8 @@ export async function notifyFieldOrderAssigned(input: {
   customerName: string | null;
   specialistId: string;
   driverId: string;
+  /** A re-nudge from the orders screen, not the first time they are told. */
+  repeat?: boolean;
 }): Promise<FieldPushDeliverySummary> {
   const [specialistTokens, driverTokens] = await Promise.all([
     activeTokensForRoster("specialist", [input.specialistId]),
@@ -284,12 +286,12 @@ export async function notifyFieldOrderAssigned(input: {
   const data = { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` };
   const messages: PushMessage[] = [
     ...(specialistTokens.get(input.specialistId) ?? []).map((to) => fieldMessage(to, {
-      title: "طلب جديد لكِ",
+      title: input.repeat ? "تذكير بطلبكِ" : "طلب جديد لكِ",
       body: `افتحي تفاصيل طلب ${name} وتابعي خطوات التنفيذ.`,
       data,
     })),
     ...(driverTokens.get(input.driverId) ?? []).map((to) => fieldMessage(to, {
-      title: "رحلة جديدة لك",
+      title: input.repeat ? "تذكير برحلتك" : "رحلة جديدة لك",
       body: `افتح تفاصيل طلب ${name} وأكّد الرحلة.`,
       data,
     })),

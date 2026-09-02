@@ -128,8 +128,12 @@ export async function POST(
     });
     return mobileData({
       order: orderForMobileSession(result.order, auth.session),
+      // Kept for builds that still read them: an app-only dispatch is complete
+      // the moment it is stored, so both are true. `notified` is the one that
+      // can fail, and it is only the push.
       driverSent: result.sent,
       specialistSent: result.specialistSent,
+      notified: result.notified,
     });
   } catch (error) {
     if (error instanceof OperationalCommandError && error.isConflict) {

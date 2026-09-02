@@ -616,17 +616,22 @@ function OrderCard({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setNote({ ok: false, text: data?.error ?? "تعذّرت إعادة الإرسال" });
+        setNote({ ok: false, text: data?.error ?? "تعذّر إرسال التنبيه" });
         return;
       }
       onUpdated(data.order as DriverOrderRow);
+      // The order has been in their app since it was assigned; this button
+      // only re-fires the notification, so that is all it reports on.
       setNote(
         data.sent
-          ? { ok: true, text: "تم إرسال الطلب للسائق مرة أخرى." }
-          : { ok: false, text: "لم تصل الرسالة للسائق. تحققي من ربط واتساب." }
+          ? { ok: true, text: "تم إرسال التنبيه للسائق والأخصائية مرة أخرى." }
+          : {
+              ok: false,
+              text: "لم يصل التنبيه لأي جهاز. الطلب ما زال ظاهرًا في تطبيقهما.",
+            }
       );
     } catch {
-      setNote({ ok: false, text: "تعذّرت إعادة الإرسال" });
+      setNote({ ok: false, text: "تعذّر إرسال التنبيه" });
     } finally {
       setResending(false);
     }
@@ -717,7 +722,7 @@ function OrderCard({
               ) : (
                 <Send data-icon="inline-start" />
               )}
-              إعادة الإرسال
+              إعادة التنبيه
             </Button>
           )}
         </CardFooter>
@@ -753,9 +758,9 @@ const DURATION_PRESETS = [30, 45, 60, 90, 120] as const;
 
 /**
  * Everything the booking sheet collected, editable afterwards: plans move, a
- * customer sends a better pin, a driver swaps out. Saving never re-sends — an
- * order already on a driver's WhatsApp says so, and the card's "إعادة الإرسال"
- * stays the deliberate way to push the change to them.
+ * customer sends a better pin, a driver swaps out. An edit shows up in the
+ * field team's app on their next refresh; the card's "إعادة التنبيه" is the
+ * deliberate way to tell them a change happened now.
  */
 function OrderDetailsSheet({
   order,
@@ -1072,7 +1077,7 @@ function OrderDetailsSheet({
             <Alert>
               <AlertTriangle />
               <AlertDescription>
-                هذا الطلب وصل السائق بالفعل — بعد الحفظ أعيدي الإرسال ليصله التحديث.
+                هذا الطلب مُسند بالفعل — بعد الحفظ أرسلي التنبيه ليعرف السائق بالتحديث.
               </AlertDescription>
             </Alert>
           ) : null}

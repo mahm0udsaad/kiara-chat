@@ -1,6 +1,10 @@
--- Matrix 4-6: dispatch reservation, outbox claim exclusivity and completion
--- replay. The business risk being tested is a duplicate WhatsApp message to a
--- driver, so "only one caller may claim" is the assertion that matters most.
+-- Matrix 4-6: dispatch reservation, note persistence and completion replay.
+--
+-- Dispatch is app-only: the command stores the two notes on the order and
+-- queues nothing. The business risk being tested is therefore no longer a
+-- duplicate WhatsApp message but a lost or overwritten hand-off — an order the
+-- field team can see without the instructions that came with it, or a second
+-- employee reserving an order that is already being dispatched.
 
 \set ON_ERROR_STOP on
 set client_min_messages = notice;
@@ -9,9 +13,6 @@ do $$
 declare
   v_cmd uuid := '0b000000-0000-0000-0000-000000000001';
   v_result jsonb;
-  v_driver_outbox uuid;
-  v_specialist_outbox uuid;
-  v_claim jsonb;
   v_order public.driver_orders%rowtype;
 begin
   select * into v_order from public.driver_orders
@@ -27,15 +28,11 @@ begin
     'b0000000-0000-0000-0000-000000000002'::uuid,
     'c0000000-0000-0000-0000-000000000002'::uuid,
     'round_trip', 450,
-    '+966500000012', 'موعد العميلة الساعة 5 مساءً في حي الملقا',
-    '+966500000002', 'Appointment at 5pm, Al Malqa district'
+    'موعد العميلة الساعة 5 مساءً في حي الملقا',
+    'Appointment at 5pm, Al Malqa district',
+    '2ba8f6c8-aff9-4147-8f13-cdcb732de698/conv/2026/09/note.m4a'
   );
 
-  v_driver_outbox := (v_result->>'driverOutboxId')::uuid;
-  v_specialist_outbox := (v_result->>'specialistOutboxId')::uuid;
-
-  perform kiara_test.ok(v_driver_outbox is not null, 'a driver outbox event is queued');
-  perform kiara_test.ok(v_specialist_outbox is not null, 'a specialist outbox event is queued');
   perform kiara_test.ok(
     (select dispatch_state from public.driver_orders
       where id = 'e0000000-0000-0000-0000-000000000002') = 'processing',
@@ -46,16 +43,32 @@ begin
       where id = 'e0000000-0000-0000-0000-000000000002') = v_cmd,
     'the order reserves the dispatch command id'
   );
-  -- The message stored is exactly what the employee confirmed. Anything else
+
+  -- The note stored is exactly what the employee confirmed. Anything else
   -- would mean the confirmation sheet is decorative.
   perform kiara_test.ok(
-    (select payload->>'body' from public.outbox_events where id = v_driver_outbox)
+    (select driver_note from public.driver_orders
+      where id = 'e0000000-0000-0000-0000-000000000002')
       = 'موعد العميلة الساعة 5 مساءً في حي الملقا',
-    'the outbox stores the exact confirmed driver text'
+    'the order stores the exact confirmed driver note'
   );
   perform kiara_test.ok(
-    (select status from public.outbox_events where id = v_driver_outbox) = 'pending',
-    'the driver event starts pending'
+    (select specialist_note from public.driver_orders
+      where id = 'e0000000-0000-0000-0000-000000000002')
+      = 'Appointment at 5pm, Al Malqa district',
+    'the order stores the exact confirmed specialist note'
+  );
+  perform kiara_test.ok(
+    (select specialist_voice_path from public.driver_orders
+      where id = 'e0000000-0000-0000-0000-000000000002')
+      = '2ba8f6c8-aff9-4147-8f13-cdcb732de698/conv/2026/09/note.m4a',
+    'the recorded note is stored as a bucket path'
+  );
+
+  -- Nothing is addressed at a phone any more.
+  perform kiara_test.ok(
+    (select count(*) from public.outbox_events where command_id = v_cmd) = 0,
+    'an app-only dispatch queues no outbox events'
   );
 
   -- Matrix 4: a second dispatch cannot reserve the same order.
@@ -71,31 +84,28 @@ begin
         'agent',
         'b0000000-0000-0000-0000-000000000002'::uuid,
         'c0000000-0000-0000-0000-000000000002'::uuid,
-        'one_way', 450, '+966500000012', 'رسالة ثانية',
-        '+966500000002', 'second message')$q$,
+        'one_way', 450, 'ملاحظة ثانية', 'second note', null)$q$,
     'ORDER_DISPATCH_IN_PROGRESS',
     'a second employee cannot dispatch an order already dispatching'
   );
 
-  -- Matrix 5: repeated claims; exactly one returns claimed=true.
-  v_claim := public.kiara_claim_outbox_event(
-    '2ba8f6c8-aff9-4147-8f13-cdcb732de698'::uuid, v_cmd, v_driver_outbox);
-  perform kiara_test.ok(
-    (v_claim->>'claimed')::boolean is true, 'the first claim wins');
-
-  v_claim := public.kiara_claim_outbox_event(
-    '2ba8f6c8-aff9-4147-8f13-cdcb732de698'::uuid, v_cmd, v_driver_outbox);
-  perform kiara_test.ok(
-    (v_claim->>'claimed')::boolean is false, 'the second claim is refused');
-  perform kiara_test.ok(
-    (select attempt_count from public.outbox_events where id = v_driver_outbox) = 1,
-    'a refused claim does not inflate attempt_count'
+  -- A note is the whole hand-off, so an empty one is not a dispatch.
+  perform kiara_test.raises(
+    $q$select public.kiara_command_prepare_order_dispatch(
+        '2ba8f6c8-aff9-4147-8f13-cdcb732de698'::uuid,
+        'e0000000-0000-0000-0000-000000000001'::uuid,
+        (select version from public.driver_orders
+           where id = 'e0000000-0000-0000-0000-000000000001'),
+        gen_random_uuid(),
+        '11111111-1111-1111-1111-111111111111'::uuid,
+        'a0000000-0000-0000-0000-000000000001'::uuid,
+        'admin',
+        'b0000000-0000-0000-0000-000000000001'::uuid,
+        'c0000000-0000-0000-0000-000000000001'::uuid,
+        'one_way', 350, '  ', 'specialist note', null)$q$,
+    'DRIVER_MESSAGE_INVALID',
+    'a blank driver note is refused'
   );
-
-  v_claim := public.kiara_claim_outbox_event(
-    '2ba8f6c8-aff9-4147-8f13-cdcb732de698'::uuid, v_cmd, v_specialist_outbox);
-  perform kiara_test.ok(
-    (v_claim->>'claimed')::boolean is true, 'the specialist event claims independently');
 
   -- Completion.
   v_result := public.kiara_command_finish_order_dispatch(
@@ -116,12 +126,13 @@ begin
     'the dispatch reservation is released'
   );
   perform kiara_test.ok(
-    (select count(*) from public.outbox_events
-      where command_id = v_cmd and status = 'sent') = 2,
-    'both outbox events settle as sent'
+    (select driver_note from public.driver_orders
+      where id = 'e0000000-0000-0000-0000-000000000002')
+      = 'موعد العميلة الساعة 5 مساءً في حي الملقا',
+    'completion leaves the stored notes untouched'
   );
 
-  -- Matrix 6: completion replay returns the original result, does not re-send.
+  -- Matrix 6: completion replay returns the original result, changes nothing.
   v_result := public.kiara_command_finish_order_dispatch(
     '2ba8f6c8-aff9-4147-8f13-cdcb732de698'::uuid,
     'e0000000-0000-0000-0000-000000000002'::uuid,
@@ -154,8 +165,7 @@ begin
         'admin',
         'b0000000-0000-0000-0000-000000000002'::uuid,
         'c0000000-0000-0000-0000-000000000002'::uuid,
-        'one_way', 450, '+966500000012', 'رسالة مكررة',
-        '+966500000002', 'duplicate')$q$,
+        'one_way', 450, 'ملاحظة مكررة', 'duplicate', null)$q$,
     'ORDER_ALREADY_DISPATCHED',
     'a sent order cannot be dispatched twice'
   );

@@ -714,8 +714,6 @@ export type OrderReminderRecipient = {
   phone: string | null;
   /** A live app account with at least one registered device. */
   canPush: boolean;
-  /** A roster phone plus a connected WhatsApp engine. */
-  canWhatsapp: boolean;
   /** True when the chain is currently waiting on this person. */
   isPending: boolean;
   pendingAction: FieldOrderAction | null;
@@ -737,11 +735,11 @@ export type OrderReminderContext = {
   lastReminderAt: string | null;
   /** Minutes since anyone last touched the order. */
   stalledMinutes: number | null;
-  whatsappConfigured: boolean;
   recipients: OrderReminderRecipient[];
 };
 
-export type OrderReminderChannel = "push" | "whatsapp";
+/** The field team works in the app, so a reminder is an app notification. */
+export type OrderReminderChannel = "push";
 
 export type SendOrderReminderInput = {
   role: FieldSessionRole;
@@ -760,8 +758,7 @@ export type OrderReminderDelivery = {
     failed: number;
     errors: string[];
   } | null;
-  whatsapp: { sent: boolean; error: string | null } | null;
-  /** At least one requested channel actually left the building. */
+  /** At least one device accepted the notification. */
   delivered: boolean;
 };
 
@@ -783,6 +780,14 @@ export type FieldOrder = {
   canAct: boolean;
   /** The driver's non-blocking "I've arrived at the specialist" ping is offered. */
   canPingArrival: boolean;
+  /**
+   * The dispatch note written for whoever is reading — the driver's copy for a
+   * driver, the specialist's (in her own language) for a specialist. Null on
+   * orders dispatched before the app carried the note itself.
+   */
+  note: string | null;
+  /** Signed, short-lived URL for the specialist's recorded note, if any. */
+  voiceNoteUrl: string | null;
 };
 
 /* ── Responsibility trail ────────────────────────────────────────────────── */

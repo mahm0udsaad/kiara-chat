@@ -3,6 +3,7 @@ import "server-only";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import { WHATSAPP_MEDIA_BUCKET } from "@/lib/storage-media";
 import {
   fieldOrderStepCommand,
   type FieldLocationEvidence,
@@ -61,6 +62,15 @@ export interface FieldOrder {
    * in the car, and only until he taps it once.
    */
   canPingArrival: boolean;
+  /**
+   * The dispatch note written for THIS reader — the driver's copy for a driver,
+   * the specialist's (already translated to her language) for a specialist.
+   * Null on orders dispatched before the app-only migration, which carried
+   * their instructions over WhatsApp instead.
+   */
+  note: string | null;
+  /** Signed, short-lived URL for the specialist's recorded note, if any. */
+  voiceNoteUrl: string | null;
 }
 
 export interface FieldStaffAccountSummary {
@@ -300,43 +310,57 @@ export function driverArrivalPingAvailable(progress: FieldOrderProgress): boolea
   );
 }
 
+const ORDER_COLS_BASE =
+  "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type";
+const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_BASE}, driver_note, specialist_note, specialist_voice_path`;
+
+/** Long enough to open the order and play the note through. */
+const VOICE_NOTE_URL_TTL_SECONDS = 3600;
+
 async function loadOrdersForSession(
   session: FieldStaffSession,
   options: FieldOrderListOptions & { orderId?: string } = {},
 ) {
   const admin = getAdminSupabaseClient();
   const rosterColumn = session.role === "specialist" ? "specialist_id" : "driver_id";
-  let query = admin
-    .from("driver_orders")
-    .select(
-      "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type"
-    )
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq(rosterColumn, session.rosterId);
-  if (options.orderId) {
-    query = query.eq("id", options.orderId);
-  } else if (options.view && options.dayStart && options.dayEnd) {
-    if (options.view === "today") {
-      query = query.gte("arrival_at", options.dayStart).lt("arrival_at", options.dayEnd);
-    } else if (options.view === "upcoming") {
-      query = query.gte("arrival_at", options.dayEnd);
-    } else if (options.view === "previous") {
-      query = query.lt("arrival_at", options.dayStart);
+  const build = (cols: string) => {
+    let query = admin
+      .from("driver_orders")
+      .select(cols)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .eq(rosterColumn, session.rosterId);
+    if (options.orderId) {
+      query = query.eq("id", options.orderId);
+    } else if (options.view && options.dayStart && options.dayEnd) {
+      if (options.view === "today") {
+        query = query.gte("arrival_at", options.dayStart).lt("arrival_at", options.dayEnd);
+      } else if (options.view === "upcoming") {
+        query = query.gte("arrival_at", options.dayEnd);
+      } else if (options.view === "previous") {
+        query = query.lt("arrival_at", options.dayStart);
+      }
+    } else if (!options.view) {
+      // Backward-compatible window for older mobile builds that do not send a
+      // list view yet.
+      query = query
+        .gte("arrival_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .lte("arrival_at", new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString());
     }
-  } else if (!options.view) {
-    // Backward-compatible window for older mobile builds that do not send a
-    // list view yet.
-    query = query
-      .gte("arrival_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-      .lte("arrival_at", new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString());
+    const descending = options.view === "previous" || options.view === "done";
+    return query
+      .order("arrival_at", { ascending: !descending })
+      .limit(options.view === "done" ? 250 : 100);
+  };
+
+  // Same deploy-ahead-of-migration guard the operations reads use: without the
+  // notes the app is merely quieter, so a missing column must not blank out
+  // the field team's day.
+  let { data: orders, error } = await build(ORDER_COLS_WITH_NOTES);
+  if (error?.message.includes("_note") || error?.message.includes("_voice_path")) {
+    ({ data: orders, error } = await build(ORDER_COLS_BASE));
   }
-  const descending = options.view === "previous" || options.view === "done";
-  query = query
-    .order("arrival_at", { ascending: !descending })
-    .limit(options.view === "done" ? 250 : 100);
-  const { data: orders, error } = await query;
   if (error) throw new Error(error.message);
-  const rows = orders ?? [];
+  const rows = (orders ?? []) as unknown as Record<string, unknown>[];
   const conversationIds = [...new Set(rows.map((row) => row.conversation_id as string))];
   const specialistIds = [...new Set(rows.map((row) => row.specialist_id as string).filter(Boolean))];
   const driverIds = [...new Set(rows.map((row) => row.driver_id as string).filter(Boolean))];
@@ -370,6 +394,26 @@ async function loadOrdersForSession(
     (progressResult.data ?? []).map((row) => [row.order_id as string, row as Record<string, unknown>])
   );
 
+  // Signed here rather than exposed as a path: the field app has no media route
+  // of its own, and a raw bucket path is useless to it anyway.
+  const voiceUrls = new Map<string, string>();
+  if (session.role === "specialist") {
+    const recorded = rows.filter((row) => row.specialist_voice_path);
+    if (recorded.length) {
+      const signed = await admin.storage
+        .from(WHATSAPP_MEDIA_BUCKET)
+        .createSignedUrls(
+          recorded.map((row) => row.specialist_voice_path as string),
+          VOICE_NOTE_URL_TTL_SECONDS,
+        );
+      (signed.data ?? []).forEach((entry, index) => {
+        if (entry.signedUrl) {
+          voiceUrls.set(recorded[index].id as string, entry.signedUrl);
+        }
+      });
+    }
+  }
+
   const mapped = rows.map((row): FieldOrder => {
     const progress = progressOf(progressRows.get(row.id as string));
     const next = nextFieldAction(progress);
@@ -393,6 +437,14 @@ async function loadOrdersForSession(
       canAct: next.role === session.role,
       canPingArrival:
         session.role === "driver" && driverArrivalPingAvailable(progress),
+      note:
+        ((session.role === "specialist"
+          ? row.specialist_note
+          : row.driver_note) as string | null) ?? null,
+      voiceNoteUrl:
+        session.role === "specialist"
+          ? voiceUrls.get(row.id as string) ?? null
+          : null,
     };
   });
   return options.view === "done"

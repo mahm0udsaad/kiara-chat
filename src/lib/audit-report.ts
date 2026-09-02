@@ -107,8 +107,8 @@ const EVENT_TITLE: Record<string, string> = {
   "conversation.customer_renamed": "عدّلت اسم العميلة",
   "order.created": "أنشأت طلب سائق",
   "order.updated": "عدّلت بيانات الطلب",
-  "order.dispatch_prepared": "أرسلت الطلب للسائق والأخصائية",
-  "order.dispatch_completed": "نتيجة إرسال الرسائل",
+  "order.dispatch_prepared": "أسندت الطلب للسائق والأخصائية",
+  "order.dispatch_completed": "اكتمل إسناد الطلب",
   "rekaz.sync_completed": "مزامنة حجوزات ركاز",
 };
 
@@ -176,8 +176,11 @@ function describe(eventType: string, payload: Payload): string | null {
       return changed.length ? changed.join("، ") : null;
     }
     case "order.dispatch_completed": {
+      // Historic rows carry the two WhatsApp delivery flags; app-only
+      // dispatches are always complete, so they get the plain line.
       const driver = payload.driverSent === true;
       const specialist = payload.specialistSent;
+      if (driver && specialist !== false) return "ظهر الطلب في تطبيقهما";
       const parts = [
         `السائق: ${driver ? "وصلت" : "لم تصل"}`,
         specialist === null || specialist === undefined

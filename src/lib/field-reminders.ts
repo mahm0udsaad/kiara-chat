@@ -6,8 +6,12 @@ import "server-only";
  * The 30-minute cron in `kiara_private.enqueue_field_reminders` is the machine
  * half of this: it picks whoever the step machine says is late and pushes
  * wording it chose. This is the human half — an employee looking at a stalled
- * order picks the person, edits the text, and sends it as a push, a WhatsApp
- * message, or both.
+ * order picks the person, edits the text, and sends it to their app.
+ *
+ * The field team works inside the app, so a reminder is an app notification and
+ * nothing else. It used to offer WhatsApp as a second channel; nudging someone
+ * on a surface where they cannot act on the order only split the conversation
+ * away from the order it was about.
  *
  * The two share `field_order_progress.last_reminder_at`: a reminder sent by
  * hand pushes the cron's next automatic nudge out by its own window, so the
@@ -26,16 +30,13 @@ import {
 } from "@/lib/field-staff";
 import { formatDuration, TRIP_TYPE_LABEL } from "@/lib/format";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
-import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import type { FieldOrderProgressState, TripType } from "@/lib/types";
 
-export type FieldReminderChannel = "push" | "whatsapp";
+/** Kept as a one-member union: the API contract still speaks in channels. */
+export type FieldReminderChannel = "push";
 
-export const FIELD_REMINDER_CHANNELS: FieldReminderChannel[] = [
-  "push",
-  "whatsapp",
-];
+export const FIELD_REMINDER_CHANNELS: FieldReminderChannel[] = ["push"];
 
 export const FIELD_REMINDER_MAX_LENGTH = 1_500;
 
@@ -62,12 +63,10 @@ export interface FieldReminderRecipient {
   role: FieldStaffRole;
   rosterId: string | null;
   name: string | null;
-  /** Present only when the roster row carries one; WhatsApp needs it. */
+  /** Present only when the roster row carries one — their app login. */
   phone: string | null;
   /** A live app account with at least one registered device. */
   canPush: boolean;
-  /** A phone on the roster row and a connected WhatsApp engine. */
-  canWhatsapp: boolean;
   /** True when the chain is currently waiting on this person. */
   isPending: boolean;
   /** The step the chain is waiting for — theirs or the other person's. */
@@ -91,8 +90,6 @@ export interface FieldReminderContext {
   lastReminderAt: string | null;
   /** Minutes since anyone touched the order, for "stalled for …". */
   stalledMinutes: number | null;
-  /** False when OPENWA is not configured — the composer hides that channel. */
-  whatsappConfigured: boolean;
   recipients: FieldReminderRecipient[];
 }
 
@@ -100,8 +97,7 @@ export interface FieldReminderResult {
   role: FieldStaffRole;
   remindedAt: string;
   push: FieldPushDeliverySummary | null;
-  whatsapp: { sent: boolean; error: string | null } | null;
-  /** At least one requested channel actually left the building. */
+  /** At least one device accepted the notification. */
   delivered: boolean;
 }
 
@@ -269,8 +265,6 @@ export async function getFieldReminderContext(
   );
   const next = nextFieldAction(progress ?? EMPTY_PROGRESS);
   const customerName = (conversation?.customer_name as string | null) ?? null;
-  const whatsappConfigured = isOpenWaConfigured();
-
   const [specialistHasPush, driverHasPush] = await Promise.all([
     order.specialist_id
       ? fieldStaffHasPushTokens("specialist", order.specialist_id)
@@ -292,7 +286,6 @@ export async function getFieldReminderContext(
     name: person.name,
     phone: person.phone,
     canPush: Boolean(rosterId) && hasPush,
-    canWhatsapp: Boolean(person.phone) && whatsappConfigured,
     isPending: next.role === role,
     pendingAction: next.action,
     pendingLabel: next.label,
@@ -328,7 +321,6 @@ export async function getFieldReminderContext(
             ),
           )
         : null,
-    whatsappConfigured,
     recipients: [
       build("driver", order.driver_id, driver, driverHasPush, specialist.name),
       build(
@@ -354,11 +346,7 @@ export class FieldReminderError extends Error {
 }
 
 /**
- * Send one employee-authored reminder.
- *
- * The requested channels are attempted independently and reported
- * independently: a WhatsApp engine that is down must not hide the fact that
- * the push went through, or the employee sends the whole thing again.
+ * Send one employee-authored reminder to the recipient's app.
  */
 export async function sendFieldReminder(input: {
   orderId: string;
@@ -392,59 +380,25 @@ export async function sendFieldReminder(input: {
         : "لم يتم تحديد السائق لهذا الطلب.",
     );
   }
-  const person = await loadRoster(input.role, rosterId);
+  const push = await notifyFieldStaffReminder({
+    orderId: order.id,
+    role: input.role,
+    rosterId,
+    title: "تذكير من فريق كيارا",
+    body: message,
+  }).catch((error): FieldPushDeliverySummary => {
+    console.error("[field-reminders] Push send failed", error);
+    return {
+      attempted: 1,
+      accepted: 0,
+      delivered: 0,
+      pending: 0,
+      failed: 1,
+      errors: ["PUSH_SEND_FAILED"],
+    };
+  });
 
-  const wantsPush = input.channels.includes("push");
-  const wantsWhatsapp = input.channels.includes("whatsapp");
-  if (wantsWhatsapp && !person.phone) {
-    throw new FieldReminderError(
-      "RECIPIENT_PHONE_MISSING",
-      `لا يوجد رقم واتساب مسجّل لـ${ROLE_LABEL[input.role]}.`,
-    );
-  }
-  if (wantsWhatsapp && !isOpenWaConfigured()) {
-    throw new FieldReminderError(
-      "WHATSAPP_NOT_CONFIGURED",
-      "واتساب غير متصل. أرسلي إشعار التطبيق أو راجعي حالة الاتصال.",
-    );
-  }
-
-  const [push, whatsapp] = await Promise.all([
-    wantsPush
-      ? notifyFieldStaffReminder({
-          orderId: order.id,
-          role: input.role,
-          rosterId,
-          title: "تذكير من فريق كيارا",
-          body: message,
-        }).catch((error): FieldPushDeliverySummary => {
-          console.error("[field-reminders] Push send failed", error);
-          return {
-            attempted: 1,
-            accepted: 0,
-            delivered: 0,
-            pending: 0,
-            failed: 1,
-            errors: ["PUSH_SEND_FAILED"],
-          };
-        })
-      : Promise.resolve(null),
-    wantsWhatsapp && person.phone
-      ? openWaTransport
-          .sendText(person.phone, message)
-          .then(() => ({ sent: true, error: null as string | null }))
-          .catch((error) => ({
-            sent: false,
-            error:
-              error instanceof Error
-                ? error.message.slice(0, 300)
-                : "OPENWA_SEND_FAILED",
-          }))
-      : Promise.resolve(null),
-  ]);
-
-  const delivered =
-    (push ? push.accepted > 0 : false) || (whatsapp ? whatsapp.sent : false);
+  const delivered = push.accepted > 0;
   const remindedAt = new Date().toISOString();
 
   // Only a reminder that actually left pushes the cron's window out. Recording
@@ -473,8 +427,7 @@ export async function sendFieldReminder(input: {
         role: input.role,
         rosterId,
         channels: input.channels,
-        pushAccepted: push?.accepted ?? 0,
-        whatsappSent: whatsapp?.sent ?? false,
+        pushAccepted: push.accepted,
         messageLength: message.length,
       },
     })
@@ -487,5 +440,5 @@ export async function sendFieldReminder(input: {
       },
     );
 
-  return { role: input.role, remindedAt, push, whatsapp, delivered };
+  return { role: input.role, remindedAt, push, delivered };
 }

@@ -129,8 +129,8 @@ select public.kiara_command_prepare_order_dispatch(
   '$1'::uuid, '$2'::uuid, 'agent',
   'b0000000-0000-0000-0000-000000000001'::uuid,
   'c0000000-0000-0000-0000-000000000001'::uuid,
-  'one_way', 400, '+966500000011', 'رسالة السائق المؤكدة',
-  '+966500000001', 'confirmed specialist message') is not null as prepared;
+  'one_way', 400, 'ملاحظة السائق المؤكدة',
+  'confirmed specialist note', null) is not null as prepared;
 select pg_sleep($3);
 commit;
 SQL
@@ -153,20 +153,30 @@ if grep -qE "ORDER_VERSION_CONFLICT|ORDER_DISPATCH_IN_PROGRESS" "$WORK/d_b.out";
 else
   fail "dispatch race: second caller was not refused: $(tr '\n' ' ' < "$WORK/d_b.out" | cut -c1-200)"
 fi
-queued="$(run_sql -c "select count(*) from public.outbox_events
-  where aggregate_id = 'e0000000-0000-0000-0000-000000000001'
-    and payload->>'recipientRole' = 'driver'")"
-if [ "$queued" = "1" ]; then
-  pass "dispatch race: exactly one driver message is queued"
+# The hand-off is the stored note now, so "one dispatch won" means the order
+# carries the winner's note and only ever one of them.
+note="$(run_sql -c "select driver_note from public.driver_orders
+  where id = 'e0000000-0000-0000-0000-000000000001'")"
+if [ "$note" = "ملاحظة السائق المؤكدة" ]; then
+  pass "dispatch race: the order carries exactly one driver note"
 else
-  fail "dispatch race: expected 1 queued driver message, found $queued"
+  fail "dispatch race: unexpected stored driver note: $note"
 fi
 
 # --- Matrix 5: two workers claim the same outbox event ----------------------
-EVENT="$(run_sql -c "select id from public.outbox_events
-  where aggregate_id = 'e0000000-0000-0000-0000-000000000001'
-    and payload->>'recipientRole' = 'driver' and status = 'pending' limit 1")"
-CMD="$(run_sql -c "select command_id from public.outbox_events where id = '$EVENT'")"
+# Dispatch no longer queues anything — it stores the note and the app reads it.
+# The claim function is still part of the schema, so the exclusivity it exists
+# to provide is proved against an event seeded here rather than one a dispatch
+# happens to have left behind.
+CMD="$(run_sql -c "select gen_random_uuid()")"
+EVENT="$(run_sql -c "insert into public.outbox_events (
+    restaurant_id, command_id, aggregate_type, aggregate_id, event_type,
+    idempotency_key, payload
+  ) values (
+    '$TENANT'::uuid, '$CMD'::uuid, 'driver_order',
+    'e0000000-0000-0000-0000-000000000001'::uuid, 'test.claim.race',
+    '$CMD:claim-race', '{\"channel\": \"test\"}'::jsonb
+  ) returning id")"
 
 for s in a b; do
   cat > "$WORK/claim_$s.sql" <<SQL

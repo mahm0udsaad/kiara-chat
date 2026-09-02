@@ -14,7 +14,7 @@ export const maxDuration = 60;
 const MAX_VOICE_BYTES = 8 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** Assign the booking and send the specialist + driver WhatsApp copies. */
+/** Assign the booking and publish both notes to the field team's app. */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -93,10 +93,10 @@ export async function POST(
     return NextResponse.json({ error: "اختاري السائق" }, { status: 400 });
   }
   if (!driverMessage) {
-    return NextResponse.json({ error: "رسالة السائق مطلوبة" }, { status: 400 });
+    return NextResponse.json({ error: "ملاحظة السائق مطلوبة" }, { status: 400 });
   }
   if (!specialistMessage) {
-    return NextResponse.json({ error: "رسالة الأخصائية النهائية مطلوبة" }, { status: 400 });
+    return NextResponse.json({ error: "ملاحظة الأخصائية النهائية مطلوبة" }, { status: 400 });
   }
   if (!Number.isSafeInteger(expectedVersion) || Number(expectedVersion) < 1) {
     return NextResponse.json({ error: "حدّثي الطلب ثم أعيدي المحاولة" }, { status: 400 });
@@ -140,7 +140,7 @@ export async function POST(
     if (error instanceof OperationalCommandError && error.isConflict) {
       return NextResponse.json(
         {
-          error: "عدّلت موظفة أخرى الطلب أو بدأت إرساله. حدّثي الطلب قبل المتابعة.",
+          error: "عدّلت موظفة أخرى الطلب أو بدأت إسناده. حدّثي الطلب قبل المتابعة.",
           code: error.code,
         },
         { status: 409 },
@@ -149,7 +149,7 @@ export async function POST(
     return NextResponse.json(
       {
         error:
-          error instanceof Error ? error.message : "تعذّر إرسال طلب السائق",
+          error instanceof Error ? error.message : "تعذّر إسناد الطلب",
       },
       { status: 500 }
     );

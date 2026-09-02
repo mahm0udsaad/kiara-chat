@@ -104,10 +104,11 @@ export async function prepareOrderDispatchCommand(input: {
   driverId: string;
   tripType: TripType;
   price: number | null;
-  driverPhone: string;
-  driverMessage: string;
-  specialistPhone: string | null;
-  specialistMessage: string;
+  /** Shown to the driver inside the app — nothing is sent over WhatsApp. */
+  driverNote: string;
+  specialistNote: string;
+  /** `whatsapp-media` storage path of the specialist's voice note, if any. */
+  specialistVoicePath: string | null;
 }): Promise<Record<string, unknown>> {
   return rpc("kiara_command_prepare_order_dispatch", {
     p_restaurant_id: input.restaurantId,
@@ -121,36 +122,10 @@ export async function prepareOrderDispatchCommand(input: {
     p_driver_id: input.driverId,
     p_trip_type: input.tripType,
     p_price: input.price,
-    p_driver_phone: input.driverPhone,
-    p_driver_message: input.driverMessage,
-    p_specialist_phone: input.specialistPhone,
-    p_specialist_message: input.specialistMessage,
+    p_driver_note: input.driverNote,
+    p_specialist_note: input.specialistNote,
+    p_specialist_voice_path: input.specialistVoicePath,
   });
-}
-
-export interface ClaimedOutboxEvent {
-  claimed: boolean;
-  status?: string;
-  event: {
-    id: string;
-    payload: {
-      recipient: string;
-      recipientRole: "driver" | "specialist";
-      body: string;
-    };
-  };
-}
-
-export async function claimOutboxEvent(input: {
-  restaurantId: string;
-  commandId: string;
-  eventId: string;
-}): Promise<ClaimedOutboxEvent> {
-  return (await rpc("kiara_claim_outbox_event", {
-    p_restaurant_id: input.restaurantId,
-    p_command_id: input.commandId,
-    p_event_id: input.eventId,
-  })) as unknown as ClaimedOutboxEvent;
 }
 
 export async function finishOrderDispatchCommand(input: {

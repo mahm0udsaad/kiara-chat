@@ -773,13 +773,12 @@ export function useDispatchOrder(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ specialistVoice, ...input }: DispatchInput) => {
-      // The server reports what actually left the building, per recipient.
-      // Dropping those two flags here is what let a dispatch that WhatsApp
-      // refused outright still read as sent on the phone.
+      // A dispatch is stored, not sent, so it no longer half-fails per
+      // recipient. `notified` is the only reportable outcome: whether any of
+      // their devices accepted the nudge.
       type Result = {
         order: OrderDetailResponse["order"];
-        driverSent: boolean;
-        specialistSent: boolean | null;
+        notified: boolean;
       };
       const idempotencyKey = Crypto.randomUUID();
       // A recorded note has to travel as multipart — the same deadline either
@@ -803,9 +802,6 @@ export function useDispatchOrder(id: string) {
         `/orders/${id}/dispatch`,
         {
           method: "POST",
-          // Two WhatsApp messages have to be accepted by the provider before
-          // this answers — and the server, not the phone, decides when a send
-          // has failed.
           timeoutMs: SEND_TIMEOUT_MS,
           body: JSON.stringify({ ...input, idempotencyKey }),
         },

@@ -1,6 +1,7 @@
+import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useLocalSearchParams } from "expo-router";
-import { useMemo } from "react";
-import { Alert, Linking, ScrollView, Text, View } from "react-native";
+import { useEffect, useMemo } from "react";
+import { Alert, Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
@@ -9,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, Divider } from "@/components/ui/card";
 import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { radius, rtlText, spacing, type } from "@/constants/theme";
+import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   durationLabel,
   formatPhone,
@@ -65,6 +66,75 @@ function ProgressRail({ order }: { order: FieldOrder }) {
           </Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+/**
+ * The dispatch note, as the office wrote it.
+ *
+ * This is the whole hand-off now: the instructions used to arrive as a WhatsApp
+ * message on a personal phone, separate from the order they described. Keeping
+ * them on the order means the person doing the visit reads them next to the
+ * address and the steps, and they are still here tomorrow.
+ */
+function DispatchNote({ order }: { order: FieldOrder }) {
+  const { colors } = useTheme();
+  if (!order.note && !order.voiceNoteUrl) return null;
+  return (
+    <View style={{ gap: spacing.sm }}>
+      <SectionHeader title="ملاحظات الإدارة" />
+      <Card style={{ gap: spacing.md }}>
+        {order.note ? (
+          <Text selectable style={{ ...type.body, color: colors.text, ...rtlText }}>
+            {order.note}
+          </Text>
+        ) : null}
+        {order.note && order.voiceNoteUrl ? <Divider /> : null}
+        {order.voiceNoteUrl ? <VoiceNote url={order.voiceNoteUrl} /> : null}
+      </Card>
+    </View>
+  );
+}
+
+/** Playback for the recorded half of the note. */
+function VoiceNote({ url }: { url: string }) {
+  const { colors } = useTheme();
+  const player = useAudioPlayer({ uri: url });
+  const status = useAudioPlayerStatus(player);
+
+  // Playback leaves the head at the end; rewinding here means a second tap
+  // replays the note instead of doing nothing.
+  useEffect(() => {
+    if (status.didJustFinish) void player.seekTo(0);
+  }, [status.didJustFinish, player]);
+
+  return (
+    <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={status.playing ? "إيقاف الاستماع" : "الاستماع للملاحظة"}
+        onPress={() => (status.playing ? player.pause() : player.play())}
+        style={({ pressed }) => ({
+          width: hitSize.min,
+          height: hitSize.min,
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: radius.full,
+          backgroundColor: colors.brandSoft,
+          opacity: pressed ? 0.6 : 1,
+        })}
+      >
+        <IconSymbol
+          name={status.playing ? "pause.fill" : "play.fill"}
+          color={colors.onBrandSoft}
+          size={18}
+        />
+      </Pressable>
+      <IconSymbol name="waveform" color={colors.textSecondary} size={18} />
+      <Text style={{ flex: 1, ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+        ملاحظة صوتية من الإدارة
+      </Text>
     </View>
   );
 }
@@ -158,6 +228,8 @@ export default function FieldOrderDetailScreen() {
             />
           </Card>
         </View>
+
+        <DispatchNote order={order} />
 
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title="فريق الطلب" />
