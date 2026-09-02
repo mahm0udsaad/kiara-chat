@@ -411,48 +411,127 @@ export class RekazBookingError extends Error {
  * pending visit. Choosing a specialist and driver still goes through the
  * dispatch preview, where the employee sees and edits the exact messages.
  */
+/** The Riyadh calendar day a timestamp falls on — the salon's own day. */
+const RIYADH_DAY = new Intl.DateTimeFormat("en-CA", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  timeZone: "Asia/Riyadh",
+});
+const riyadhDayOf = (iso: string) => RIYADH_DAY.format(new Date(iso));
+
+/** One booked service inside a visit, in the order it will be performed. */
+export interface VisitService {
+  name: string;
+  startsAt: string;
+  minutes: number;
+}
+
 /**
- * Arrival to end for every service booked under one Rekaz order, falling back
- * to the single reservation when it carries no order id (or when the lookup
- * turns up nothing, which must never block raising the order).
+ * The services of one visit: everything booked under the same Rekaz order
+ * **on the same day**, in the order they are performed.
+ *
+ * The same-day rule is the whole point. A customer who buys a course of weekly
+ * massages gets one Rekaz order id covering all of them, so grouping on that id
+ * alone made four appointments three weeks apart into a single visit — spanning
+ * 21 days, clamped to the 8-hour ceiling, and dated to the first session, which
+ * for the last one is a month in the past. A visit is a day's work at one
+ * address, never a package.
  */
-async function rekazVisitSpan(
+async function rekazVisitServices(
   admin: ReturnType<typeof getAdminSupabaseClient>,
   orderId: string,
   arrivalAt: string,
-  durationMinutes: number
-): Promise<{ startsAt: string; minutes: number }> {
-  const own = Number.isFinite(durationMinutes) && durationMinutes > 0
-    ? durationMinutes
-    : 60;
-  const alone = { startsAt: arrivalAt, minutes: own };
-  if (!orderId) return alone;
-
+): Promise<VisitService[]> {
+  if (!orderId) return [];
   const { data } = await admin
     .from("rekaz_reservations")
     .select("arrival_at, payload, status, removed_at")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .is("removed_at", null)
     .filter("payload->order->>id", "eq", orderId);
-  if (!data?.length) return alone;
+  if (!data?.length) return [];
+
+  const day = riyadhDayOf(arrivalAt);
+  return data
+    .filter((row) => row.status !== "Cancelled")
+    .map((row) => {
+      const payload = row.payload as
+        | { durationMinutes?: number; service?: string }
+        | null;
+      return {
+        name: (payload?.service ?? "").trim(),
+        startsAt: String(row.arrival_at),
+        minutes: Math.max(Number(payload?.durationMinutes) || 0, 0),
+      };
+    })
+    .filter((svc) => Number.isFinite(Date.parse(svc.startsAt)))
+    .filter((svc) => riyadhDayOf(svc.startsAt) === day)
+    .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt));
+}
+
+/**
+ * Arrival to end for one day's services, falling back to the single
+ * reservation when it carries no order id (or the lookup turns up nothing,
+ * which must never block raising the order).
+ *
+ * The span runs from the first service to the last, gaps included: the
+ * specialist is at the customer's home for the whole of it, and the driver is
+ * planned around the full stay rather than around hands-on minutes.
+ */
+async function rekazVisitSpan(
+  admin: ReturnType<typeof getAdminSupabaseClient>,
+  orderId: string,
+  arrivalAt: string,
+  durationMinutes: number
+): Promise<{ startsAt: string; minutes: number; services: VisitService[] }> {
+  const own = Number.isFinite(durationMinutes) && durationMinutes > 0
+    ? durationMinutes
+    : 60;
+  const alone = { startsAt: arrivalAt, minutes: own, services: [] as VisitService[] };
+
+  const services = await rekazVisitServices(admin, orderId, arrivalAt);
+  if (!services.length) return alone;
 
   let start = Number.POSITIVE_INFINITY;
   let end = Number.NEGATIVE_INFINITY;
-  for (const row of data) {
-    if (row.status === "Cancelled") continue;
-    const from = Date.parse(String(row.arrival_at));
-    if (!Number.isFinite(from)) continue;
-    const minutes =
-      Number((row.payload as { durationMinutes?: number } | null)?.durationMinutes) || 0;
+  for (const svc of services) {
+    const from = Date.parse(svc.startsAt);
     start = Math.min(start, from);
-    end = Math.max(end, from + Math.max(minutes, 0) * 60_000);
+    end = Math.max(end, from + svc.minutes * 60_000);
   }
   if (!Number.isFinite(start) || end <= start) return alone;
 
   return {
     startsAt: new Date(start).toISOString(),
     minutes: Math.round((end - start) / 60_000),
+    services,
   };
+}
+
+/**
+ * The services behind a saved order, for the copy the specialist reads.
+ *
+ * Only a Rekaz-raised order has any: one created from a conversation was
+ * booked by an employee who wrote what it was for in her own note, and an
+ * empty list simply drops the section rather than printing a heading with
+ * nothing under it.
+ */
+export async function servicesForOrder(
+  order: Pick<DriverOrder, "rekaz_source_id" | "arrival_at">,
+): Promise<VisitService[]> {
+  const sourceId = order.rekaz_source_id?.trim();
+  if (!sourceId) return [];
+  const admin = getAdminSupabaseClient();
+  const { data } = await admin
+    .from("rekaz_reservations")
+    .select("payload")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("source_id", sourceId)
+    .maybeSingle();
+  const rekazOrderId =
+    (data?.payload as { order?: { id?: string } | null } | null)?.order?.id?.trim() ?? "";
+  return rekazVisitServices(admin, rekazOrderId, order.arrival_at);
 }
 
 export async function createBookingFromReservation(
@@ -686,6 +765,8 @@ export async function getOrderConversationId(id: string): Promise<string | null>
 type DispatchContext = {
   order: DriverOrder;
   tripType: TripType;
+  /** The day's booked services, in order. Empty for a non-Rekaz booking. */
+  services: VisitService[];
   /** The address the dispatch will commit — the form's, or the stored one. */
   customerLocation: string;
   price: number | null;
@@ -744,7 +825,7 @@ async function loadDispatchContext(
       ? (await fetchSpecialist("id, full_name, phone")).data
       : result.data
   );
-  const [specialist, { data: driver }, { data: conv }, price] = await Promise.all([
+  const [specialist, { data: driver }, { data: conv }, price, services] = await Promise.all([
     specialistPromise,
     supabase
       .from("drivers")
@@ -759,6 +840,7 @@ async function loadDispatchContext(
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .maybeSingle(),
     priceForTrip(tripType),
+    servicesForOrder(order).catch(() => [] as VisitService[]),
   ]);
   if (!specialist) throw new Error("Specialist not found");
   // A phone is the driver's app login, not a delivery address any more, so a
@@ -769,6 +851,7 @@ async function loadDispatchContext(
   return {
     order,
     tripType,
+    services,
     customerLocation: input.customerLocation?.trim() || order.customer_location,
     price,
     specialist,
@@ -791,8 +874,6 @@ export async function previewBookingDispatch(
     customerPhone: context.order.customer_phone,
     tripType: context.tripType,
   };
-  // No "open the Kiara app" footer any more: this text is only ever read
-  // inside the app, so the line told the reader to open what they had open.
   const driverMessage =
     input.driverMessage?.trim().slice(0, 3000) ||
     formatDriverOrderMessage(orderDetails);
@@ -800,6 +881,7 @@ export async function previewBookingDispatch(
     ...orderDetails,
     driverName: context.driver.full_name,
     note: input.specialistNote?.trim() || null,
+    services: context.services,
     sessionLink: null,
   });
   const nationality = nationalityOf(context.specialist.nationality);
@@ -1363,18 +1445,25 @@ const ARRIVAL_FMT = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
   timeZone: TZ,
 });
 
+/**
+ * The driver's copy: who he is carrying, when, and where to.
+ *
+ * He is given no customer phone and no service list. His job is the journey —
+ * the address, the time, and how long she will be inside so he knows when to
+ * come back. The door photo, when there is one, follows this message as its own
+ * attachment.
+ */
 export function formatDriverOrderMessage(o: {
   specialistName: string;
   arrivalAt: string;
   durationMinutes: number;
   customerLocation: string;
-  customerName: string | null;
-  customerPhone: string;
+  customerName?: string | null;
+  customerPhone?: string;
   tripType: TripType;
   sessionLink?: string | null;
 }): string {
   const arrival = ARRIVAL_FMT.format(new Date(o.arrivalAt));
-  const who = o.customerName ? `${o.customerName} (${o.customerPhone})` : o.customerPhone;
   const lines = [
     "🚗 *طلب جديد*",
     "",
@@ -1383,7 +1472,6 @@ export function formatDriverOrderMessage(o: {
     `⏱️ مدة الجلسة: ${formatDuration(o.durationMinutes)}`,
     `🚕 نوع الرحلة: ${TRIP_TYPE_LABEL[o.tripType]}`,
     `📍 موقع الزبونة: ${o.customerLocation}`,
-    `📞 رقم الزبونة: ${who}`,
   ];
   if (o.sessionLink) {
     lines.push("", "📲 جلساتك وتأكيد البداية والنهاية:", o.sessionLink);
@@ -1401,25 +1489,33 @@ export function formatSpecialistOrderMessage(o: {
   driverName: string;
   arrivalAt: string;
   durationMinutes: number;
-  customerLocation: string;
-  customerName: string | null;
-  customerPhone: string;
+  customerLocation?: string;
+  customerName?: string | null;
+  customerPhone?: string;
   tripType: TripType;
   note: string | null;
+  /** The day's services, in the order she will perform them. */
+  services?: VisitService[];
   sessionLink?: string | null;
 }): string {
   const arrival = ARRIVAL_FMT.format(new Date(o.arrivalAt));
-  const who = o.customerName ? `${o.customerName} (${o.customerPhone})` : o.customerPhone;
   const lines = [
     "🌸 *موعد جديد لكِ*",
     "",
-    `👩 الأخصائية: ${o.specialistName}`,
     `🕒 موعد الوصول: ${arrival}`,
     `⏱️ مدة الجلسة: ${formatDuration(o.durationMinutes)}`,
-    `🚕 نوع الرحلة: ${TRIP_TYPE_LABEL[o.tripType]} — مع السائق ${o.driverName}`,
-    `📍 موقع الزبونة: ${o.customerLocation}`,
-    `📞 الزبونة: ${who}`,
+    `🚕 مع السائق: ${o.driverName}`,
   ];
+  // Numbered, because the order they are performed in is the plan for her day
+  // — not a set she can pick from.
+  const services = (o.services ?? []).filter((svc) => svc.name);
+  if (services.length) {
+    lines.push("", "💅 الخدمات بالترتيب:");
+    services.forEach((svc, index) => {
+      const length = svc.minutes > 0 ? ` (${formatDuration(svc.minutes)})` : "";
+      lines.push(`${index + 1}. ${svc.name}${length}`);
+    });
+  }
   if (o.note) lines.push("", `📝 ملاحظة من الفريق: ${o.note}`);
   if (o.sessionLink) {
     lines.push("", "📲 جلساتك وتأكيد البداية والنهاية:", o.sessionLink);

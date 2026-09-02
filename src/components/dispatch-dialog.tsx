@@ -91,9 +91,9 @@ function initialDriverMessage(
   tripType: TripType,
   customerLocation: string
 ): string {
-  const customer = order.customer_name
-    ? `${order.customer_name} (${isolateLtr(order.customer_phone)})`
-    : isolateLtr(order.customer_phone);
+  // Mirrors formatDriverOrderMessage on the server: the journey, and nothing
+  // about the customer beyond where she is. He gets no phone and no service
+  // list — those are the specialist's to carry.
   return [
     "🚗 *طلب جديد*",
     "",
@@ -104,7 +104,6 @@ function initialDriverMessage(
     `⏱️ مدة الجلسة: ${formatDuration(order.duration_minutes)}`,
     `🚕 نوع الرحلة: ${TRIP_TYPE_LABEL[tripType]}`,
     `📍 موقع الزبونة: ${customerLocation}`,
-    `📞 الزبونة: ${customer}`,
   ].join("\n");
 }
 
