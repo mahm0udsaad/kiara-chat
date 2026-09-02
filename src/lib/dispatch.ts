@@ -1,8 +1,9 @@
 /**
  * Driver dispatch: the specialists + drivers rosters and the order that lands
- * in the field team's app. Nothing is sent to a driver's or a specialist's
- * WhatsApp — the assignment, its note and its voice note live on the order and
- * are read back by the app, with a push notification as the nudge. All
+ * in the field team's app and on their WhatsApp. The assignment, its note and
+ * its voice note live on the order and are read back by the app; the same note
+ * is copied to WhatsApp, because a driver on the road does not open an app the
+ * moment a job lands. The app copy is the one that cannot fail. All
  * reads/writes go through the RLS-respecting
  * authed client and are pinned to Kiara's tenant (RLS enforces it too). Roster
  * writes are additionally gated to admins by the API routes.
@@ -16,6 +17,7 @@ import { findSharedLocationInConversation } from "@/lib/location";
 import { nationalityOf } from "@/lib/nationalities";
 import { normalizePhone } from "@/lib/phone";
 import {
+  claimOutboxEvent,
   finishOrderDispatchCommand,
   prepareOrderDispatchCommand,
   updateOrderCommand,
@@ -26,6 +28,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { translateMessage } from "@/lib/translate";
 import { uploadBase64Media } from "@/lib/storage-media";
+import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
 import type {
   Specialist,
   Driver,
@@ -819,22 +822,64 @@ export async function previewBookingDispatch(
 }
 
 /**
- * Attach the assignment to the order, then tell the field team's phones.
+ * Deliver one queued WhatsApp copy, exactly once.
+ *
+ * Claiming before sending is what survives a retry: a second attempt finds the
+ * event already taken and reports its stored outcome instead of sending twice.
+ */
+async function deliverOutboxText(input: {
+  commandId: string;
+  eventId: string | null;
+}): Promise<{ sent: boolean; error: string | null }> {
+  if (!input.eventId) return { sent: false, error: null };
+  const claimed = await claimOutboxEvent({
+    restaurantId: KIARA_RESTAURANT_ID,
+    commandId: input.commandId,
+    eventId: input.eventId,
+  });
+  if (!claimed.claimed) {
+    return {
+      sent: claimed.status === "sent",
+      error: claimed.status === "sent" ? null : `OUTBOX_${claimed.status ?? "NOT_CLAIMED"}`,
+    };
+  }
+  if (!isOpenWaConfigured()) {
+    return { sent: false, error: "OPENWA_NOT_CONFIGURED" };
+  }
+  try {
+    await openWaTransport.sendText(
+      claimed.event.payload.recipient,
+      claimed.event.payload.body,
+    );
+    return { sent: true, error: null };
+  } catch (error) {
+    return {
+      sent: false,
+      error: error instanceof Error ? error.message.slice(0, 500) : "OPENWA_SEND_FAILED",
+    };
+  }
+}
+
+/**
+ * Attach the assignment to the order, then reach the field team both ways.
  *
  * The command writes the assignment and both notes in one statement, so the
- * moment an order is dispatched it is already complete in the app. The push is
- * a nudge on top of that, never the delivery itself: a phone with notifications
- * off or a stale token must not make the order look failed, because the driver
- * will still find it when he next opens his list.
+ * moment an order is dispatched it is already complete in the app. Everything
+ * after that is a nudge — the push, and the WhatsApp copy of the same note —
+ * and none of it can fail the order: a phone with notifications off, a stale
+ * token or a disconnected WhatsApp engine must not make an order the field
+ * team can already see read as failed. Each nudge reports its own result so a
+ * failed WhatsApp copy can be retried on its own.
  */
 export async function dispatchBooking(
   id: string,
   input: DispatchBookingInput
 ): Promise<{
   order: DriverOrderRow;
+  /** The WhatsApp copy to the driver. The order is assigned either way. */
   sent: boolean;
   specialistSent: boolean | null;
-  /** Did at least one device accept the nudge? Reported, never fatal. */
+  /** Did at least one device accept the push? Reported, never fatal. */
   notified: boolean;
 }> {
   const context = await loadDispatchContext(id, input);
@@ -868,26 +913,51 @@ export async function dispatchBooking(
     driverNote: input.driverMessage.trim(),
     specialistNote: specialistMessage,
     specialistVoicePath,
+    driverPhone: context.driver.phone,
+    specialistPhone: context.specialist.phone,
   });
   const commandId = String(prepared.commandId);
+  const driverOutboxId =
+    typeof prepared.driverOutboxId === "string" ? prepared.driverOutboxId : null;
+  const specialistOutboxId =
+    typeof prepared.specialistOutboxId === "string"
+      ? prepared.specialistOutboxId
+      : null;
 
   await ensureFieldOrderProgress(id).catch(() => undefined);
 
-  const push = await notifyFieldOrderAssigned({
-    orderId: id,
-    customerName: context.customerName,
-    specialistId: input.specialistId,
-    driverId: input.driverId,
-  }).catch(() => null);
+  const [push, driverDelivery, specialistDelivery] = await Promise.all([
+    notifyFieldOrderAssigned({
+      orderId: id,
+      customerName: context.customerName,
+      specialistId: input.specialistId,
+      driverId: input.driverId,
+    }).catch(() => null),
+    deliverOutboxText({ commandId, eventId: driverOutboxId }),
+    deliverOutboxText({ commandId, eventId: specialistOutboxId }),
+  ]);
+
+  // The recording follows her written copy on WhatsApp, and is stored on the
+  // order either way — so she has it in the app even when WhatsApp is down.
+  if (specialistDelivery.sent && input.specialistVoice && context.specialist.phone) {
+    await openWaTransport
+      .sendMedia(context.specialist.phone, {
+        base64: input.specialistVoice.base64,
+        contentType: input.specialistVoice.contentType,
+        filename: input.specialistVoice.filename ?? undefined,
+        ptt: true,
+      })
+      .catch(() => undefined);
+  }
 
   const finished = await finishOrderDispatchCommand({
     restaurantId: KIARA_RESTAURANT_ID,
     orderId: id,
     commandId,
-    driverSent: true,
-    specialistSent: Boolean(specialistMessage),
-    driverError: null,
-    specialistError: null,
+    driverSent: driverDelivery.sent,
+    specialistSent: specialistDelivery.sent,
+    driverError: driverDelivery.error,
+    specialistError: specialistDelivery.error,
   });
   const raw = finished.order;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -898,8 +968,8 @@ export async function dispatchBooking(
   ]);
   return {
     order: enriched,
-    sent: true,
-    specialistSent: specialistMessage ? true : null,
+    sent: driverDelivery.sent,
+    specialistSent: specialistOutboxId ? specialistDelivery.sent : null,
     notified: Boolean(push && push.accepted > 0),
   };
 }
@@ -1067,13 +1137,14 @@ export async function updateDriverOrder(
 }
 
 /**
- * Nudge the field team about an order they already have — the recovery path for
- * a phone that never showed the notification (app closed on install, token
- * refreshed, notifications off at the time).
+ * Reach the field team again about an order they already have — the recovery
+ * path for a WhatsApp copy that failed, or a phone that never showed the
+ * notification (app closed on install, token refreshed, notifications off).
  *
- * It re-sends the push only. The order itself, with its notes, has been in both
- * their apps since dispatch, so nothing is rebuilt and the row's
- * status/sent_at are left exactly as the dispatch left them.
+ * The WhatsApp copy is re-sent from the note stored on the order, so a resend
+ * always mirrors what the app shows rather than rebuilding wording that might
+ * drift from it. The row's status and sent_at stay as the dispatch left them:
+ * the order was assigned then, and a repeat nudge does not change that.
  */
 export async function resendDriverOrder(
   id: string
@@ -1092,15 +1163,38 @@ export async function resendDriverOrder(
   if (!row.driver_id) throw new Error("لا يوجد سائق مرتبط بهذا الطلب");
   if (!row.specialist_id) throw new Error("لا توجد أخصائية مرتبطة بهذا الطلب");
 
-  const push = await notifyFieldOrderAssigned({
-    orderId: row.id,
-    customerName: row.customer_name ?? null,
-    specialistId: row.specialist_id,
-    driverId: row.driver_id,
-    repeat: true,
-  }).catch(() => null);
+  const [{ data: driver }, push] = await Promise.all([
+    (await createServerSupabaseClient())
+      .from("drivers")
+      .select("id, phone")
+      .eq("id", row.driver_id)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .maybeSingle(),
+    notifyFieldOrderAssigned({
+      orderId: row.id,
+      customerName: row.customer_name ?? null,
+      specialistId: row.specialist_id,
+      driverId: row.driver_id,
+      repeat: true,
+    }).catch(() => null),
+  ]);
 
-  return { order: row, sent: Boolean(push && push.accepted > 0) };
+  const note = row.driver_note?.trim();
+  const phone = driver?.phone as string | null | undefined;
+  let whatsappSent = false;
+  if (note && phone && isOpenWaConfigured()) {
+    whatsappSent = await openWaTransport
+      .sendText(phone, note)
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  // Either channel landing counts: the point of the button is that he now
+  // knows, not which pipe carried it.
+  return {
+    order: row,
+    sent: whatsappSent || Boolean(push && push.accepted > 0),
+  };
 }
 
 /** Batch-resolve specialist/driver/customer/editor names for a page of orders. */

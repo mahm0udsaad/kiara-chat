@@ -31,7 +31,8 @@ begin
     'حي الملقا — شارع الأمير سلطان',
     'موعد العميلة الساعة 5 مساءً في حي الملقا',
     'Appointment at 5pm, Al Malqa district',
-    '2ba8f6c8-aff9-4147-8f13-cdcb732de698/conv/2026/09/note.m4a'
+    '2ba8f6c8-aff9-4147-8f13-cdcb732de698/conv/2026/09/note.m4a',
+    '+966500000002', '+966500000012'
   );
 
   perform kiara_test.ok(
@@ -72,10 +73,24 @@ begin
     'the recorded note is stored as a bucket path'
   );
 
-  -- Nothing is addressed at a phone any more.
+  -- The WhatsApp copies ride alongside the app copy, addressed by phone and
+  -- carrying the very note that was just stored — the two channels cannot
+  -- disagree about what the driver was told.
   perform kiara_test.ok(
-    (select count(*) from public.outbox_events where command_id = v_cmd) = 0,
-    'an app-only dispatch queues no outbox events'
+    (select count(*) from public.outbox_events where command_id = v_cmd) = 2,
+    'a dispatch queues a WhatsApp copy for each recipient'
+  );
+  perform kiara_test.ok(
+    (select payload->>'body' from public.outbox_events
+      where command_id = v_cmd and payload->>'recipientRole' = 'driver')
+      = 'موعد العميلة الساعة 5 مساءً في حي الملقا',
+    'the driver copy carries the stored driver note verbatim'
+  );
+  perform kiara_test.ok(
+    (select payload->>'recipient' from public.outbox_events
+      where command_id = v_cmd and payload->>'recipientRole' = 'specialist')
+      = '+966500000012',
+    'the specialist copy is addressed to her number'
   );
 
   -- Matrix 4: a second dispatch cannot reserve the same order.
@@ -91,7 +106,8 @@ begin
         'agent',
         'b0000000-0000-0000-0000-000000000002'::uuid,
         'c0000000-0000-0000-0000-000000000002'::uuid,
-        'one_way', 450, 'حي الملقا', 'ملاحظة ثانية', 'second note', null)$q$,
+        'one_way', 450, 'حي الملقا', 'ملاحظة ثانية', 'second note', null,
+        '+966500000002', '+966500000012')$q$,
     'ORDER_DISPATCH_IN_PROGRESS',
     'a second employee cannot dispatch an order already dispatching'
   );
@@ -112,7 +128,8 @@ begin
         'b0000000-0000-0000-0000-000000000001'::uuid,
         'c0000000-0000-0000-0000-000000000001'::uuid,
         'one_way', 350, 'لم يُحدد الموقع — حدّديه قبل الإرسال',
-        'ملاحظة السائق', 'specialist note', null)$q$,
+        'ملاحظة السائق', 'specialist note', null,
+        '+966500000002', '+966500000012')$q$,
     'ORDER_LOCATION_REQUIRED',
     'the placeholder address is refused like a blank one'
   );
@@ -128,7 +145,8 @@ begin
         'admin',
         'b0000000-0000-0000-0000-000000000001'::uuid,
         'c0000000-0000-0000-0000-000000000001'::uuid,
-        'one_way', 350, '   ', 'ملاحظة السائق', 'specialist note', null)$q$,
+        'one_way', 350, '   ', 'ملاحظة السائق', 'specialist note', null,
+        '+966500000002', '+966500000012')$q$,
     'ORDER_LOCATION_REQUIRED',
     'a blank address is refused'
   );
@@ -146,7 +164,8 @@ begin
         'admin',
         'b0000000-0000-0000-0000-000000000001'::uuid,
         'c0000000-0000-0000-0000-000000000001'::uuid,
-        'one_way', 350, 'حي النرجس', '  ', 'specialist note', null)$q$,
+        'one_way', 350, 'حي النرجس', '  ', 'specialist note', null,
+        '+966500000002', '+966500000012')$q$,
     'DRIVER_MESSAGE_INVALID',
     'a blank driver note is refused'
   );
@@ -209,7 +228,8 @@ begin
         'admin',
         'b0000000-0000-0000-0000-000000000002'::uuid,
         'c0000000-0000-0000-0000-000000000002'::uuid,
-        'one_way', 450, 'حي الملقا', 'ملاحظة مكررة', 'duplicate', null)$q$,
+        'one_way', 450, 'حي الملقا', 'ملاحظة مكررة', 'duplicate', null,
+        '+966500000002', '+966500000012')$q$,
     'ORDER_ALREADY_DISPATCHED',
     'a sent order cannot be dispatched twice'
   );

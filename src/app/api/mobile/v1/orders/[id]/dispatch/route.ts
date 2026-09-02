@@ -143,9 +143,9 @@ export async function POST(
     });
     return mobileData({
       order: orderForMobileSession(result.order, auth.session),
-      // Kept for builds that still read them: an app-only dispatch is complete
-      // the moment it is stored, so both are true. `notified` is the one that
-      // can fail, and it is only the push.
+      // The two WhatsApp copies, reported as older builds expect. Neither
+      // failing means the dispatch failed — the order is in both apps
+      // regardless — and `notified` covers the push separately.
       driverSent: result.sent,
       specialistSent: result.specialistSent,
       notified: result.notified,

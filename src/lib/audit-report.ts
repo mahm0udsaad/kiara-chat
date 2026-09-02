@@ -176,11 +176,14 @@ function describe(eventType: string, payload: Payload): string | null {
       return changed.length ? changed.join("، ") : null;
     }
     case "order.dispatch_completed": {
-      // Historic rows carry the two WhatsApp delivery flags; app-only
-      // dispatches are always complete, so they get the plain line.
-      const driver = payload.driverSent === true;
-      const specialist = payload.specialistSent;
-      if (driver && specialist !== false) return "ظهر الطلب في تطبيقهما";
+      // The key names moved when WhatsApp came back as a second channel
+      // alongside the app, and app-only rows sit in between with neither. Read
+      // both spellings so a report over a mixed history stays readable.
+      const driver =
+        (payload.driverWhatsappSent ?? payload.driverSent) === true;
+      const specialist =
+        payload.specialistWhatsappSent ?? payload.specialistSent;
+      if (driver && specialist !== false) return "وصلت النسختان";
       const parts = [
         `السائق: ${driver ? "وصلت" : "لم تصل"}`,
         specialist === null || specialist === undefined

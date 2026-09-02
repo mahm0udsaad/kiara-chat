@@ -148,7 +148,13 @@ export function DispatchDialog({
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ notified: boolean } | null>(null);
+  const [result, setResult] = useState<{
+    /** The driver's WhatsApp copy. The order is assigned regardless. */
+    sent: boolean;
+    /** Null when she has no number and only the app copy was made. */
+    specialistSent: boolean | null;
+    notified: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -292,7 +298,12 @@ export function DispatchDialog({
         return;
       }
       onUpdated(data.order as DriverOrderRow);
-      setResult({ notified: Boolean(data.notified) });
+      setResult({
+        sent: Boolean(data.sent),
+        specialistSent:
+          typeof data.specialistSent === "boolean" ? data.specialistSent : null,
+        notified: Boolean(data.notified),
+      });
     } catch {
       setError("تعذّر إسناد الطلب");
     } finally {
@@ -385,15 +396,35 @@ export function DispatchDialog({
                 الطلب وملاحظاته ظاهران الآن في تطبيق كلٍّ منهما.
               </AlertDescription>
             </Alert>
-            {/* The notes are on the order the moment it is assigned; only the
-                nudge can miss, so that is the one thing worth reporting. */}
+            {/* The order is in both apps the moment it is assigned — that part
+                cannot fail. Only the two nudges can, so each is reported on its
+                own and neither is described as a failed order. */}
+            {result.sent ? null : (
+              <Alert variant="destructive">
+                <AlertTriangle />
+                <AlertTitle>لم تصل نسخة واتساب للسائق</AlertTitle>
+                <AlertDescription>
+                  الطلب ظاهر في تطبيقه، لكن رسالة واتساب لم تُرسل. تحققي من ربط
+                  واتساب ثم استخدمي «إعادة الإرسال» من البطاقة.
+                </AlertDescription>
+              </Alert>
+            )}
+            {result.specialistSent === false ? (
+              <Alert variant="destructive">
+                <AlertTriangle />
+                <AlertTitle>لم تصل نسخة واتساب للأخصائية</AlertTitle>
+                <AlertDescription>
+                  الطلب وملاحظتها ظاهران في تطبيقها؛ راجعي رقمها وربط واتساب.
+                </AlertDescription>
+              </Alert>
+            ) : null}
             {result.notified ? null : (
               <Alert variant="destructive">
                 <AlertTriangle />
                 <AlertTitle>لم يصل تنبيه التطبيق</AlertTitle>
                 <AlertDescription>
                   الطلب موجود في تطبيقهما، لكن التنبيه لم يصل لأي جهاز. تأكدي من
-                  تسجيل دخولهما للتطبيق، أو استخدمي «إعادة التنبيه» من البطاقة.
+                  تسجيل دخولهما للتطبيق، أو استخدمي «إعادة الإرسال» من البطاقة.
                 </AlertDescription>
               </Alert>
             )}
@@ -661,10 +692,10 @@ export function DispatchDialog({
                 <>
                   <Alert>
                     <MessageSquareText />
-                    <AlertTitle>الملاحظات النهائية قبل الإسناد</AlertTitle>
+                    <AlertTitle>الملاحظات النهائية قبل الإرسال</AlertTitle>
                     <AlertDescription>
                       عدّلي النصين هنا. سيظهر النص كما هو في تطبيق السائق
-                      والأخصائية — لا تُرسل أي رسالة واتساب.
+                      والأخصائية، وسيصلهما أيضًا نسخة على واتساب.
                     </AlertDescription>
                   </Alert>
 
@@ -710,7 +741,7 @@ export function DispatchDialog({
                       value={voiceNote}
                       onChange={setVoiceNote}
                       disabled={submitting}
-                      description="شغّلي التسجيل وراجعيه؛ ستسمعه الأخصائية في تطبيقها مع الملاحظة المكتوبة."
+                      description="شغّلي التسجيل وراجعيه؛ ستسمعه الأخصائية في تطبيقها وعلى واتساب بعد الملاحظة المكتوبة."
                     />
                   ) : null}
                 </>

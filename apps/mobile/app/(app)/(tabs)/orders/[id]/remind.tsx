@@ -26,8 +26,8 @@ import type {
  *
  * The server suggests the opening text — it knows which step is outstanding
  * and whose it is — and everything after that is the employee's. What she sees
- * in the box is exactly what arrives in his app, which is the same contract
- * the dispatch screen makes about its two notes.
+ * in the box is exactly what is sent, on exactly the channels she left on,
+ * which is the same contract the dispatch screen makes about its two messages.
  */
 
 const MAX_LENGTH = 1_500;
@@ -45,6 +45,69 @@ const additions = [
   "تم تعديل الموعد، يرجى مراجعة التفاصيل في التطبيق.",
 ];
 
+function ChannelToggle({
+  icon,
+  label,
+  detail,
+  selected,
+  disabled,
+  onPress,
+}: {
+  icon: "bell" | "message";
+  label: string;
+  detail: string;
+  selected: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked: selected, disabled }}
+      accessibilityLabel={`${label}. ${detail}`}
+      disabled={disabled}
+      onPress={() => {
+        tapFeedback();
+        onPress();
+      }}
+      style={({ pressed }) => ({
+        flex: 1,
+        gap: spacing.xs,
+        padding: spacing.md,
+        minHeight: hitSize.comfortable,
+        borderRadius: radius.lg,
+        borderCurve: "continuous",
+        borderWidth: selected ? 1.5 : 1,
+        borderColor: selected ? colors.brand : colors.border,
+        backgroundColor: selected ? colors.brandSoft : colors.surface,
+        opacity: disabled ? 0.45 : pressed ? 0.7 : 1,
+      })}
+    >
+      <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+        <IconSymbol
+          name={selected ? "checkmark.circle" : icon}
+          color={selected ? colors.brand : colors.textTertiary}
+          size={17}
+        />
+        <Text
+          style={{
+            flex: 1,
+            ...type.calloutStrong,
+            color: selected ? colors.onBrandSoft : colors.text,
+            ...rtlText,
+          }}
+        >
+          {label}
+        </Text>
+      </View>
+      <Text style={{ ...type.caption, color: colors.textSecondary, ...rtlText }}>
+        {detail}
+      </Text>
+    </Pressable>
+  );
+}
+
 function RemindForm({ id, initialRole }: { id: string; initialRole: FieldSessionRole }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -53,6 +116,7 @@ function RemindForm({ id, initialRole }: { id: string; initialRole: FieldSession
 
   const [role, setRole] = useState<FieldSessionRole>(initialRole);
   const [message, setMessage] = useState("");
+  const [channels, setChannels] = useState<OrderReminderChannel[]>(["push"]);
   const [validation, setValidation] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   // Which recipient's suggested text is currently in the box. Switching
@@ -72,6 +136,18 @@ function RemindForm({ id, initialRole }: { id: string; initialRole: FieldSession
     setMessage(recipient.message);
     setResult(null);
     setValidation(null);
+    // Every channel that can carry it, not the best single one.
+    //
+    // A reminder exists because someone has not acted yet, and the two
+    // channels fail in different ways: a push dies silently on a phone with
+    // notifications off, and WhatsApp goes unread on a driver mid-trip.
+    // Defaulting to one of them made the salon send the same reminder twice
+    // by hand. Both stay switchable.
+    setChannels(
+      (["push", "whatsapp"] as const).filter((channel) =>
+        channel === "push" ? recipient.canPush : recipient.canWhatsapp,
+      ),
+    );
   }, [recipient, role]);
 
   if (context.isLoading) return <LoadingScreen label="جارٍ تجهيز التذكير…" />;
@@ -86,7 +162,12 @@ function RemindForm({ id, initialRole }: { id: string; initialRole: FieldSession
   }
 
   const reminder = context.data.reminder;
-  const channels: OrderReminderChannel[] = ["push"];
+  const toggle = (channel: OrderReminderChannel) =>
+    setChannels((current) =>
+      current.includes(channel)
+        ? current.filter((item) => item !== channel)
+        : [...current, channel],
+    );
 
   const submit = () => {
     if (!recipient?.rosterId) {
@@ -95,23 +176,46 @@ function RemindForm({ id, initialRole }: { id: string; initialRole: FieldSession
       );
     }
     if (!message.trim()) return setValidation("اكتبي نص التذكير قبل الإرسال.");
+    if (!channels.length) return setValidation("اختاري وسيلة إرسال واحدة على الأقل.");
     setValidation(null);
     setResult(null);
     send.mutate(
       { role, message: message.trim(), channels },
       {
-        // A 200 means the server processed the request, not that the phone
-        // accepted it — a device with notifications off must not read as a
-        // delivered reminder.
+        // A 200 means the server processed the request, not that anything
+        // arrived. Each channel reports for itself, so a WhatsApp engine that
+        // is down never reads as a delivered reminder.
         onSuccess: ({ delivery }) => {
           if (!delivery.delivered) {
             errorFeedback();
             setValidation(
-              "لم يصل الإشعار إلى جهازه. تأكدي من تسجيل دخوله للتطبيق ثم أعيدي المحاولة.",
+              "لم يصل التذكير عبر أي وسيلة. راجعي حالة الاتصال ثم أعيدي المحاولة.",
             );
             return;
           }
+          const parts: string[] = [];
+          if (delivery.push) {
+            parts.push(
+              delivery.push.accepted > 0
+                ? "تم إرسال إشعار التطبيق"
+                : "تعذّر إرسال إشعار التطبيق",
+            );
+          }
+          if (delivery.whatsapp) {
+            parts.push(
+              delivery.whatsapp.sent
+                ? "تم إرسال رسالة واتساب"
+                : "تعذّر إرسال رسالة واتساب",
+            );
+          }
           successFeedback();
+          // Partial delivery stays on screen: she chose two channels and only
+          // one landed, and that is hers to act on. A clean send closes.
+          const partial = parts.some((part) => part.startsWith("تعذّر"));
+          if (partial) {
+            setResult(parts.join(" · "));
+            return;
+          }
           router.back();
         },
       },
@@ -189,14 +293,47 @@ function RemindForm({ id, initialRole }: { id: string; initialRole: FieldSession
           </Text>
         </View>
 
-        {!recipient?.canPush && recipient?.rosterId ? (
-          <InlineAlert
-            tone="warning"
-            message={`لا يوجد جهاز مسجّل لـ${
-              recipient.name || ROLE_LABEL[role]
-            }. اطلبي منه تسجيل الدخول للتطبيق حتى تصله التذكيرات.`}
-          />
-        ) : null}
+        <View style={{ gap: spacing.sm }}>
+          <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>
+            وسيلة الإرسال
+          </Text>
+          <View style={{ flexDirection: "row-reverse", gap: spacing.md }}>
+            <ChannelToggle
+              icon="bell"
+              label="إشعار التطبيق"
+              detail={
+                recipient?.canPush
+                  ? "يصل مباشرة على جهاز الموظف"
+                  : "لا يوجد جهاز مسجّل"
+              }
+              selected={channels.includes("push")}
+              disabled={!recipient?.canPush}
+              onPress={() => toggle("push")}
+            />
+            <ChannelToggle
+              icon="message"
+              label="رسالة واتساب"
+              detail={
+                recipient?.canWhatsapp
+                  ? "تُرسل من رقم كيارا"
+                  : reminder.whatsappConfigured
+                    ? "لا يوجد رقم مسجّل"
+                    : "واتساب غير متصل"
+              }
+              selected={channels.includes("whatsapp")}
+              disabled={!recipient?.canWhatsapp}
+              onPress={() => toggle("whatsapp")}
+            />
+          </View>
+          {!recipient?.canPush && !recipient?.canWhatsapp && recipient?.rosterId ? (
+            <InlineAlert
+              tone="warning"
+              message={`لا توجد وسيلة متاحة للوصول إلى ${
+                recipient.name || ROLE_LABEL[role]
+              }. أضيفي رقمه في الفريق أو اطلبي منه تسجيل الدخول للتطبيق.`}
+            />
+          ) : null}
+        </View>
 
         <View style={{ gap: spacing.sm }}>
           <TextAreaField

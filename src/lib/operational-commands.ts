@@ -106,11 +106,14 @@ export async function prepareOrderDispatchCommand(input: {
   price: number | null;
   /** Settled at dispatch: the command refuses a blank or placeholder address. */
   customerLocation: string;
-  /** Shown to the driver inside the app — nothing is sent over WhatsApp. */
+  /** Stored on the order for the app, and queued as the WhatsApp copy. */
   driverNote: string;
   specialistNote: string;
   /** `whatsapp-media` storage path of the specialist's voice note, if any. */
   specialistVoicePath: string | null;
+  /** Absent numbers are not an error — that recipient gets the app copy only. */
+  driverPhone: string | null;
+  specialistPhone: string | null;
 }): Promise<Record<string, unknown>> {
   return rpc("kiara_command_prepare_order_dispatch", {
     p_restaurant_id: input.restaurantId,
@@ -128,13 +131,48 @@ export async function prepareOrderDispatchCommand(input: {
     p_driver_note: input.driverNote,
     p_specialist_note: input.specialistNote,
     p_specialist_voice_path: input.specialistVoicePath,
+    p_driver_phone: input.driverPhone,
+    p_specialist_phone: input.specialistPhone,
   });
+}
+
+export interface ClaimedOutboxEvent {
+  claimed: boolean;
+  status?: string;
+  event: {
+    id: string;
+    payload: {
+      recipient: string;
+      recipientRole: "driver" | "specialist";
+      body: string;
+    };
+  };
+}
+
+/**
+ * Take exclusive ownership of one queued WhatsApp copy.
+ *
+ * The claim is what keeps a message from going out twice when a dispatch is
+ * retried: a second attempt finds the event already `processing` or `sent` and
+ * declines it rather than re-sending.
+ */
+export async function claimOutboxEvent(input: {
+  restaurantId: string;
+  commandId: string;
+  eventId: string;
+}): Promise<ClaimedOutboxEvent> {
+  return (await rpc("kiara_claim_outbox_event", {
+    p_restaurant_id: input.restaurantId,
+    p_command_id: input.commandId,
+    p_event_id: input.eventId,
+  })) as unknown as ClaimedOutboxEvent;
 }
 
 export async function finishOrderDispatchCommand(input: {
   restaurantId: string;
   orderId: string;
   commandId: string;
+  /** WhatsApp results only — the order is `sent` because it was assigned. */
   driverSent: boolean;
   specialistSent: boolean;
   driverError: string | null;

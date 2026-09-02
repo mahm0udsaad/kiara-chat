@@ -620,18 +620,19 @@ function OrderCard({
         return;
       }
       onUpdated(data.order as DriverOrderRow);
-      // The order has been in their app since it was assigned; this button
-      // only re-fires the notification, so that is all it reports on.
+      // The order has been in their app since it was assigned, so this reports
+      // only on the nudges: the WhatsApp copy and the push. Either landing is
+      // enough — the point is that he now knows, not which pipe carried it.
       setNote(
         data.sent
-          ? { ok: true, text: "تم إرسال التنبيه للسائق والأخصائية مرة أخرى." }
+          ? { ok: true, text: "تم إرسال الطلب للسائق والأخصائية مرة أخرى." }
           : {
               ok: false,
-              text: "لم يصل التنبيه لأي جهاز. الطلب ما زال ظاهرًا في تطبيقهما.",
+              text: "لم يصل التنبيه ولا رسالة واتساب. الطلب ما زال ظاهرًا في تطبيقهما.",
             }
       );
     } catch {
-      setNote({ ok: false, text: "تعذّر إرسال التنبيه" });
+      setNote({ ok: false, text: "تعذّر إعادة الإرسال" });
     } finally {
       setResending(false);
     }
@@ -722,7 +723,7 @@ function OrderCard({
               ) : (
                 <Send data-icon="inline-start" />
               )}
-              إعادة التنبيه
+              إعادة الإرسال
             </Button>
           )}
         </CardFooter>
@@ -759,7 +760,7 @@ const DURATION_PRESETS = [30, 45, 60, 90, 120] as const;
 /**
  * Everything the booking sheet collected, editable afterwards: plans move, a
  * customer sends a better pin, a driver swaps out. An edit shows up in the
- * field team's app on their next refresh; the card's "إعادة التنبيه" is the
+ * field team's app on their next refresh; the card's "إعادة الإرسال" is the
  * deliberate way to tell them a change happened now.
  */
 function OrderDetailsSheet({

@@ -3,6 +3,7 @@ import {
   FIELD_REMINDER_CHANNELS,
   getFieldReminderContext,
   sendFieldReminder,
+  type FieldReminderChannel,
 } from "@/lib/field-reminders";
 import type { FieldStaffRole } from "@/lib/field-staff";
 import {
@@ -42,7 +43,7 @@ export async function GET(
   }
 }
 
-/** Send one employee-authored reminder to the driver's or the specialist's app. */
+/** Send one employee-authored reminder to the driver or the specialist. */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -62,10 +63,22 @@ export async function POST(
   if (typeof body.message !== "string" || !body.message.trim()) {
     return mobileError(400, "EMPTY_REMINDER", "message must be a non-empty string");
   }
-  // A reminder only has one channel now. Builds that still ask for "whatsapp"
-  // get the app notification rather than an error: the employee's intent is to
-  // reach that person about this order, and the app is where they act on it.
-  const channels = FIELD_REMINDER_CHANNELS;
+  const channels = Array.isArray(body.channels)
+    ? [
+        ...new Set(
+          body.channels.filter((channel): channel is FieldReminderChannel =>
+            FIELD_REMINDER_CHANNELS.includes(channel as FieldReminderChannel),
+          ),
+        ),
+      ]
+    : [];
+  if (!channels.length) {
+    return mobileError(
+      400,
+      "NO_REMINDER_CHANNEL",
+      "channels must contain push and/or whatsapp",
+    );
+  }
 
   const { id } = await params;
   try {
