@@ -71,6 +71,11 @@ export interface FieldOrder {
   note: string | null;
   /** Signed, short-lived URL for the specialist's recorded note, if any. */
   voiceNoteUrl: string | null;
+  /**
+   * The customer's door, for the driver only — a pin puts him on the street,
+   * this shows him which gate. Null for the specialist, who is driven there.
+   */
+  doorPhotoUrl: string | null;
 }
 
 export interface FieldStaffAccountSummary {
@@ -312,10 +317,10 @@ export function driverArrivalPingAvailable(progress: FieldOrderProgress): boolea
 
 const ORDER_COLS_BASE =
   "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type";
-const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_BASE}, driver_note, specialist_note, specialist_voice_path`;
+const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_BASE}, driver_note, specialist_note, specialist_voice_path, door_photo_path`;
 
-/** Long enough to open the order and play the note through. */
-const VOICE_NOTE_URL_TTL_SECONDS = 3600;
+/** Long enough to open the order, play the note and study the photo. */
+const ATTACHMENT_URL_TTL_SECONDS = 3600;
 
 async function loadOrdersForSession(
   session: FieldStaffSession,
@@ -356,7 +361,11 @@ async function loadOrdersForSession(
   // notes the app is merely quieter, so a missing column must not blank out
   // the field team's day.
   let { data: orders, error } = await build(ORDER_COLS_WITH_NOTES);
-  if (error?.message.includes("_note") || error?.message.includes("_voice_path")) {
+  if (
+    error?.message.includes("_note") ||
+    error?.message.includes("_voice_path") ||
+    error?.message.includes("door_photo_path")
+  ) {
     ({ data: orders, error } = await build(ORDER_COLS_BASE));
   }
   if (error) throw new Error(error.message);
@@ -396,23 +405,27 @@ async function loadOrdersForSession(
 
   // Signed here rather than exposed as a path: the field app has no media route
   // of its own, and a raw bucket path is useless to it anyway.
-  const voiceUrls = new Map<string, string>();
-  if (session.role === "specialist") {
-    const recorded = rows.filter((row) => row.specialist_voice_path);
-    if (recorded.length) {
-      const signed = await admin.storage
-        .from(WHATSAPP_MEDIA_BUCKET)
-        .createSignedUrls(
-          recorded.map((row) => row.specialist_voice_path as string),
-          VOICE_NOTE_URL_TTL_SECONDS,
-        );
-      (signed.data ?? []).forEach((entry, index) => {
-        if (entry.signedUrl) {
-          voiceUrls.set(recorded[index].id as string, entry.signedUrl);
-        }
-      });
-    }
-  }
+  const signUrls = async (column: string): Promise<Map<string, string>> => {
+    const urls = new Map<string, string>();
+    const present = rows.filter((row) => row[column]);
+    if (!present.length) return urls;
+    const signed = await admin.storage
+      .from(WHATSAPP_MEDIA_BUCKET)
+      .createSignedUrls(
+        present.map((row) => row[column] as string),
+        ATTACHMENT_URL_TTL_SECONDS,
+      );
+    (signed.data ?? []).forEach((entry, index) => {
+      if (entry.signedUrl) urls.set(present[index].id as string, entry.signedUrl);
+    });
+    return urls;
+  };
+  // Each attachment is signed only for the role it was made for: her recorded
+  // instructions are hers, and the door photo is the driver's problem to solve.
+  const [voiceUrls, doorUrls] = await Promise.all([
+    session.role === "specialist" ? signUrls("specialist_voice_path") : new Map(),
+    session.role === "driver" ? signUrls("door_photo_path") : new Map(),
+  ]);
 
   const mapped = rows.map((row): FieldOrder => {
     const progress = progressOf(progressRows.get(row.id as string));
@@ -445,6 +458,8 @@ async function loadOrdersForSession(
         session.role === "specialist"
           ? voiceUrls.get(row.id as string) ?? null
           : null,
+      doorPhotoUrl:
+        session.role === "driver" ? doorUrls.get(row.id as string) ?? null : null,
     };
   });
   return options.view === "done"

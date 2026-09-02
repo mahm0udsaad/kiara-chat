@@ -1,7 +1,7 @@
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo } from "react";
-import { Alert, Linking, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Image, Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
@@ -71,16 +71,20 @@ function ProgressRail({ order }: { order: FieldOrder }) {
 }
 
 /**
- * The dispatch note, as the office wrote it.
+ * The dispatch note, as the office wrote it, with whatever was attached to it.
  *
- * This is the whole hand-off now: the instructions used to arrive as a WhatsApp
- * message on a personal phone, separate from the order they described. Keeping
- * them on the order means the person doing the visit reads them next to the
- * address and the steps, and they are still here tomorrow.
+ * The same text arrives as a WhatsApp message on a personal phone, but that
+ * copy is separate from the order it describes and buried by next week.
+ * Keeping it here means the person doing the visit reads it next to the
+ * address and the steps.
+ *
+ * The attachments differ by role, and the server decides which one it signs:
+ * the recording is the specialist's, the door photo is the driver's.
  */
 function DispatchNote({ order }: { order: FieldOrder }) {
   const { colors } = useTheme();
-  if (!order.note && !order.voiceNoteUrl) return null;
+  if (!order.note && !order.voiceNoteUrl && !order.doorPhotoUrl) return null;
+  const hasAttachment = Boolean(order.voiceNoteUrl || order.doorPhotoUrl);
   return (
     <View style={{ gap: spacing.sm }}>
       <SectionHeader title="ملاحظات الإدارة" />
@@ -90,9 +94,39 @@ function DispatchNote({ order }: { order: FieldOrder }) {
             {order.note}
           </Text>
         ) : null}
-        {order.note && order.voiceNoteUrl ? <Divider /> : null}
+        {order.note && hasAttachment ? <Divider /> : null}
         {order.voiceNoteUrl ? <VoiceNote url={order.voiceNoteUrl} /> : null}
+        {order.doorPhotoUrl ? <DoorPhoto url={order.doorPhotoUrl} /> : null}
       </Card>
+    </View>
+  );
+}
+
+/**
+ * The customer's door. Shown large enough to recognise a gate from — a
+ * thumbnail would defeat the point of sending it.
+ */
+function DoorPhoto({ url }: { url: string }) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ gap: spacing.sm }}>
+      <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.xs }}>
+        <IconSymbol name="mappin.and.ellipse" size={16} color={colors.textSecondary} />
+        <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+          باب العميلة
+        </Text>
+      </View>
+      <Image
+        source={{ uri: url }}
+        accessibilityLabel="صورة باب العميلة"
+        resizeMode="cover"
+        style={{
+          width: "100%",
+          aspectRatio: 4 / 3,
+          borderRadius: radius.md,
+          backgroundColor: colors.surfaceSunken,
+        }}
+      />
     </View>
   );
 }

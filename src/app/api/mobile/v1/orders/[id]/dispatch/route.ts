@@ -34,6 +34,7 @@ export async function POST(
   );
   let body: Record<string, unknown>;
   let specialistVoice: DispatchBookingInput["specialistVoice"];
+  let doorPhoto: DispatchBookingInput["doorPhoto"];
   if (multipart) {
     let form: FormData;
     try {
@@ -44,6 +45,20 @@ export async function POST(
     body = Object.fromEntries(
       [...form.entries()].filter(([, value]) => typeof value === "string"),
     );
+    const photo = form.get("doorPhoto");
+    if (photo instanceof File && photo.size > 0) {
+      if (!photo.type.startsWith("image/")) {
+        return mobileError(415, "DOOR_PHOTO_NOT_IMAGE", "The door photo must be an image");
+      }
+      if (photo.size > MAX_VOICE_BYTES) {
+        return mobileError(413, "DOOR_PHOTO_TOO_LARGE", "The door photo is too large");
+      }
+      doorPhoto = {
+        base64: Buffer.from(await photo.arrayBuffer()).toString("base64"),
+        contentType: photo.type,
+        filename: photo.name || "door.jpg",
+      };
+    }
     const voice = form.get("specialistVoice");
     if (voice instanceof File && voice.size > 0) {
       if (voice.size > MAX_VOICE_BYTES) {
@@ -130,6 +145,7 @@ export async function POST(
       specialistId,
       driverId,
       customerLocation,
+      doorPhoto,
       driverMessage,
       specialistMessage,
       specialistVoice,

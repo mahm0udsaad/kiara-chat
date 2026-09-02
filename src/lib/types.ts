@@ -207,6 +207,8 @@ export interface DriverOrder {
   specialist_note?: string | null;
   /** `whatsapp-media` storage path — signed on read, never handed out raw. */
   specialist_voice_path?: string | null;
+  /** Photo of the customer's door, for the driver. Same storage convention. */
+  door_photo_path?: string | null;
 }
 
 /**

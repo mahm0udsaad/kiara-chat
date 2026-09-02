@@ -143,6 +143,9 @@ export function DispatchDialog({
   const [previewing, setPreviewing] = useState(false);
   const [noteMode, setNoteMode] = useState<NoteMode>("text");
   const [voiceNote, setVoiceNote] = useState<VoiceNote | null>(null);
+  // Optional, and deliberately not remembered across orders: a door belongs to
+  // one address.
+  const [doorPhoto, setDoorPhoto] = useState<File | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -218,6 +221,7 @@ export function DispatchDialog({
       isLocationUnset(order.customer_location) ? "" : order.customer_location
     );
     setSpecialistNote("");
+    setDoorPhoto(null);
     setDriverMessage("");
     setFinalDriverMessage("");
     setSpecialistMessage("");
@@ -258,9 +262,12 @@ export function DispatchDialog({
     setSubmitting(true);
     try {
       const voiceFile = noteMode === "voice" ? voiceNote?.file : null;
+      const photoFile = doorPhoto;
       let body: BodyInit;
       let headers: HeadersInit | undefined;
-      if (voiceFile) {
+      // Either attachment forces multipart: the bytes stream up instead of
+      // being inflated to base64 in the browser.
+      if (voiceFile || photoFile) {
         const form = new FormData();
         form.append("specialistId", specialistId);
         form.append("driverId", driverId);
@@ -270,7 +277,9 @@ export function DispatchDialog({
         form.append("specialistMessage", specialistMessage.trim());
         form.append("expectedVersion", String(order.version));
         form.append("idempotencyKey", crypto.randomUUID());
-        form.append("specialistVoice", voiceFile, voiceFile.name);
+        form.append("specialistNote", noteMode === "text" ? specialistNote : "");
+        if (voiceFile) form.append("specialistVoice", voiceFile, voiceFile.name);
+        if (photoFile) form.append("doorPhoto", photoFile, photoFile.name);
         body = form;
       } else {
         headers = { "Content-Type": "application/json" };
@@ -311,6 +320,7 @@ export function DispatchDialog({
   }, [
     confirmed,
     customerLocation,
+    doorPhoto,
     driverId,
     finalDriverMessage,
     noteMode,
@@ -485,6 +495,30 @@ export function DispatchDialog({
                   {locationMissing
                     ? "لا يمكن اختيار الأخصائية والسائق قبل تحديد الموقع."
                     : "هذا هو العنوان الذي سيصل السائق إليه."}
+                </FieldDescription>
+              </Field>
+
+              {/* A pin puts the driver on the street; the photo tells him which
+                  gate. Optional — most orders will not have one, and a missing
+                  photo must never hold up a dispatch. */}
+              <Field>
+                <FieldLabel htmlFor={`dispatch-door-${order.id}`}>
+                  صورة باب العميلة (اختياري)
+                </FieldLabel>
+                <Input
+                  id={`dispatch-door-${order.id}`}
+                  type="file"
+                  accept="image/*"
+                  className="min-h-11"
+                  onChange={(event) => {
+                    setDoorPhoto(event.target.files?.[0] ?? null);
+                    setConfirmed(false);
+                  }}
+                />
+                <FieldDescription>
+                  {doorPhoto
+                    ? `${doorPhoto.name} — ستصل للسائق مع طلبه.`
+                    : "إن كان عندك صورة للباب أو المدخل، أرفقيها للسائق."}
                 </FieldDescription>
               </Field>
 

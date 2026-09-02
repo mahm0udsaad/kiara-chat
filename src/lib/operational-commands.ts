@@ -114,6 +114,8 @@ export async function prepareOrderDispatchCommand(input: {
   /** Absent numbers are not an error — that recipient gets the app copy only. */
   driverPhone: string | null;
   specialistPhone: string | null;
+  /** Null keeps the photo already on the order rather than clearing it. */
+  doorPhotoPath: string | null;
 }): Promise<Record<string, unknown>> {
   return rpc("kiara_command_prepare_order_dispatch", {
     p_restaurant_id: input.restaurantId,
@@ -133,6 +135,7 @@ export async function prepareOrderDispatchCommand(input: {
     p_specialist_voice_path: input.specialistVoicePath,
     p_driver_phone: input.driverPhone,
     p_specialist_phone: input.specialistPhone,
+    p_door_photo_path: input.doorPhotoPath,
   });
 }
 

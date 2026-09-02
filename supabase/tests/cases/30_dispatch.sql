@@ -32,7 +32,8 @@ begin
     'موعد العميلة الساعة 5 مساءً في حي الملقا',
     'Appointment at 5pm, Al Malqa district',
     '2ba8f6c8-aff9-4147-8f13-cdcb732de698/conv/2026/09/note.m4a',
-    '+966500000002', '+966500000012'
+    '+966500000002', '+966500000012',
+    '2ba8f6c8-aff9-4147-8f13-cdcb732de698/conv/2026/09/door.jpg'
   );
 
   perform kiara_test.ok(
@@ -72,6 +73,12 @@ begin
       = '2ba8f6c8-aff9-4147-8f13-cdcb732de698/conv/2026/09/note.m4a',
     'the recorded note is stored as a bucket path'
   );
+  perform kiara_test.ok(
+    (select door_photo_path from public.driver_orders
+      where id = 'e0000000-0000-0000-0000-000000000002')
+      = '2ba8f6c8-aff9-4147-8f13-cdcb732de698/conv/2026/09/door.jpg',
+    'the door photo is stored as a bucket path'
+  );
 
   -- The WhatsApp copies ride alongside the app copy, addressed by phone and
   -- carrying the very note that was just stored — the two channels cannot
@@ -107,7 +114,7 @@ begin
         'b0000000-0000-0000-0000-000000000002'::uuid,
         'c0000000-0000-0000-0000-000000000002'::uuid,
         'one_way', 450, 'حي الملقا', 'ملاحظة ثانية', 'second note', null,
-        '+966500000002', '+966500000012')$q$,
+        '+966500000002', '+966500000012', null)$q$,
     'ORDER_DISPATCH_IN_PROGRESS',
     'a second employee cannot dispatch an order already dispatching'
   );
@@ -129,7 +136,7 @@ begin
         'c0000000-0000-0000-0000-000000000001'::uuid,
         'one_way', 350, 'لم يُحدد الموقع — حدّديه قبل الإرسال',
         'ملاحظة السائق', 'specialist note', null,
-        '+966500000002', '+966500000012')$q$,
+        '+966500000002', '+966500000012', null)$q$,
     'ORDER_LOCATION_REQUIRED',
     'the placeholder address is refused like a blank one'
   );
@@ -146,7 +153,7 @@ begin
         'b0000000-0000-0000-0000-000000000001'::uuid,
         'c0000000-0000-0000-0000-000000000001'::uuid,
         'one_way', 350, '   ', 'ملاحظة السائق', 'specialist note', null,
-        '+966500000002', '+966500000012')$q$,
+        '+966500000002', '+966500000012', null)$q$,
     'ORDER_LOCATION_REQUIRED',
     'a blank address is refused'
   );
@@ -165,7 +172,7 @@ begin
         'b0000000-0000-0000-0000-000000000001'::uuid,
         'c0000000-0000-0000-0000-000000000001'::uuid,
         'one_way', 350, 'حي النرجس', '  ', 'specialist note', null,
-        '+966500000002', '+966500000012')$q$,
+        '+966500000002', '+966500000012', null)$q$,
     'DRIVER_MESSAGE_INVALID',
     'a blank driver note is refused'
   );
@@ -229,7 +236,7 @@ begin
         'b0000000-0000-0000-0000-000000000002'::uuid,
         'c0000000-0000-0000-0000-000000000002'::uuid,
         'one_way', 450, 'حي الملقا', 'ملاحظة مكررة', 'duplicate', null,
-        '+966500000002', '+966500000012')$q$,
+        '+966500000002', '+966500000012', null)$q$,
     'ORDER_ALREADY_DISPATCHED',
     'a sent order cannot be dispatched twice'
   );

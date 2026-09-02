@@ -360,6 +360,11 @@ export type DispatchInput = {
    * specialist who reads little Arabic.
    */
   specialistVoice?: { uri: string; name: string; type: string } | null;
+  /**
+   * A photo of the customer's door, for the driver. A pin drops him on the
+   * street; this tells him which gate is hers. Optional on every order.
+   */
+  doorPhoto?: { uri: string; name: string; type: string } | null;
 };
 
 export type DispatchPreview = {
@@ -794,6 +799,11 @@ export type FieldOrder = {
   note: string | null;
   /** Signed, short-lived URL for the specialist's recorded note, if any. */
   voiceNoteUrl: string | null;
+  /**
+   * The customer's door, for the driver only — a pin puts him on the street,
+   * this shows him which gate. Null for the specialist, who is driven there.
+   */
+  doorPhotoUrl: string | null;
 };
 
 /* ── Responsibility trail ────────────────────────────────────────────────── */

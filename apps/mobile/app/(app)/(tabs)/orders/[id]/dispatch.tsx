@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { KeyboardAvoidingView, Pressable, ScrollView, Text, View } from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import { Image, KeyboardAvoidingView, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ApiError } from "@/lib/api";
@@ -39,6 +40,8 @@ import {
 import { useTheme } from "@/providers/theme-provider";
 
 const noteMaxLength = 500;
+/** Matches the API's cap — a door photo is a snapshot, not an album. */
+const MAX_DOOR_PHOTO_BYTES = 8 * 1024 * 1024;
 
 /** Starters that cover the notes operators write most often. */
 const noteTemplates = [
@@ -155,6 +158,11 @@ function DispatchForm({ id }: { id: string }) {
   // with the placeholder, which must not be offered as a value she can leave
   // alone — she starts from an empty box in that case.
   const [customerLocation, setCustomerLocation] = useState<string | null>(null);
+  // Optional, and not remembered across orders: a door belongs to one address.
+  const [doorPhoto, setDoorPhoto] = useState<
+    { uri: string; name: string; type: string } | null
+  >(null);
+  const [doorPhotoError, setDoorPhotoError] = useState<string | null>(null);
   const [specialistId, setSpecialistId] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -271,6 +279,31 @@ function DispatchForm({ id }: { id: string }) {
     );
   };
 
+  /** Camera roll only: the employee is at a desk, not at the door. */
+  const pickDoorPhoto = async () => {
+    setDoorPhotoError(null);
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setDoorPhotoError("لا يوجد إذن للوصول إلى الصور. فعّليه من إعدادات الجهاز.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.85,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    if ((asset.fileSize ?? 0) > MAX_DOOR_PHOTO_BYTES) {
+      setDoorPhotoError("الصورة أكبر من اللازم. اختاري صورة أصغر.");
+      return;
+    }
+    setDoorPhoto({
+      uri: asset.uri,
+      name: asset.fileName || `door-${Date.now()}.jpg`,
+      type: asset.mimeType || "image/jpeg",
+    });
+  };
+
   const send = () => {
     if (locationMissing) return setValidation("حدّدي موقع العميلة أولًا.");
     if (!specialistId || !driverId) return;
@@ -293,6 +326,7 @@ function DispatchForm({ id }: { id: string }) {
                 type: "audio/mp4",
               }
             : null,
+        doorPhoto,
         expectedVersion: current.version,
       },
       {
@@ -393,6 +427,54 @@ function DispatchForm({ id }: { id: string }) {
               }
               error={validation && locationMissing ? validation : null}
             />
+
+            {/* A pin puts the driver on the street; the photo tells him which
+                gate. Optional — a missing one never holds up a dispatch. */}
+            <View style={{ gap: spacing.sm }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={doorPhoto ? "تغيير صورة الباب" : "إضافة صورة باب العميلة"}
+                onPress={pickDoorPhoto}
+                style={({ pressed }) => ({
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  gap: spacing.sm,
+                  padding: spacing.md,
+                  borderRadius: radius.md,
+                  borderWidth: 1,
+                  borderStyle: "dashed",
+                  borderColor: colors.borderStrong,
+                  opacity: pressed ? 0.6 : 1,
+                })}
+              >
+                <IconSymbol name="camera" size={20} color={colors.textSecondary} />
+                <Text style={{ flex: 1, ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+                  {doorPhoto
+                    ? "صورة الباب مرفقة — اضغطي للتغيير"
+                    : "صورة باب العميلة (اختياري)"}
+                </Text>
+                {doorPhoto ? (
+                  <Image
+                    source={{ uri: doorPhoto.uri }}
+                    style={{ width: 44, height: 44, borderRadius: radius.sm }}
+                  />
+                ) : null}
+              </Pressable>
+              {doorPhoto ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setDoorPhoto(null);
+                    setDoorPhotoError(null);
+                  }}
+                >
+                  <Text style={{ ...type.footnote, color: colors.danger, ...rtlText }}>
+                    إزالة الصورة
+                  </Text>
+                </Pressable>
+              ) : null}
+              {doorPhotoError ? <InlineAlert message={doorPhotoError} /> : null}
+            </View>
 
             {locationMissing ? null : (
               <>

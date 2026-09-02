@@ -65,10 +65,14 @@ const ORDER_COLS_WITH_EDITOR = `${ORDER_COLS}, updated_by`;
 const ORDER_COLS_WITH_REKAZ = `${ORDER_COLS_WITH_EDITOR}, rekaz_source_id`;
 /** Adds the app-only dispatch notes. Falls back until 20260902100000 runs. */
 const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_WITH_REKAZ}, driver_note, specialist_note, specialist_voice_path`;
+/** Adds the door photo. Falls back until 20260903090000 runs. */
+const ORDER_COLS_WITH_DOOR = `${ORDER_COLS_WITH_NOTES}, door_photo_path`;
 const missingUpdatedBy = (err: { message: string } | null) =>
   Boolean(err?.message.includes("updated_by"));
 const missingRekazLink = (err: { message: string } | null) =>
   Boolean(err?.message.includes("rekaz_source_id"));
+const missingDoorPhoto = (err: { message: string } | null) =>
+  Boolean(err?.message.includes("door_photo_path"));
 const missingDispatchNotes = (err: { message: string } | null) =>
   Boolean(
     err?.message.includes("driver_note") ||
@@ -703,6 +707,15 @@ export interface DispatchBookingInput {
     contentType: string;
     filename?: string | null;
   };
+  /**
+   * A photo of the customer's door, for the driver. A pin drops him on the
+   * street; this tells him which gate is hers.
+   */
+  doorPhoto?: {
+    base64: string;
+    contentType: string;
+    filename?: string | null;
+  };
 }
 
 export interface DispatchPreviewInput {
@@ -967,19 +980,24 @@ export async function dispatchBooking(
   const context = await loadDispatchContext(id, input);
   const specialistMessage = input.specialistMessage.trim();
 
-  // Uploaded before the command so the note and its recording commit together;
-  // a failed upload costs the recording, not the dispatch.
-  let specialistVoicePath: string | null = null;
-  if (input.specialistVoice) {
-    const stored = await uploadBase64Media({
-      restaurantId: KIARA_RESTAURANT_ID,
-      conversationId: context.order.conversation_id,
-      contentType: input.specialistVoice.contentType,
-      base64: input.specialistVoice.base64,
-      originalFilename: input.specialistVoice.filename ?? null,
-    });
-    specialistVoicePath = stored.storage_path;
-  }
+  // Uploaded before the command so the notes and their attachments commit
+  // together; a failed upload costs the attachment, not the dispatch.
+  const upload = async (file?: DispatchBookingInput["specialistVoice"]) =>
+    file
+      ? (
+          await uploadBase64Media({
+            restaurantId: KIARA_RESTAURANT_ID,
+            conversationId: context.order.conversation_id,
+            contentType: file.contentType,
+            base64: file.base64,
+            originalFilename: file.filename ?? null,
+          })
+        ).storage_path
+      : null;
+  const [specialistVoicePath, doorPhotoPath] = await Promise.all([
+    upload(input.specialistVoice),
+    upload(input.doorPhoto),
+  ]);
 
   const prepared = await prepareOrderDispatchCommand({
     restaurantId: KIARA_RESTAURANT_ID,
@@ -997,6 +1015,7 @@ export async function dispatchBooking(
     specialistVoicePath,
     driverPhone: context.driver.phone,
     specialistPhone: context.specialist.phone,
+    doorPhotoPath,
   });
   const commandId = String(prepared.commandId);
   const driverOutboxId =
@@ -1019,8 +1038,9 @@ export async function dispatchBooking(
     deliverOutboxText({ commandId, eventId: specialistOutboxId }),
   ]);
 
-  // The recording follows her written copy on WhatsApp, and is stored on the
-  // order either way — so she has it in the app even when WhatsApp is down.
+  // Attachments follow their written copy on WhatsApp, and are stored on the
+  // order either way — so each of them still has it in the app when WhatsApp
+  // is down.
   if (specialistDelivery.sent && input.specialistVoice && context.specialist.phone) {
     await openWaTransport
       .sendMedia(context.specialist.phone, {
@@ -1028,6 +1048,16 @@ export async function dispatchBooking(
         contentType: input.specialistVoice.contentType,
         filename: input.specialistVoice.filename ?? undefined,
         ptt: true,
+      })
+      .catch(() => undefined);
+  }
+  if (driverDelivery.sent && input.doorPhoto && context.driver.phone) {
+    await openWaTransport
+      .sendMedia(context.driver.phone, {
+        base64: input.doorPhoto.base64,
+        contentType: input.doorPhoto.contentType,
+        filename: input.doorPhoto.filename ?? undefined,
+        caption: "باب العميلة",
       })
       .catch(() => undefined);
   }
@@ -1104,7 +1134,10 @@ async function readOrders(
   supabase: AuthedClient,
   build: (cols: string) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
 ): Promise<DriverOrderRow[]> {
-  let { data, error } = await build(ORDER_COLS_WITH_NOTES);
+  let { data, error } = await build(ORDER_COLS_WITH_DOOR);
+  if (error && missingDoorPhoto(error)) {
+    ({ data, error } = await build(ORDER_COLS_WITH_NOTES));
+  }
   if (error && missingDispatchNotes(error)) {
     ({ data, error } = await build(ORDER_COLS_WITH_REKAZ));
   }

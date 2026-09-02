@@ -131,7 +131,7 @@ select public.kiara_command_prepare_order_dispatch(
   'c0000000-0000-0000-0000-000000000001'::uuid,
   'one_way', 400, 'حي الملقا — شارع الأمير سلطان', 'ملاحظة السائق المؤكدة',
   'confirmed specialist note', null,
-  '+966500000001', '+966500000011') is not null as prepared;
+  '+966500000001', '+966500000011', null) is not null as prepared;
 select pg_sleep($3);
 commit;
 SQL

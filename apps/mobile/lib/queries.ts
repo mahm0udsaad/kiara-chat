@@ -772,18 +772,20 @@ export function useUpdateOrder(id: string) {
 export function useDispatchOrder(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ specialistVoice, ...input }: DispatchInput) => {
-      // A dispatch is stored, not sent, so it no longer half-fails per
-      // recipient. `notified` is the only reportable outcome: whether any of
-      // their devices accepted the nudge.
+    mutationFn: ({ specialistVoice, doorPhoto, ...input }: DispatchInput) => {
+      // The order and its notes are stored by the command, so the dispatch
+      // itself cannot half-succeed. What can miss is a nudge: `driverSent` and
+      // `specialistSent` are the WhatsApp copies, `notified` the push.
       type Result = {
         order: OrderDetailResponse["order"];
+        driverSent: boolean;
+        specialistSent: boolean | null;
         notified: boolean;
       };
       const idempotencyKey = Crypto.randomUUID();
-      // A recorded note has to travel as multipart — the same deadline either
-      // way, because it is the same send.
-      if (specialistVoice) {
+      // Either attachment has to travel as multipart — the same deadline
+      // either way, because it is the same send.
+      if (specialistVoice || doorPhoto) {
         return apiUpload<Result>(
           `/orders/${id}/dispatch`,
           {
@@ -794,7 +796,8 @@ export function useDispatchOrder(id: string) {
             specialistMessage: input.specialistMessage,
             expectedVersion: String(input.expectedVersion),
             idempotencyKey,
-            specialistVoice,
+            ...(specialistVoice ? { specialistVoice } : {}),
+            ...(doorPhoto ? { doorPhoto } : {}),
           },
           { timeoutMs: SEND_TIMEOUT_MS },
         );

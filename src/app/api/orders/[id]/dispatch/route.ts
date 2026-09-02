@@ -13,6 +13,8 @@ export const maxDuration = 60;
 
 /** A recording longer than this is a phone call, not a note. */
 const MAX_VOICE_BYTES = 8 * 1024 * 1024;
+/** A door photo is a snapshot, not an album — phones shoot well under this. */
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** Assign the booking and publish both notes to the field team's app. */
@@ -39,6 +41,7 @@ export async function POST(
   let idempotencyKey: string | undefined;
   let tripType: DispatchBookingInput["tripType"];
   let specialistVoice: DispatchBookingInput["specialistVoice"];
+  let doorPhoto: DispatchBookingInput["doorPhoto"];
 
   if ((request.headers.get("content-type") ?? "").includes("multipart/form-data")) {
     let form: FormData;
@@ -60,6 +63,26 @@ export async function POST(
       formTripType === "round_trip" || formTripType === "one_way"
         ? formTripType
         : undefined;
+    const photo = form.get("doorPhoto");
+    if (photo instanceof File && photo.size > 0) {
+      if (!photo.type.startsWith("image/")) {
+        return NextResponse.json(
+          { error: "صورة الباب يجب أن تكون صورة" },
+          { status: 415 },
+        );
+      }
+      if (photo.size > MAX_PHOTO_BYTES) {
+        return NextResponse.json(
+          { error: "صورة الباب أكبر من اللازم" },
+          { status: 413 },
+        );
+      }
+      doorPhoto = {
+        base64: Buffer.from(await photo.arrayBuffer()).toString("base64"),
+        contentType: photo.type,
+        filename: photo.name || "door.jpg",
+      };
+    }
     const voice = form.get("specialistVoice");
     if (voice instanceof File && voice.size > 0) {
       if (voice.size > MAX_VOICE_BYTES) {
@@ -128,6 +151,7 @@ export async function POST(
       customerLocation: customerLocation as string,
       specialistNote: specialistNote || undefined,
       specialistVoice,
+      doorPhoto,
       driverMessage,
       specialistMessage,
       expectedVersion: Number(expectedVersion),
