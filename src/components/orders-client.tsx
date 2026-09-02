@@ -75,6 +75,7 @@ import {
   ToggleGroupItem,
 } from "@/components/ui/toggle-group";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
+import { fieldLegsOf } from "@/lib/field-timings";
 import {
   formatDuration,
   formatRelativeTime,
@@ -847,6 +848,8 @@ function OrderDetailsSheet({
     return next.toISOString();
   }, [date, time]);
 
+  const legs = fieldLegsOf(order.field_progress, order.sent_at);
+
   const dirty =
     (arrivalIso !== null && arrivalIso !== new Date(order.arrival_at).toISOString()) ||
     location.trim() !== order.customer_location ||
@@ -1073,6 +1076,27 @@ function OrderDetailsSheet({
 
             {error ? <FieldError>{error}</FieldError> : null}
           </FieldGroup>
+
+          {/* What each leg of the visit actually cost. Measured from the
+              field team's own confirmations, so it only appears once they
+              have started confirming. */}
+          {legs.length ? (
+            <div className="space-y-2 rounded-xl border bg-[var(--surface)] p-3">
+              <p className="text-xs text-muted-foreground">توقيت المراحل</p>
+              <dl className="space-y-1.5">
+                {legs.map((leg) => (
+                  <div key={leg.key} className="flex items-center justify-between gap-3">
+                    <dt className="text-sm text-muted-foreground">{leg.label}</dt>
+                    <dd className="text-sm font-medium tabular-nums">
+                      {leg.minutes >= 120
+                        ? `${Math.floor(leg.minutes / 60)} س ${leg.minutes % 60 || ""} ${leg.minutes % 60 ? "د" : ""}`.trim()
+                        : `${leg.minutes} د`}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : null}
 
           {order.status === "sent" && dirty ? (
             <Alert>

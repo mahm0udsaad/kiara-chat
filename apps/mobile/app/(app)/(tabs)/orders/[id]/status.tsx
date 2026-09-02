@@ -16,6 +16,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, Divider } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/detail-row";
+import { fieldLegsOf, legDurationLabel } from "@/lib/field-timings";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
@@ -318,6 +319,7 @@ export default function OrderStatusScreen() {
   const order = detail.data.order;
   const execution = executionStateOf(order);
   const stalled = executionIsStalled(execution);
+  const legs = fieldLegsOf(order.field_progress, order.sent_at);
   const context = reminder.data?.reminder;
   const recipientOf = (role: FieldSessionRole) =>
     context?.recipients.find((person) => person.role === role);
@@ -465,6 +467,42 @@ export default function OrderStatusScreen() {
           ))}
         </Card>
       </View>
+
+      {/* What each leg actually cost. Only shown once something has been
+          measured, so an order that has not started does not display a table
+          of dashes. */}
+      {legs.length ? (
+        <View style={{ gap: spacing.sm }}>
+          <SectionHeader title="توقيت المراحل" />
+          <Card style={{ gap: spacing.md }}>
+            {legs.map((leg) => (
+              <View
+                key={leg.key}
+                style={{
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  gap: spacing.sm,
+                }}
+              >
+                <Text
+                  style={{ flex: 1, ...type.footnote, color: colors.textSecondary, ...rtlText }}
+                >
+                  {leg.label}
+                </Text>
+                <Text
+                  style={{
+                    ...type.bodyStrong,
+                    color: colors.text,
+                    fontVariant: ["tabular-nums"],
+                  }}
+                >
+                  {legDurationLabel(leg.minutes)}
+                </Text>
+              </View>
+            ))}
+          </Card>
+        </View>
+      ) : null}
 
       {/* Who to nudge. */}
       <View style={{ gap: spacing.sm }}>

@@ -1,3 +1,8 @@
+import {
+  averageFieldLegs,
+  fieldLegsOf,
+  type FieldLegAverage,
+} from "@/lib/field-timings";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import type { RekazReservation } from "@/lib/reservations";
@@ -45,11 +50,17 @@ export type OperationsReport = {
   generatedAt: string;
   people: Record<OperationsRole, OperationsPerson[]>;
   events: Record<OperationsRole, OperationsEvent[]>;
+  /**
+   * How long each leg of a visit took, averaged over the range. Empty until
+   * some visit in it confirmed both ends of at least one leg.
+   */
+  timings: FieldLegAverage[];
 };
 
 type RosterRow = { id: string; full_name: string; is_active: boolean };
 type OrderRow = {
   id: string;
+  sent_at: string | null;
   specialist_id: string | null;
   driver_id: string | null;
   arrival_at: string;
@@ -57,7 +68,15 @@ type OrderRow = {
   customer_phone: string;
   rekaz_source_id: string | null;
 };
-type ProgressRow = { order_id: string; completed_at: string | null };
+type ProgressRow = {
+  order_id: string;
+  driver_confirmed_at: string | null;
+  driver_arrived_at: string | null;
+  specialist_pickup_at: string | null;
+  service_started_at: string | null;
+  completed_at: string | null;
+  driver_returned_at: string | null;
+};
 type ReservationRow = {
   source_id: string;
   status: string;
@@ -234,13 +253,15 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         .lte("arrival_at", rangeEnd),
       admin
         .from("driver_orders")
-        .select("id, specialist_id, driver_id, arrival_at, duration_minutes, customer_phone, rekaz_source_id")
+        .select("id, sent_at, specialist_id, driver_id, arrival_at, duration_minutes, customer_phone, rekaz_source_id")
         .eq("restaurant_id", KIARA_RESTAURANT_ID)
         .gte("arrival_at", rangeStart)
         .lte("arrival_at", rangeEnd),
       admin
         .from("field_order_progress")
-        .select("order_id, completed_at")
+        .select(
+          "order_id, driver_confirmed_at, driver_arrived_at, specialist_pickup_at, service_started_at, completed_at, driver_returned_at",
+        )
         .eq("restaurant_id", KIARA_RESTAURANT_ID),
       admin
         .from("specialists")
@@ -272,6 +293,30 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
   const orderBySource = new Map<string, OrderRow>();
   for (const order of orders) if (order.rekaz_source_id) orderBySource.set(order.rekaz_source_id, order);
   const completedAtByOrder = new Map(progress.map((row) => [row.order_id, row.completed_at]));
+  // Only the orders inside the range: a progress row is fetched for every
+  // order ever, and averaging all of them would answer a question about this
+  // week with last quarter's numbers.
+  const sentAtByOrder = new Map(orders.map((order) => [order.id, order.sent_at]));
+  const timings = averageFieldLegs(
+    progress
+      .filter((row) => sentAtByOrder.has(row.order_id))
+      .map((row) =>
+        fieldLegsOf(
+          {
+            driverConfirmedAt: row.driver_confirmed_at,
+            driverArrivedAt: row.driver_arrived_at,
+            specialistPickupAt: row.specialist_pickup_at,
+            serviceStartedAt: row.service_started_at,
+            completedAt: row.completed_at,
+            driverReturnedAt: row.driver_returned_at,
+            lastActivityAt: "",
+            lastReminderAt: null,
+            version: 0,
+          },
+          sentAtByOrder.get(row.order_id) ?? null,
+        ),
+      ),
+  );
   const claimedOrders = new Set<string>();
   const specialistEvents: OperationsEvent[] = [];
   const reservationsByVisit = new Map<string, ReservationRow[]>();
@@ -388,5 +433,6 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
     generatedAt: new Date().toISOString(),
     people: { specialist: specialistPeople.people, driver: driverPeople.people },
     events: { specialist: specialistEvents.sort(byArrival), driver: driverEvents.sort(byArrival) },
+    timings,
   };
 }

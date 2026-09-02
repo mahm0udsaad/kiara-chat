@@ -456,6 +456,7 @@ function DispatchForm({ id }: { id: string }) {
                 {doorPhoto ? (
                   <Image
                     source={{ uri: doorPhoto.uri }}
+                    accessibilityLabel="معاينة صورة باب العميلة"
                     style={{ width: 44, height: 44, borderRadius: radius.sm }}
                   />
                 ) : null}

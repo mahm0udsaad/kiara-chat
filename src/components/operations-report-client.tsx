@@ -115,6 +115,16 @@ function hoursLabel(minutes: number) {
   return decimalFormatter.format(minutes / 60);
 }
 
+/**
+ * A leg reads in minutes until that stops being legible. "١٣٥ د" makes the
+ * owner do the division; past two hours she wants "٢.٣ س".
+ */
+function minutesLabel(minutes: number) {
+  return minutes >= 120
+    ? `${decimalFormatter.format(minutes / 60)} س`
+    : `${numberFormatter.format(minutes)} د`;
+}
+
 function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <Card size="sm">
@@ -339,6 +349,49 @@ export function OperationsReportClient({ initialReport }: { initialReport: Opera
         <Metric icon={<CheckCircle2 className="size-4" />} label="الطلبات المكتملة" value={numberFormatter.format(totals.completed)} />
         <Metric icon={<Clock3 className="size-4" />} label="الساعات المحجوزة" value={`${hoursLabel(totals.minutes)} س`} />
       </div>
+
+      {/* Not split by role: a leg belongs to the hand-off between the two, and
+          attributing "من الركوب حتى بدء الخدمة" to one of them would invite the
+          wrong argument about whose fault it is. */}
+      {report.timings.length ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>توقيت خطوات الزيارة</CardTitle>
+            <CardDescription>
+              متوسط الوقت بين كل خطوة والتي تليها، محسوباً من تأكيدات الفريق في
+              التطبيق. تُحتسب الزيارة في مرحلة ما فقط إذا أُكِّد طرفاها.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>المرحلة</TableHead>
+                  <TableHead className="text-center">المتوسط</TableHead>
+                  <TableHead className="text-center">الأطول</TableHead>
+                  <TableHead className="text-center">عدد الزيارات</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {report.timings.map((leg) => (
+                  <TableRow key={leg.key}>
+                    <TableCell className="font-medium">{leg.label}</TableCell>
+                    <TableCell className="text-center tabular-nums">
+                      {minutesLabel(leg.averageMinutes)}
+                    </TableCell>
+                    <TableCell className="text-center tabular-nums text-muted-foreground">
+                      {minutesLabel(leg.slowestMinutes)}
+                    </TableCell>
+                    <TableCell className="text-center tabular-nums text-muted-foreground">
+                      {numberFormatter.format(leg.sampleCount)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
