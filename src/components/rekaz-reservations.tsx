@@ -517,7 +517,7 @@ export function RekazReservations({
                 (visit.endAt.getTime() - new Date(visit.startAt).getTime()) / 60_000
               )
             ),
-            tripType: "one_way",
+            tripType: "round_trip",
           }),
         });
         const data = await response.json().catch(() => ({}));

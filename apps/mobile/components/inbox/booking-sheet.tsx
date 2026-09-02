@@ -245,7 +245,9 @@ export function BookingSheet({
   // Held as text so the field can be cleared mid-typing. Sessions are booked
   // in hours here; the API takes minutes, and the conversion happens on submit.
   const [durationText, setDurationText] = useState("1");
-  const [tripType, setTripType] = useState<TripType>("one_way");
+  // A visit is a round trip unless the employee says otherwise; one-way is
+  // the exception, and the edit screen is where it gets set.
+  const [tripType, setTripType] = useState<TripType>("round_trip");
   const [picker, setPicker] = useState<"date" | "time" | null>(null);
   const [validation, setValidation] = useState<string | null>(null);
   const [createdOrderId, setCreatedOrderId] = useState<string | null>(null);
@@ -259,7 +261,7 @@ export function BookingSheet({
     setArrival(roundedDefault());
     setLocation(initialLocation(booking, sharedLocation));
     setDurationText("1");
-    setTripType("one_way");
+    setTripType("round_trip");
     setPicker(null);
     setValidation(null);
     setCreatedOrderId(null);

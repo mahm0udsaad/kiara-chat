@@ -169,7 +169,9 @@ export function CreateOrderSheet({
     return String(nearest);
   }, [initialDurationMinutes]);
   const [duration, setDuration] = useState(() => snapDuration());
-  const [tripType, setTripType] = useState<TripType>("one_way");
+  // A visit is a round trip unless the employee says otherwise; one-way is
+  // the exception, and the edit sheet is where it gets set.
+  const [tripType, setTripType] = useState<TripType>("round_trip");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -180,7 +182,7 @@ export function CreateOrderSheet({
     setSelectedTime(initialArrival ? snapToTimeOptions(next) : timeOf(next));
     setLocation(initialLocation(booking, sharedLocation, suggestedLocation));
     setDuration(snapDuration());
-    setTripType("one_way");
+    setTripType("round_trip");
     setSubmitting(false);
     setError(null);
     setDone(false);

@@ -157,13 +157,16 @@ export interface FieldOrderProgressState {
 }
 
 /**
- * A visit is one leg: the driver drops the specialist off ("one_way" — half a
- * trip) and often doesn't bring her back on the same order. "round_trip" is the
- * full there-and-back. Each is priced separately (see DispatchSettings).
+ * How far the driver goes. "round_trip" is the full there-and-back and is what
+ * a visit defaults to, because that is the normal shape of the work; "one_way"
+ * is the exception, where he drops her off and does not bring her back on this
+ * order. Each is priced separately (see DispatchSettings), so the default is
+ * also a pricing decision: a round trip bills the full-trip price.
  */
 export type TripType = "one_way" | "round_trip";
 
-/** A dispatch order sent to a driver's WhatsApp for one conversation. */
+/** One conversation's dispatch order, carried to the field team's app and
+ * copied to their WhatsApp. */
 export interface DriverOrder {
   id: string;
   conversation_id: string;

@@ -557,7 +557,7 @@ export async function createBookingFromReservation(
       customer_location: location,
       customer_phone: conversation.customer_phone as string,
       duration_minutes: durationMinutes,
-      trip_type: "one_way",
+      trip_type: "round_trip",
       price: null,
       status: "pending",
       created_by: userId,
