@@ -47,7 +47,7 @@ export const SEND_TIMEOUT_MS = 65_000;
 /**
  * The real ceiling on anything we upload.
  *
- * The API rejects above 20 MB, but that limit is never reached: the app is
+ * The API rejects above 16 MB, but that limit is never reached: the app is
  * served by Vercel functions, which refuse a request body over 4.5 MB before
  * our route runs at all (`FUNCTION_PAYLOAD_TOO_LARGE`). React Native reports
  * that mid-upload rejection as a plain transport failure, so the screen used
