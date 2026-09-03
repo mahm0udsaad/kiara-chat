@@ -14,6 +14,8 @@
  * instead of a timestamp the owner has to reconcile by hand.
  */
 import { BOOKING_STAGE_LABEL } from "@/lib/booking-stage";
+import { getFieldAudit, type FieldAudit } from "@/lib/field-audit";
+import { fieldLegsOf, type FieldLeg } from "@/lib/field-timings";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 
@@ -74,6 +76,14 @@ export interface OrderAuditLog {
   customerPhone: string;
   arrivalAt: string;
   entries: AuditEntry[];
+  /**
+   * Where each field step was confirmed and how long it took, alongside the
+   * event log. The events say what was done; this says from where, and after
+   * how long — the two questions a disputed visit actually turns on.
+   */
+  field: FieldAudit | null;
+  /** Minutes per leg of the visit, for the same order. */
+  legs: FieldLeg[];
 }
 
 const CS_STATUS_LABEL: Record<string, string> = {
@@ -569,14 +579,14 @@ export async function getOrderAuditLog(orderId: string): Promise<OrderAuditLog |
   const { data: order } = await admin
     .from("driver_orders")
     .select(
-      "id, conversation_id, created_at, created_by, arrival_at, customer_phone",
+      "id, conversation_id, created_at, created_by, arrival_at, customer_phone, sent_at",
     )
     .eq("id", orderId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
   if (!order) return null;
 
-  const [events, conversation] = await Promise.all([
+  const [events, conversation, field] = await Promise.all([
     admin
       .from("operation_events")
       .select(
@@ -591,6 +601,9 @@ export async function getOrderAuditLog(orderId: string): Promise<OrderAuditLog |
       .select("customer_name")
       .eq("id", order.conversation_id as string)
       .maybeSingle(),
+    // Best-effort: an order whose field work has not started has no audit, and
+    // that must not blank the event log the owner came here to read.
+    getFieldAudit(orderId).catch(() => null),
   ]);
 
   const rows = (events.data ?? []) as Payload[];
@@ -630,5 +643,7 @@ export async function getOrderAuditLog(orderId: string): Promise<OrderAuditLog |
     customerPhone: String(order.customer_phone),
     arrivalAt: String(order.arrival_at),
     entries,
+    field,
+    legs: fieldLegsOf(field?.progress ?? null, text(order.sent_at)),
   };
 }

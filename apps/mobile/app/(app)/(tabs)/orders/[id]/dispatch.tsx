@@ -1,7 +1,17 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as ImagePicker from "expo-image-picker";
-import { Image, KeyboardAvoidingView, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  AccessibilityInfo,
+  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  type LayoutChangeEvent,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ApiError } from "@/lib/api";
@@ -53,6 +63,15 @@ const noteTemplates = [
 
 /** How the send ended. Both states are terminal: the order is already out. */
 type Outcome = "sent" | "already";
+type ValidationField =
+  | "location"
+  | "specialist"
+  | "driver"
+  | "note"
+  | "voiceNote"
+  | "driverMessage"
+  | "specialistMessage";
+type ValidationError = { field: ValidationField; message: string };
 
 /**
  * Arabic for the failures this screen can hit.
@@ -173,7 +192,7 @@ function DispatchForm({ id }: { id: string }) {
    */
   const [noteMode, setNoteMode] = useState<"text" | "voice">("text");
   const [voiceNote, setVoiceNote] = useState<VoiceNote | null>(null);
-  const [validation, setValidation] = useState<string | null>(null);
+  const [validation, setValidation] = useState<ValidationError | null>(null);
   const [driverMessage, setDriverMessage] = useState("");
   const [specialistMessage, setSpecialistMessage] = useState("");
   const [specialistLanguage, setSpecialistLanguage] = useState("العربية");
@@ -192,6 +211,10 @@ function DispatchForm({ id }: { id: string }) {
    */
   const [sendError, setSendError] = useState<string | null>(null);
   const initializedAssignments = useRef(false);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [fieldOffsets, setFieldOffsets] = useState<
+    Partial<Record<ValidationField, number>>
+  >({});
 
   useEffect(() => {
     if (!initializedAssignments.current && order.data) {
@@ -232,15 +255,56 @@ function DispatchForm({ id }: { id: string }) {
   const driverName =
     options.data.drivers.find((person) => person.id === driverId)?.full_name ?? null;
 
+  const rememberFieldPosition =
+    (field: ValidationField) => (event: LayoutChangeEvent) => {
+      const y = event.nativeEvent.layout.y;
+      setFieldOffsets((currentOffsets) =>
+        currentOffsets[field] === y
+          ? currentOffsets
+          : { ...currentOffsets, [field]: y },
+      );
+    };
+
+  const clearFieldError = (field: ValidationField) => {
+    setValidation((currentError) =>
+      currentError?.field === field ? null : currentError,
+    );
+  };
+
+  /**
+   * The action bar never moves, so an error can otherwise be painted well
+   * above it without the operator seeing anything change. Keep the target
+   * comfortably below the sheet header and announce the same actionable copy
+   * to VoiceOver/TalkBack.
+   */
+  const showFieldError = (field: ValidationField, message: string) => {
+    Keyboard.dismiss();
+    setSendError(null);
+    setValidation({ field, message });
+    errorFeedback();
+    AccessibilityInfo.announceForAccessibility(message);
+    requestAnimationFrame(() => {
+      const y = fieldOffsets[field];
+      if (y === undefined) return;
+      scrollViewRef.current?.scrollTo({
+        y: Math.max(0, y - spacing.md),
+        animated: true,
+      });
+    });
+  };
+
   const review = () => {
-    if (locationMissing) return setValidation("حدّدي موقع العميلة أولًا.");
-    if (!specialistId) return setValidation("اختاري الأخصائية.");
-    if (!driverId) return setValidation("اختاري السائق.");
+    if (locationMissing) return showFieldError("location", "حدّدي موقع العميلة أولًا.");
+    if (!specialistId) return showFieldError("specialist", "اختاري الأخصائية.");
+    if (!driverId) return showFieldError("driver", "اختاري السائق.");
     if (noteMode === "text" && !note.trim()) {
-      return setValidation("اكتبي رسالة للأخصائية.");
+      return showFieldError("note", "اكتبي رسالة للأخصائية.");
     }
     if (noteMode === "voice" && !voiceNote) {
-      return setSendError("سجّلي الملاحظة الصوتية أو حوّلي إلى تعليمات مكتوبة.");
+      return showFieldError(
+        "voiceNote",
+        "سجّلي الملاحظة الصوتية أو حوّلي إلى تعليمات مكتوبة.",
+      );
     }
     setValidation(null);
     setSendError(null);
@@ -305,11 +369,16 @@ function DispatchForm({ id }: { id: string }) {
   };
 
   const send = () => {
-    if (locationMissing) return setValidation("حدّدي موقع العميلة أولًا.");
-    if (!specialistId || !driverId) return;
-    if (!driverMessage.trim() || !specialistMessage.trim()) {
-      return setSendError("راجعي نص الرسالتين قبل الإرسال.");
+    if (locationMissing) return showFieldError("location", "حدّدي موقع العميلة أولًا.");
+    if (!specialistId) return showFieldError("specialist", "اختاري الأخصائية.");
+    if (!driverId) return showFieldError("driver", "اختاري السائق.");
+    if (!driverMessage.trim()) {
+      return showFieldError("driverMessage", "راجعي رسالة السائق قبل الإرسال.");
     }
+    if (!specialistMessage.trim()) {
+      return showFieldError("specialistMessage", "راجعي رسالة الأخصائية قبل الإرسال.");
+    }
+    setValidation(null);
     setSendError(null);
     dispatch.mutate(
       {
@@ -368,6 +437,7 @@ function DispatchForm({ id }: { id: string }) {
       style={{ flex: 1, backgroundColor: colors.background }}
     >
       <ScrollView
+        ref={scrollViewRef}
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -409,24 +479,28 @@ function DispatchForm({ id }: { id: string }) {
             {/* First, and gating the roster. A booking raised from ركاز carries
                 no address, and the placeholder used to travel into the driver's
                 instructions as though it were a place. */}
-            <Field
-              label="موقع العميلة"
-              icon="mappin.and.ellipse"
-              value={location}
-              onChangeText={(value) => {
-                setCustomerLocation(value);
-                setValidation(null);
-                setReviewing(false);
-              }}
-              maxLength={500}
-              placeholder="الحي والشارع، أو رابط الموقع من واتساب"
-              hint={
-                locationMissing
-                  ? "لا يمكن اختيار الأخصائية والسائق قبل تحديد الموقع."
-                  : "هذا هو العنوان الذي سيصل السائق إليه."
-              }
-              error={validation && locationMissing ? validation : null}
-            />
+            <View onLayout={rememberFieldPosition("location")}>
+              <Field
+                label="موقع العميلة"
+                icon="mappin.and.ellipse"
+                value={location}
+                onChangeText={(value) => {
+                  setCustomerLocation(value);
+                  clearFieldError("location");
+                  setReviewing(false);
+                }}
+                maxLength={500}
+                placeholder="الحي والشارع، أو رابط الموقع من واتساب"
+                hint={
+                  locationMissing
+                    ? "لا يمكن اختيار الأخصائية والسائق قبل تحديد الموقع."
+                    : "هذا هو العنوان الذي سيصل السائق إليه."
+                }
+                error={
+                  validation?.field === "location" ? validation.message : null
+                }
+              />
+            </View>
 
             {/* A pin puts the driver on the street; the photo tells him which
                 gate. Optional — a missing one never holds up a dispatch. */}
@@ -479,20 +553,36 @@ function DispatchForm({ id }: { id: string }) {
 
             {locationMissing ? null : (
               <>
-                <RosterPicker
-                  label="الأخصائية"
-                  options={options.data.specialists}
-                  value={specialistId}
-                  onChange={setSpecialistId}
-                  error={validation && !specialistId ? validation : null}
-                />
-                <RosterPicker
-                  label="السائق"
-                  options={options.data.drivers}
-                  value={driverId}
-                  onChange={setDriverId}
-                  error={validation && specialistId && !driverId ? validation : null}
-                />
+                <View onLayout={rememberFieldPosition("specialist")}>
+                  <RosterPicker
+                    label="الأخصائية"
+                    options={options.data.specialists}
+                    value={specialistId}
+                    onChange={(value) => {
+                      setSpecialistId(value);
+                      clearFieldError("specialist");
+                    }}
+                    error={
+                      validation?.field === "specialist"
+                        ? validation.message
+                        : null
+                    }
+                  />
+                </View>
+                <View onLayout={rememberFieldPosition("driver")}>
+                  <RosterPicker
+                    label="السائق"
+                    options={options.data.drivers}
+                    value={driverId}
+                    onChange={(value) => {
+                      setDriverId(value);
+                      clearFieldError("driver");
+                    }}
+                    error={
+                      validation?.field === "driver" ? validation.message : null
+                    }
+                  />
+                </View>
               </>
             )}
 
@@ -500,7 +590,10 @@ function DispatchForm({ id }: { id: string }) {
               <Segmented
                 accessibilityLabel="نوع تعليمات الأخصائية"
                 value={noteMode}
-                onChange={setNoteMode}
+                onChange={(value) => {
+                  setNoteMode(value);
+                  setValidation(null);
+                }}
                 testIDPrefix="dispatch-note-mode"
                 options={[
                   { value: "text", label: "تعليمات مكتوبة" },
@@ -510,29 +603,59 @@ function DispatchForm({ id }: { id: string }) {
             </View>
 
             {noteMode === "voice" ? (
-              <View style={{ gap: spacing.sm }}>
+              <View
+                onLayout={rememberFieldPosition("voiceNote")}
+                style={{
+                  gap: spacing.sm,
+                  padding: validation?.field === "voiceNote" ? spacing.md : 0,
+                  borderRadius: radius.lg,
+                  borderCurve: "continuous",
+                  borderWidth: validation?.field === "voiceNote" ? 1.5 : 0,
+                  borderColor: colors.danger,
+                  backgroundColor:
+                    validation?.field === "voiceNote"
+                      ? colors.dangerSoft
+                      : "transparent",
+                }}
+              >
                 <DispatchVoiceNote
                   value={voiceNote}
                   onChange={(next) => {
                     setVoiceNote(next);
                     setSendError(null);
+                    clearFieldError("voiceNote");
                   }}
                   disabled={dispatch.isPending}
                 />
+                {validation?.field === "voiceNote" ? (
+                  <Text
+                    selectable
+                    accessibilityRole="alert"
+                    style={{ ...type.footnote, color: colors.danger, ...rtlText }}
+                  >
+                    {validation.message}
+                  </Text>
+                ) : null}
                 <Text style={{ ...type.footnote, color: colors.textTertiary, ...rtlText }}>
                   تفاصيل الحجز تظهر لها مكتوبة بلغتها، ويظهر التسجيل معها في
                   تطبيقها لتسمعه.
                 </Text>
               </View>
             ) : (
-              <View style={{ gap: spacing.sm }}>
+              <View
+                onLayout={rememberFieldPosition("note")}
+                style={{ gap: spacing.sm }}
+              >
                 <TextAreaField
                   label="تعليمات الأخصائية بالعربية"
                   value={note}
-                  onChangeText={setNote}
+                  onChangeText={(value) => {
+                    setNote(value);
+                    clearFieldError("note");
+                  }}
                   maxLength={noteMaxLength}
                   placeholder="مثال: الجلسة تنظيف بشرة، يرجى الوصول قبل الموعد بعشر دقائق…"
-                  error={validation && specialistId && driverId && !note.trim() ? validation : null}
+                  error={validation?.field === "note" ? validation.message : null}
                 />
 
                 <ScrollView
@@ -551,6 +674,7 @@ function DispatchForm({ id }: { id: string }) {
                           const next = current.trim() ? `${current.trim()} ${template}` : template;
                           return next.slice(0, noteMaxLength);
                         });
+                        clearFieldError("note");
                       }}
                       style={({ pressed }) => ({
                         minHeight: hitSize.min,
@@ -572,25 +696,45 @@ function DispatchForm({ id }: { id: string }) {
             )}
           </>
         ) : (
-          <View style={{ gap: spacing.lg }}>
+          <>
             <InlineAlert
               tone="warning"
               message={`هذه هي الرسائل النهائية إلى ${specialistName} و${driverName}. عدّلي أي نص الآن؛ سيُرسل الظاهر هنا حرفيًا.`}
             />
-            <TextAreaField
-              label="رسالة السائق النهائية"
-              value={driverMessage}
-              onChangeText={setDriverMessage}
-              maxLength={3_000}
-              minHeight={180}
-            />
-            <TextAreaField
-              label={`رسالة الأخصائية النهائية · ${specialistLanguage}`}
-              value={specialistMessage}
-              onChangeText={setSpecialistMessage}
-              maxLength={3_000}
-              minHeight={220}
-            />
+            <View onLayout={rememberFieldPosition("driverMessage")}>
+              <TextAreaField
+                label="رسالة السائق النهائية"
+                value={driverMessage}
+                onChangeText={(value) => {
+                  setDriverMessage(value);
+                  clearFieldError("driverMessage");
+                }}
+                maxLength={3_000}
+                minHeight={180}
+                error={
+                  validation?.field === "driverMessage"
+                    ? validation.message
+                    : null
+                }
+              />
+            </View>
+            <View onLayout={rememberFieldPosition("specialistMessage")}>
+              <TextAreaField
+                label={`رسالة الأخصائية النهائية · ${specialistLanguage}`}
+                value={specialistMessage}
+                onChangeText={(value) => {
+                  setSpecialistMessage(value);
+                  clearFieldError("specialistMessage");
+                }}
+                maxLength={3_000}
+                minHeight={220}
+                error={
+                  validation?.field === "specialistMessage"
+                    ? validation.message
+                    : null
+                }
+              />
+            </View>
             {noteMode === "voice" && voiceNote ? (
               <InlineAlert
                 tone="info"
@@ -611,7 +755,7 @@ function DispatchForm({ id }: { id: string }) {
                 </Text>
               ))}
             </Card>
-          </View>
+          </>
         )}
 
       </ScrollView>
@@ -635,7 +779,10 @@ function DispatchForm({ id }: { id: string }) {
               icon="chevron.right"
               variant="plain"
               disabled={dispatch.isPending}
-              onPress={() => setReviewing(false)}
+              onPress={() => {
+                setReviewing(false);
+                setValidation(null);
+              }}
             />
           </>
         ) : (

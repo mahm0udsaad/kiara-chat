@@ -203,10 +203,97 @@ export function OrderAuditPanel({ orderId }: { orderId: string }) {
               ))}
             </ul>
           )}
+          <FieldEvidence field={data.field} legs={data.legs} />
         </>
       ) : null}
     </section>
   );
+}
+
+/**
+ * Where each step was confirmed, and how long it took.
+ *
+ * The event log above says what was done and by whom; this says from where.
+ * A step with no position is shown rather than hidden — an unverified
+ * confirmation is a fact about the visit, and leaving it out would make the
+ * trail look complete when it is not.
+ */
+function FieldEvidence({
+  field,
+  legs,
+}: {
+  field: OrderAuditLog["field"];
+  legs: OrderAuditLog["legs"];
+}) {
+  if (!field?.entries.length) return null;
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold">خطوات الميدان وموقعها</h4>
+        <span className="text-xs text-muted-foreground">
+          {field.verifiedCount} من {field.totalCount} خطوة موثّقة بالموقع
+        </span>
+      </div>
+      <ul className="divide-y rounded-md border px-3">
+        {field.entries.map((entry) => (
+          <li key={entry.action} className="py-2 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium">{entry.label}</span>
+              <span className="text-muted-foreground tabular-nums">
+                {DATE_TIME_FMT.format(new Date(entry.at))}
+                {entry.minutesSincePrevious === null
+                  ? null
+                  : ` · بعد ${entry.minutesSincePrevious} د`}
+              </span>
+            </div>
+            <p className="mt-0.5 text-muted-foreground">
+              {entry.role === "driver" ? "السائق" : "الأخصائية"}
+              {entry.source === "device" && entry.latitude !== null ? (
+                <>
+                  {" · "}
+                  <a
+                    className="underline underline-offset-2"
+                    href={`https://www.google.com/maps/search/?api=1&query=${entry.latitude},${entry.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    الموقع على الخريطة
+                  </a>
+                  {entry.accuracyMeters === null
+                    ? null
+                    : ` (±${Math.round(entry.accuracyMeters)} م)`}
+                  {entry.metresFromCustomer === null
+                    ? null
+                    : ` · ${distanceLabel(entry.metresFromCustomer)} عن عنوان العميلة`}
+                </>
+              ) : entry.source === "manual_exception" ? (
+                ` · بدون موقع: ${entry.exceptionReason ?? "بلا سبب مسجّل"}`
+              ) : (
+                " · لم يُسجَّل موقع لهذه الخطوة"
+              )}
+            </p>
+          </li>
+        ))}
+      </ul>
+      {legs.length ? (
+        <ul className="divide-y rounded-md border px-3">
+          {legs.map((leg) => (
+            <li key={leg.key} className="flex items-center justify-between gap-2 py-2 text-xs">
+              <span className="text-muted-foreground">{leg.label}</span>
+              <span className="font-medium tabular-nums">{leg.minutes} د</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** Metres until that reads as false precision, then kilometres. */
+function distanceLabel(metres: number): string {
+  return metres >= 1000
+    ? `${(metres / 1000).toFixed(1)} كم`
+    : `${metres} م`;
 }
 
 /** The custody trail for one conversation: periods, newest first. */

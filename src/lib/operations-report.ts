@@ -55,6 +55,18 @@ export type OperationsReport = {
    * some visit in it confirmed both ends of at least one leg.
    */
   timings: FieldLegAverage[];
+  /**
+   * How much of the field work was confirmed with a real position, over the
+   * same range. The denominator is steps confirmed, not steps possible: a
+   * visit still in progress is not counted against anyone.
+   */
+  locationEvidence: {
+    verifiedSteps: number;
+    exceptionSteps: number;
+    unrecordedSteps: number;
+    /** Percent of confirmed steps carrying a device fix, 0 when none. */
+    verifiedPercent: number;
+  };
 };
 
 type RosterRow = { id: string; full_name: string; is_active: boolean };
@@ -241,7 +253,14 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
   const admin = getAdminSupabaseClient();
   const rangeStart = boundary(input.from, "00:00");
   const rangeEnd = boundary(input.to, "23:59");
-  const [reservationsResult, ordersResult, progressResult, specialistsResult, driversResult] =
+  const [
+    reservationsResult,
+    ordersResult,
+    progressResult,
+    checkpointsResult,
+    specialistsResult,
+    driversResult,
+  ] =
     await Promise.all([
       admin
         .from("rekaz_reservations")
@@ -264,6 +283,10 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         )
         .eq("restaurant_id", KIARA_RESTAURANT_ID),
       admin
+        .from("field_location_checkpoints")
+        .select("order_id, action, source")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID),
+      admin
         .from("specialists")
         .select("id, full_name, is_active")
         .eq("restaurant_id", KIARA_RESTAURANT_ID),
@@ -273,7 +296,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         .eq("restaurant_id", KIARA_RESTAURANT_ID),
     ]);
 
-  for (const result of [reservationsResult, ordersResult, progressResult, specialistsResult, driversResult]) {
+  for (const result of [reservationsResult, ordersResult, progressResult, checkpointsResult, specialistsResult, driversResult]) {
     if (result.error) throw new Error(result.error.message);
   }
 
@@ -297,6 +320,42 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
   // order ever, and averaging all of them would answer a question about this
   // week with last quarter's numbers.
   const sentAtByOrder = new Map(orders.map((order) => [order.id, order.sent_at]));
+  // Confirmed steps in range, and how many carried a device fix. Counted from
+  // the progress row rather than the checkpoints, so a step confirmed with no
+  // checkpoint at all is visible as unrecorded instead of silently absent.
+  const checkpoints = (checkpointsResult.data ?? []) as unknown as {
+    order_id: string;
+    action: string;
+    source: string;
+  }[];
+  const checkpointSource = new Map(
+    checkpoints
+      .filter((row) => sentAtByOrder.has(row.order_id))
+      .map((row) => [`${row.order_id}:${row.action}`, row.source]),
+  );
+  const STEP_ACTIONS: [keyof ProgressRow, string][] = [
+    ["driver_confirmed_at", "confirm_ride"],
+    ["driver_arrived_at", "driver_arrived"],
+    ["specialist_pickup_at", "confirm_pickup"],
+    ["service_started_at", "start_service"],
+    ["completed_at", "complete_order"],
+    ["driver_returned_at", "driver_return"],
+  ];
+  let verifiedSteps = 0;
+  let exceptionSteps = 0;
+  let unrecordedSteps = 0;
+  for (const row of progress) {
+    if (!sentAtByOrder.has(row.order_id)) continue;
+    for (const [column, action] of STEP_ACTIONS) {
+      if (!row[column]) continue;
+      const source = checkpointSource.get(`${row.order_id}:${action}`);
+      if (source === "device") verifiedSteps += 1;
+      else if (source === "manual_exception") exceptionSteps += 1;
+      else unrecordedSteps += 1;
+    }
+  }
+  const confirmedSteps = verifiedSteps + exceptionSteps + unrecordedSteps;
+
   const timings = averageFieldLegs(
     progress
       .filter((row) => sentAtByOrder.has(row.order_id))
@@ -434,5 +493,13 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
     people: { specialist: specialistPeople.people, driver: driverPeople.people },
     events: { specialist: specialistEvents.sort(byArrival), driver: driverEvents.sort(byArrival) },
     timings,
+    locationEvidence: {
+      verifiedSteps,
+      exceptionSteps,
+      unrecordedSteps,
+      verifiedPercent: confirmedSteps
+        ? Math.round((verifiedSteps / confirmedSteps) * 100)
+        : 0,
+    },
   };
 }

@@ -57,6 +57,7 @@ import type {
   TripType,
 } from "@/types/api";
 import { publicApiRequest } from "@/lib/api";
+import { captureFieldLocation, exceptionEvidence } from "@/lib/field-location";
 
 export const queryKeys = {
   bootstrap: ["bootstrap"] as const,
@@ -940,18 +941,29 @@ export function useFieldOrder(id: string) {
 export function useFieldOrderAction(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: {
+    mutationFn: async (input: {
       action: FieldOrderAction;
       expectedVersion: number;
-    }) =>
-      apiRequest<{ order: FieldOrder }>(`/field/orders/${id}`, {
+      /** Typed by the person when a position could not be fixed. */
+      exceptionReason?: string;
+    }) => {
+      // Evidence is gathered here rather than in the screen so every caller of
+      // this mutation records a position — a step confirmed from a screen that
+      // forgot to ask is exactly the gap the audit exists to close.
+      const capture = await captureFieldLocation();
+      const location = capture.ok
+        ? capture.evidence
+        : exceptionEvidence(capture, input.exceptionReason);
+      return apiRequest<{ order: FieldOrder }>(`/field/orders/${id}`, {
         method: "POST",
         body: JSON.stringify({
           action: input.action,
           expectedVersion: input.expectedVersion,
           idempotencyKey: Crypto.randomUUID(),
+          location,
         }),
-      }),
+      });
+    },
     onSuccess: async () => {
       // A driver taps these standing beside the car, often on one bar of
       // signal. He waits for his own order to update and nothing else — the

@@ -362,6 +362,22 @@ export function OperationsReportClient({ initialReport }: { initialReport: Opera
               التطبيق. تُحتسب الزيارة في مرحلة ما فقط إذا أُكِّد طرفاها.
             </CardDescription>
           </CardHeader>
+          <CardContent className="pb-0">
+            {/* Says how much of the trail above can actually be trusted: a
+                timing is only as good as the confirmation it came from. */}
+            <p className="text-xs text-muted-foreground">
+              توثيق الموقع:{" "}
+              {numberFormatter.format(report.locationEvidence.verifiedPercent)}% من
+              الخطوات المؤكدة سُجّل معها موقع فعلي (
+              {numberFormatter.format(report.locationEvidence.verifiedSteps)} خطوة).
+              {report.locationEvidence.exceptionSteps
+                ? ` ${numberFormatter.format(report.locationEvidence.exceptionSteps)} بعذر مكتوب.`
+                : ""}
+              {report.locationEvidence.unrecordedSteps
+                ? ` ${numberFormatter.format(report.locationEvidence.unrecordedSteps)} بلا تسجيل — غالباً من إصدار قديم للتطبيق.`
+                : ""}
+            </p>
+          </CardContent>
           <CardContent>
             <Table>
               <TableHeader>
