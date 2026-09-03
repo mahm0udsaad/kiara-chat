@@ -86,6 +86,7 @@ export async function GET(request: Request) {
       query: search,
       filters,
       counts: result.counts,
+      exactPhoneMatch: result.exactPhoneMatch,
       conversations: result.page,
     });
   } catch (error) {

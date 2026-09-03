@@ -387,6 +387,12 @@ export type ConversationsResponse = {
   view: InboxView;
   query: string;
   counts: Record<InboxView, number>;
+  /** Exact full-number match across the inbox, before tab/filter refinement. */
+  exactPhoneMatch?: {
+    id: string;
+    customerName: string | null;
+    customerPhone: string;
+  } | null;
   conversations: MobilePage<ConversationSummary>;
 };
 

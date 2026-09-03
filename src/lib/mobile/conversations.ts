@@ -15,7 +15,7 @@ import {
   type MobileConversationView,
   type MobilePage,
 } from "@/lib/mobile/contracts";
-import { normalizePhone, phoneMatches } from "@/lib/phone";
+import { canonicalPhone, normalizePhone, phoneMatches } from "@/lib/phone";
 import { specialistConversationIdsFromLabels } from "@/lib/specialist-conversations";
 import type {
   BookingStage,
@@ -373,6 +373,16 @@ export async function listMobileConversations(options: {
 }): Promise<{
   page: MobilePage<MobileConversation>;
   counts: Record<MobileConversationView, number>;
+  /**
+   * Exact phone hit before the active inbox tab and advanced filters are
+   * applied. Search must not call an existing customer "a new number" merely
+   * because her thread lives under another employee's tab.
+   */
+  exactPhoneMatch: {
+    id: string;
+    customerName: string | null;
+    customerPhone: string;
+  } | null;
 }> {
   const now = Date.now();
   const filters = options.filters ?? NO_FILTERS;
@@ -391,6 +401,13 @@ export async function listMobileConversations(options: {
     specialistConversationIdSet,
     specialistPhoneSet,
   } = classification;
+  const searchedCanonical = canonicalPhone(options.search);
+  const exactPhoneConversation = searchedCanonical
+    ? conversations.find(
+        (conversation) =>
+          canonicalPhone(conversation.customer_phone) === searchedCanonical,
+      )
+    : null;
   const searched = conversations
     .filter((conversation) => matchesSearch(conversation, options.search))
     .filter((conversation) => {
@@ -440,7 +457,12 @@ export async function listMobileConversations(options: {
     groups: inView("groups").length,
     danger: inView("danger").length,
   };
-  const matching = inView(options.view);
+  // A complete phone search is an address lookup, not a tab browse. Show its
+  // exact thread even when it is filed under another view; otherwise search
+  // could know the number exists yet leave the employee with a blank screen.
+  const matching = exactPhoneConversation
+    ? [exactPhoneConversation]
+    : inView(options.view);
   const page = matching.slice(options.offset, options.offset + options.limit);
   const previews = await lastMessagesFor(page);
   const items = page.map((conversation) => {
@@ -468,5 +490,12 @@ export async function listMobileConversations(options: {
       nextOffset: nextOffset < matching.length ? nextOffset : null,
     },
     counts,
+    exactPhoneMatch: exactPhoneConversation
+      ? {
+          id: exactPhoneConversation.id,
+          customerName: exactPhoneConversation.customer_name ?? null,
+          customerPhone: exactPhoneConversation.customer_phone,
+        }
+      : null,
   };
 }

@@ -25,6 +25,7 @@ import {
   type PendingAttachment,
 } from "@/components/inbox/attachment-preview";
 import { CatalogSheet } from "@/components/inbox/catalog-sheet";
+import { PrimaryButton } from "@/components/primary-button";
 import { SavedRepliesSheet } from "@/components/inbox/saved-replies-sheet";
 import { TemplatesSheet } from "@/components/inbox/templates-sheet";
 import { InlineAlert } from "@/components/screen-state";
@@ -48,7 +49,14 @@ const MAX_IMAGE_EDGE = 1280;
  * order of operations), while a voice note sends the moment recording stops
  * because there is nothing to preview.
  */
-export function Composer({ conversationId }: { conversationId: string }) {
+export function Composer({
+  conversationId,
+  templateOnly = false,
+}: {
+  conversationId: string;
+  /** An empty outbound thread must begin with an approved WhatsApp template. */
+  templateOnly?: boolean;
+}) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const reply = useReply(conversationId);
@@ -357,112 +365,138 @@ export function Composer({ conversationId }: { conversationId: string }) {
 
   return (
     <View style={{ gap: spacing.sm }}>
-      {reply.error ? <InlineAlert message={reply.error.message} /> : null}
-      {mediaError ? <InlineAlert message={mediaError} /> : null}
-
-      {recording ? (
-        <RecordingBar
-          seconds={Math.floor(recorderState.durationMillis / 1000)}
-          onCancel={() => void finishRecording(false)}
-          onSend={() => void finishRecording(true)}
-        />
-      ) : (
-        <View style={{ flexDirection: "row-reverse", alignItems: "flex-end", gap: spacing.sm }}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="إرفاق ملف أو باقة"
-            disabled={uploading || catalogBusy}
+      {templateOnly ? (
+        <View style={{ gap: spacing.sm }}>
+          <InlineAlert
+            tone="info"
+            message="لم تبدأ المحادثة بعد. يجب إرسال قالب واتساب معتمد أولًا."
+          />
+          <PrimaryButton
+            testID="start-with-template"
+            label="إرسال قالب لبدء المحادثة"
+            icon="paperplane.fill"
             onPress={() => {
               tapFeedback();
-              setMenuOpen(true);
-            }}
-            style={({ pressed }) => ({
-              width: hitSize.comfortable,
-              height: hitSize.comfortable,
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: radius.full,
-              backgroundColor: colors.surfaceSunken,
-              opacity: uploading || catalogBusy ? 0.5 : pressed ? 0.7 : 1,
-            })}
-          >
-            {catalogBusy ? (
-              <ActivityIndicator color={colors.textSecondary} />
-            ) : (
-              <IconSymbol name="plus" color={colors.textSecondary} size={22} />
-            )}
-          </Pressable>
-
-          <TextInput
-            accessibilityLabel="نص الرد"
-            multiline
-            placeholder="اكتبي الرد…"
-            placeholderTextColor={colors.textTertiary}
-            value={draft}
-            onChangeText={setDraft}
-            style={{
-              flex: 1,
-              minHeight: hitSize.comfortable,
-              maxHeight: 132,
-              paddingHorizontal: spacing.lg,
-              paddingVertical: spacing.md,
-              borderWidth: 1,
-              borderColor: colors.border,
-              borderRadius: radius["2xl"],
-              borderCurve: "continuous",
-              backgroundColor: colors.surfaceSunken,
-              ...type.body,
-              color: colors.text,
-              ...rtlText,
+              setTemplatesOpen(true);
             }}
           />
-
-          {/* One button, two jobs — the microphone becomes send as soon as
-              there is something to send, exactly like WhatsApp. */}
-          {draft.trim() ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="إرسال الرد"
-              accessibilityState={{ disabled: !canSendText, busy: reply.isPending }}
-              disabled={!canSendText}
-              onPress={sendText}
-              style={({ pressed }) => ({
-                width: hitSize.comfortable,
-                height: hitSize.comfortable,
-                alignItems: "center",
-                justifyContent: "center",
-                borderRadius: radius.full,
-                backgroundColor: colors.brand,
-                opacity: !canSendText ? 0.4 : pressed ? 0.75 : 1,
-                transform: [{ scale: pressed && canSendText ? 0.92 : 1 }],
-              })}
-            >
-              <IconSymbol name="arrow.up" color={colors.onBrand} size={22} />
-            </Pressable>
-          ) : (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="تسجيل ملاحظة صوتية"
-              disabled={uploading}
-              onPress={() => void startRecording()}
-              style={({ pressed }) => ({
-                width: hitSize.comfortable,
-                height: hitSize.comfortable,
-                alignItems: "center",
-                justifyContent: "center",
-                borderRadius: radius.full,
-                backgroundColor: colors.brand,
-                opacity: uploading ? 0.5 : pressed ? 0.75 : 1,
-              })}
-            >
-              {uploading ? (
-                <ActivityIndicator color={colors.onBrand} />
-              ) : (
-                <IconSymbol name="mic.fill" color={colors.onBrand} size={22} />
-              )}
-            </Pressable>
-          )}
         </View>
+      ) : (
+        <>
+          {reply.error ? <InlineAlert message={reply.error.message} /> : null}
+          {mediaError ? <InlineAlert message={mediaError} /> : null}
+
+          {recording ? (
+            <RecordingBar
+              seconds={Math.floor(recorderState.durationMillis / 1000)}
+              onCancel={() => void finishRecording(false)}
+              onSend={() => void finishRecording(true)}
+            />
+          ) : (
+            <View
+              style={{
+                flexDirection: "row-reverse",
+                alignItems: "flex-end",
+                gap: spacing.sm,
+              }}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="إرفاق ملف أو باقة"
+                disabled={uploading || catalogBusy}
+                onPress={() => {
+                  tapFeedback();
+                  setMenuOpen(true);
+                }}
+                style={({ pressed }) => ({
+                  width: hitSize.comfortable,
+                  height: hitSize.comfortable,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: radius.full,
+                  backgroundColor: colors.surfaceSunken,
+                  opacity: uploading || catalogBusy ? 0.5 : pressed ? 0.7 : 1,
+                })}
+              >
+                {catalogBusy ? (
+                  <ActivityIndicator color={colors.textSecondary} />
+                ) : (
+                  <IconSymbol name="plus" color={colors.textSecondary} size={22} />
+                )}
+              </Pressable>
+
+              <TextInput
+                accessibilityLabel="نص الرد"
+                multiline
+                placeholder="اكتبي الرد…"
+                placeholderTextColor={colors.textTertiary}
+                value={draft}
+                onChangeText={setDraft}
+                style={{
+                  flex: 1,
+                  minHeight: hitSize.comfortable,
+                  maxHeight: 132,
+                  paddingHorizontal: spacing.lg,
+                  paddingVertical: spacing.md,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  borderRadius: radius["2xl"],
+                  borderCurve: "continuous",
+                  backgroundColor: colors.surfaceSunken,
+                  ...type.body,
+                  color: colors.text,
+                  ...rtlText,
+                }}
+              />
+
+              {/* One button, two jobs — the microphone becomes send as soon as
+                  there is something to send, exactly like WhatsApp. */}
+              {draft.trim() ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="إرسال الرد"
+                  accessibilityState={{ disabled: !canSendText, busy: reply.isPending }}
+                  disabled={!canSendText}
+                  onPress={sendText}
+                  style={({ pressed }) => ({
+                    width: hitSize.comfortable,
+                    height: hitSize.comfortable,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: radius.full,
+                    backgroundColor: colors.brand,
+                    opacity: !canSendText ? 0.4 : pressed ? 0.75 : 1,
+                    transform: [{ scale: pressed && canSendText ? 0.92 : 1 }],
+                  })}
+                >
+                  <IconSymbol name="arrow.up" color={colors.onBrand} size={22} />
+                </Pressable>
+              ) : (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="تسجيل ملاحظة صوتية"
+                  disabled={uploading}
+                  onPress={() => void startRecording()}
+                  style={({ pressed }) => ({
+                    width: hitSize.comfortable,
+                    height: hitSize.comfortable,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: radius.full,
+                    backgroundColor: colors.brand,
+                    opacity: uploading ? 0.5 : pressed ? 0.75 : 1,
+                  })}
+                >
+                  {uploading ? (
+                    <ActivityIndicator color={colors.onBrand} />
+                  ) : (
+                    <IconSymbol name="mic.fill" color={colors.onBrand} size={22} />
+                  )}
+                </Pressable>
+              )}
+            </View>
+          )}
+        </>
       )}
 
       <Modal

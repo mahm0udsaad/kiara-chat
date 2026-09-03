@@ -1,7 +1,8 @@
-import { Link, Stack } from "expo-router";
+import { Link, Stack, useRouter } from "expo-router";
 import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
 import {
   FlatList,
+  ActivityIndicator,
   Pressable,
   RefreshControl,
   Text,
@@ -33,7 +34,13 @@ import {
   csStatusLabel,
   csStatusTone,
 } from "@/lib/format";
-import { EMPTY_CONVERSATION_FILTERS, useBootstrap, useConversations } from "@/lib/queries";
+import { canonicalPhone } from "@/lib/phone";
+import {
+  EMPTY_CONVERSATION_FILTERS,
+  useBootstrap,
+  useClaimedConversationForPhone,
+  useConversations,
+} from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import { useIsTyping } from "@/providers/inbox-live-provider";
 import type {
@@ -54,6 +61,105 @@ const views: SegmentOption<InboxView>[] = [
 ];
 
 const keyOfConversation = (item: ConversationSummary) => item.id;
+
+function UnknownPhoneRow({
+  phone,
+  loading,
+  error,
+  onStart,
+}: {
+  phone: string;
+  loading: boolean;
+  error: string | null;
+  onStart: () => void;
+}) {
+  const { colors } = useTheme();
+
+  return (
+    <View
+      testID="unknown-phone-result"
+      style={{
+        gap: spacing.md,
+        padding: spacing.lg,
+        borderWidth: 1,
+        borderColor: colors.borderStrong,
+        borderRadius: radius.lg,
+        borderCurve: "continuous",
+        backgroundColor: colors.surface,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row-reverse",
+          alignItems: "center",
+          gap: spacing.md,
+        }}
+      >
+        <View
+          style={{
+            width: hitSize.comfortable,
+            height: hitSize.comfortable,
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: radius.full,
+            backgroundColor: colors.brandSoft,
+          }}
+        >
+          <IconSymbol name="phone" color={colors.onBrandSoft} size={20} />
+        </View>
+
+        <View style={{ flex: 1, gap: spacing.xs }}>
+          <Text
+            selectable
+            style={{
+              ...type.bodyStrong,
+              color: colors.text,
+              writingDirection: "ltr",
+              textAlign: "right",
+              fontVariant: ["tabular-nums"],
+            }}
+          >
+            {phone}
+          </Text>
+          <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+            لا توجد محادثة بهذا الرقم
+          </Text>
+        </View>
+
+        <Pressable
+          testID="start-conversation"
+          accessibilityRole="button"
+          accessibilityLabel={`بدء محادثة مع ${phone}`}
+          accessibilityState={{ disabled: loading, busy: loading }}
+          disabled={loading}
+          onPress={onStart}
+          style={({ pressed }) => ({
+            minHeight: hitSize.min,
+            flexDirection: "row-reverse",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: spacing.xs,
+            paddingHorizontal: spacing.md,
+            borderRadius: radius.full,
+            backgroundColor: colors.brand,
+            opacity: loading ? 0.55 : pressed ? 0.78 : 1,
+          })}
+        >
+          {loading ? (
+            <ActivityIndicator color={colors.onBrand} size="small" />
+          ) : (
+            <IconSymbol name="message.fill" color={colors.onBrand} size={16} />
+          )}
+          <Text style={{ ...type.caption, color: colors.onBrand, ...rtlText }}>
+            {loading ? "فتح…" : "محادثة"}
+          </Text>
+        </Pressable>
+      </View>
+
+      {error ? <InlineAlert message={error} /> : null}
+    </View>
+  );
+}
 
 /** A readable fallback for media messages that have no caption of their own. */
 const MEDIA_PREVIEW: Record<string, { label: string; icon: IconName }> = {
@@ -328,6 +434,7 @@ const ConversationRow = memo(function ConversationRow({
 
 export default function InboxScreen() {
   const { colors } = useTheme();
+  const router = useRouter();
   const android = process.env.EXPO_OS === "android";
   const [view, setView] = useState<InboxView>("new");
   const [search, setSearch] = useState("");
@@ -339,6 +446,7 @@ export default function InboxScreen() {
   // Keeps typing responsive — the request tracks a frame behind the keystroke.
   const deferredSearch = useDeferredValue(search);
   const conversations = useConversations(view, deferredSearch.trim(), { filters });
+  const startChat = useClaimedConversationForPhone();
   const bootstrapLabels = useBootstrap().data?.labels;
   const labels = useMemo(() => bootstrapLabels ?? [], [bootstrapLabels]);
   const activeFilters = activeFilterCount(filters);
@@ -402,6 +510,40 @@ export default function InboxScreen() {
   const showSkeleton = conversations.isLoading && items.length === 0;
   const staffView =
     view === "specialists" ? "specialist" : view === "drivers" ? "driver" : null;
+  const searchedPhone = useMemo(
+    () => canonicalPhone(deferredSearch.trim()),
+    [deferredSearch],
+  );
+  // `query` guards against React Query's placeholder rows from the previous
+  // keystroke. Until the server has answered for this exact input, we do not
+  // claim that the number is absent.
+  const unknownPhone =
+    searchedPhone &&
+    firstPage?.query === deferredSearch.trim() &&
+    firstPage.exactPhoneMatch === null
+      ? searchedPhone
+      : null;
+  const startError =
+    unknownPhone && startChat.variables?.phone === unknownPhone
+      ? (startChat.error?.message ?? null)
+      : null;
+
+  const startConversation = useCallback(
+    (phone: string) => {
+      if (startChat.isPending) return;
+      startChat.mutate(
+        { phone },
+        {
+          onSuccess: ({ conversationId }) =>
+            router.push({
+              pathname: "/conversation/[id]",
+              params: { id: conversationId },
+            }),
+        },
+      );
+    },
+    [router, startChat],
+  );
 
   /**
    * Hoisted so the memo on ConversationRow actually holds — an arrow declared
@@ -617,11 +759,22 @@ export default function InboxScreen() {
               </View>
             ) : null}
 
+            {unknownPhone ? (
+              <UnknownPhoneRow
+                phone={unknownPhone}
+                loading={
+                  startChat.isPending && startChat.variables?.phone === unknownPhone
+                }
+                error={startError}
+                onStart={() => startConversation(unknownPhone)}
+              />
+            ) : null}
+
             {showSkeleton ? <SkeletonList count={6} /> : null}
           </View>
         }
         ListEmptyComponent={
-          showSkeleton ? null : conversations.isError ? (
+          showSkeleton || unknownPhone ? null : conversations.isError ? (
             <ErrorState
               message={conversations.error.message}
               onRetry={() => void conversations.refetch()}

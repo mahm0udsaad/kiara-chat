@@ -765,7 +765,10 @@ export default function ConversationScreen() {
             )}
           </>
         ) : (
-          <Composer conversationId={id} />
+          <Composer
+            conversationId={id}
+            templateOnly={!isGroup && (messages?.length ?? 0) === 0}
+          />
         )}
       </View>
     </KeyboardAvoidingView>

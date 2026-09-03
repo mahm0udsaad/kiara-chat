@@ -48,6 +48,29 @@ export function normalizePhone(value: string): string {
 }
 
 /**
+ * A complete, deliverable WhatsApp address.
+ *
+ * Kept in step with `src/lib/phone.ts`: the search UI only offers "start a
+ * conversation" once the server would accept exactly the same number.
+ */
+export function canonicalPhone(value: string): string | null {
+  const raw = toAsciiDigits(value.trim());
+  let digits = digitsOf(raw);
+  if (!digits) return null;
+  if (raw.startsWith("00")) digits = digits.slice(2);
+
+  if ((raw.startsWith("+") && !digits.startsWith("0")) || raw.startsWith("00")) {
+    return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : null;
+  }
+  if (digits.startsWith("966") && digits.length === 12) return `+${digits}`;
+
+  const national = digits.replace(/^0+/, "");
+  return national.startsWith("5") && national.length === 9
+    ? `+966${national}`
+    : null;
+}
+
+/**
  * Does this phone answer to what was typed? Partial input matches, so the last
  * few digits are enough to find a visit.
  */

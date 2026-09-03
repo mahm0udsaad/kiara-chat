@@ -1049,6 +1049,57 @@ export function useConversationForPhone() {
 }
 
 /**
+ * Create (or resolve) a customer thread and claim it before opening it.
+ *
+ * Search uses this rather than `useConversationForPhone`: a brand-new empty
+ * thread must already belong to the employee when its start-template button
+ * appears, otherwise the first send would be rejected with "claim it first".
+ */
+export function useClaimedConversationForPhone() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { phone: string }) => {
+      const resolved = await apiRequest<{
+        conversationId: string;
+        created: boolean;
+      }>("/conversations/by-phone", {
+        method: "POST",
+        body: JSON.stringify({ phone: input.phone }),
+      });
+
+      try {
+        await apiRequest<{ conversation: ConversationSummary }>(
+          `/conversations/${resolved.conversationId}/take`,
+          { method: "POST" },
+        );
+      } catch (error) {
+        if (
+          error instanceof ApiError &&
+          error.code === "CONVERSATION_ALREADY_TAKEN"
+        ) {
+          throw new ApiError(
+            "هذه المحادثة مستلمة من موظفة أخرى.",
+            error.status,
+            error.code,
+          );
+        }
+        throw error;
+      }
+
+      return resolved;
+    },
+    onSuccess: async ({ conversationId }) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.conversation(conversationId),
+        }),
+      ]);
+    },
+  });
+}
+
+/**
  * The approved templates this account can send.
  *
  * Long-lived: a template changes only when someone submits a new one to Meta

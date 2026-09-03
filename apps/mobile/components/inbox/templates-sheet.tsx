@@ -80,7 +80,9 @@ export function TemplatesSheet({
     const seeded: Record<string, string> = {};
     for (const variable of template.variables) {
       seeded[variable.key] =
-        variable.prefill === "customer_name" ? (customerName ?? "").trim() : "";
+        variable.prefill === "customer_name"
+          ? (customerName ?? "").trim() || "عميلتنا العزيزة"
+          : "";
     }
     setValues(seeded);
   };
@@ -290,6 +292,15 @@ export function TemplatesSheet({
                       }}
                     >
                       معاينة
+                    </Text>
+                    <Text
+                      style={{
+                        ...type.footnote,
+                        color: colors.textTertiary,
+                        ...rtlText,
+                      }}
+                    >
+                      نص القالب معتمد وثابت من واتساب. يمكنك تعديل البيانات أعلاه قبل الإرسال.
                     </Text>
                     <View
                       style={{
