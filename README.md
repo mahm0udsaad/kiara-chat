@@ -64,6 +64,7 @@ Sign in with a Supabase-auth user that is Kiara's owner or an active
 | `TWILIO_WEBHOOK_BASE_URL` | Public origin Twilio calls. Signature validation hashes this, not the request URL, which behind Vercel reports an internal host. |
 | `TWILIO_STATUS_CALLBACK_URL` | Delivery-receipt endpoint (`/api/webhooks/twilio/status`). |
 | `TWILIO_CONTENT_SID_BOOKING_FOLLOWUP` | Approved template sid (`HXbb5e5dbfc42600f2678e55b38445cdac`). Without it, nobody outside the 24-hour window is reachable. |
+| `WHATSAPP_DEFAULT_PROVIDER` | `twilio` \| `openwa`. Which number a conversation the *team starts* belongs to. Unset means Twilio whenever it is configured. Never affects existing threads. |
 
 ### Two WhatsApp numbers, on purpose
 

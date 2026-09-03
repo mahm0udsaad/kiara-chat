@@ -23,7 +23,11 @@ import {
   updateOrderCommand,
   type OperationsActor,
 } from "@/lib/operational-commands";
-import { findOrCreateConversation } from "@/lib/server-conversations";
+import {
+  findOrCreateConversation,
+  rememberConversationTransport,
+} from "@/lib/server-conversations";
+import { defaultOutboundProvider } from "@/lib/transport";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { translateMessage } from "@/lib/translate";
@@ -603,17 +607,21 @@ export async function createBookingFromReservation(
   // No thread yet: open an empty one under her Rekaz name, exactly as the web
   // schedule's طلب سائق already does. The salon writes to her from it later
   // — the order is not held up waiting for her to message first.
-  const conversation =
-    matched ??
-    {
-      id: (
-        await findOrCreateConversation(
-          phone,
-          String(reservation.customer_name ?? "").trim() || null,
-        )
-      ).id,
-      customer_phone: phone,
-    };
+  const opened = matched
+    ? null
+    : await findOrCreateConversation(
+        phone,
+        String(reservation.customer_name ?? "").trim() || null,
+      );
+  // A thread the salon opens before she has written has no inbound to say which
+  // number she used, so it belongs to whichever number Kiara operates on now.
+  if (opened?.is_new) {
+    await rememberConversationTransport(opened.id, defaultOutboundProvider());
+  }
+  const conversation = matched ?? {
+    id: opened!.id,
+    customer_phone: phone,
+  };
 
   // Where she actually is — never what she booked.
   //

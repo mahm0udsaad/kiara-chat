@@ -6,7 +6,11 @@ import {
   mobileServerError,
 } from "@/lib/mobile/http";
 import { canonicalPhone, normalizePhone } from "@/lib/phone";
-import { findOrCreateConversation } from "@/lib/server-conversations";
+import {
+  findOrCreateConversation,
+  rememberConversationTransport,
+} from "@/lib/server-conversations";
+import { defaultOutboundProvider } from "@/lib/transport";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
@@ -84,6 +88,11 @@ export async function POST(request: Request) {
     }
 
     const created = await findOrCreateConversation(canonical, name || null);
+    // A thread the team opened has no inbound to say which number the customer
+    // used, so it belongs to whichever number Kiara operates on now.
+    if (created.is_new) {
+      await rememberConversationTransport(created.id, defaultOutboundProvider());
+    }
     return mobileData({ conversationId: created.id, created: created.is_new });
   } catch (error) {
     return mobileServerError(

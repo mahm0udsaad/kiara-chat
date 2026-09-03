@@ -19,6 +19,27 @@ import type { MessageTransport, TransportProvider } from "./types";
  */
 const DEFAULT_PROVIDER: TransportProvider = "openwa";
 
+/**
+ * Which number a *newly started* conversation belongs to.
+ *
+ * Only for threads the team opens themselves — from a reservation, from the
+ * mobile app by phone, or from a dispatch — where no inbound message has said
+ * which number the customer used. Since +966508421748 is now the operational
+ * number, those go to Twilio.
+ *
+ * This deliberately does not touch conversations that already exist. A customer
+ * with history on the linked-device number must keep being answered there: she
+ * wrote to that number, and a reply from a different one arrives as a message
+ * from a stranger.
+ */
+export function defaultOutboundProvider(): TransportProvider {
+  const configured = process.env.WHATSAPP_DEFAULT_PROVIDER?.trim().toLowerCase();
+  if (configured === "openwa") return "openwa";
+  if (configured === "twilio") return "twilio";
+  // Unset: prefer the Business Platform once it is actually usable.
+  return isTwilioConfigured() ? "twilio" : "openwa";
+}
+
 export function transportFor(provider: TransportProvider): MessageTransport {
   return provider === "twilio" ? twilioTransport : openWaTransport;
 }

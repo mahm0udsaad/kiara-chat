@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
-import { findOrCreateConversation } from "@/lib/server-conversations";
+import {
+  findOrCreateConversation,
+  rememberConversationTransport,
+} from "@/lib/server-conversations";
+import { defaultOutboundProvider } from "@/lib/transport";
 
 /**
  * POST /api/reservations/conversation — the thread behind a Rekaz reservation.
@@ -24,6 +28,11 @@ export async function POST(request: Request) {
 
   try {
     const conv = await findOrCreateConversation(`+${digits}`, name || null);
+    // A thread the team opened has no inbound to say which number the customer
+    // used, so it belongs to whichever number Kiara operates on now.
+    if (conv.is_new) {
+      await rememberConversationTransport(conv.id, defaultOutboundProvider());
+    }
     return NextResponse.json({ ok: true, conversationId: conv.id });
   } catch (e) {
     return NextResponse.json(
