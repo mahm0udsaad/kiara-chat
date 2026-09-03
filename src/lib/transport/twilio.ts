@@ -22,13 +22,34 @@ import { signMediaUrl } from "@/lib/storage-media";
  * `From` is not a valid WhatsApp address and an untrimmed account sid produces a
  * 404 against an API path that looks correct in the logs.
  */
-const ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID?.trim();
-const AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN?.trim();
-/** Prefer a revocable API key for sends; fall back to the account credentials. */
-const API_KEY_SID = process.env.TWILIO_API_KEY_SID?.trim();
-const API_KEY_SECRET = process.env.TWILIO_API_KEY_SECRET?.trim();
-const FROM = process.env.TWILIO_WHATSAPP_FROM?.trim();
-const STATUS_CALLBACK = process.env.TWILIO_STATUS_CALLBACK_URL?.trim();
+interface TwilioConfig {
+  accountSid: string | undefined;
+  authToken: string | undefined;
+  apiKeySid: string | undefined;
+  apiKeySecret: string | undefined;
+  from: string | undefined;
+  statusCallback: string | undefined;
+}
+
+/**
+ * Read at request time, not module load time.
+ *
+ * Vercel can keep a Fluid function process alive while credentials are being
+ * rotated. The inbound webhook already reads its token per request; doing the
+ * same here ensures sends cannot remain pinned to the value captured by an old
+ * module instance after a production secret rotation.
+ */
+function twilioConfig(): TwilioConfig {
+  return {
+    accountSid: process.env.TWILIO_ACCOUNT_SID?.trim(),
+    authToken: process.env.TWILIO_AUTH_TOKEN?.trim(),
+    // Prefer a revocable API key for sends; fall back to account credentials.
+    apiKeySid: process.env.TWILIO_API_KEY_SID?.trim(),
+    apiKeySecret: process.env.TWILIO_API_KEY_SECRET?.trim(),
+    from: process.env.TWILIO_WHATSAPP_FROM?.trim(),
+    statusCallback: process.env.TWILIO_STATUS_CALLBACK_URL?.trim(),
+  };
+}
 
 const API_ROOT = "https://api.twilio.com/2010-04-01";
 
@@ -43,7 +64,8 @@ const SEND_TIMEOUT_MS = 15_000;
 const MEDIA_URL_TTL_SECONDS = 3600;
 
 export function isTwilioConfigured(): boolean {
-  return Boolean(ACCOUNT_SID && AUTH_TOKEN);
+  const { accountSid, authToken } = twilioConfig();
+  return Boolean(accountSid && authToken);
 }
 
 /** `whatsapp:+9665…` — Twilio addresses every WhatsApp endpoint this way. */
@@ -52,13 +74,13 @@ function waAddress(e164: string): string {
   return trimmed.startsWith("whatsapp:") ? trimmed : `whatsapp:${trimmed}`;
 }
 
-function authHeader(): string {
+function authHeader(config: TwilioConfig): string {
   // An API key is only usable as a pair. Keying off the sid alone meant a
   // half-configured key sent "SK…:undefined" and came back as a bare 401 with
   // nothing in it to say which credential was at fault.
-  const useApiKey = Boolean(API_KEY_SID && API_KEY_SECRET);
-  const user = useApiKey ? API_KEY_SID! : ACCOUNT_SID!;
-  const pass = useApiKey ? API_KEY_SECRET! : AUTH_TOKEN!;
+  const useApiKey = Boolean(config.apiKeySid && config.apiKeySecret);
+  const user = useApiKey ? config.apiKeySid! : config.accountSid!;
+  const pass = useApiKey ? config.apiKeySecret! : config.authToken!;
   return `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
 }
 
@@ -79,7 +101,8 @@ async function createMessage(
   fields: Record<string, string>,
   from?: string | null,
 ): Promise<SendResult> {
-  if (!isTwilioConfigured()) {
+  const config = twilioConfig();
+  if (!config.accountSid || !config.authToken || !(from || config.from)) {
     throw new Error(
       "Twilio not configured: set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP_FROM",
     );
@@ -88,8 +111,8 @@ async function createMessage(
   const body = new URLSearchParams({
     // The conversation's own number wins over configuration: it came from the
     // provider on the inbound message, so it cannot be stale or mistyped.
-    From: waAddress((from || FROM)!),
-    ...(STATUS_CALLBACK ? { StatusCallback: STATUS_CALLBACK } : {}),
+    From: waAddress((from || config.from)!),
+    ...(config.statusCallback ? { StatusCallback: config.statusCallback } : {}),
     ...fields,
   });
 
@@ -97,10 +120,10 @@ async function createMessage(
   const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(`${API_ROOT}/Accounts/${ACCOUNT_SID}/Messages.json`, {
+    res = await fetch(`${API_ROOT}/Accounts/${config.accountSid}/Messages.json`, {
       method: "POST",
       headers: {
-        Authorization: authHeader(),
+        Authorization: authHeader(config),
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body,
@@ -121,10 +144,13 @@ async function createMessage(
   const data = await res.json().catch(() => ({}) as Record<string, unknown>);
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
+      const providerCode = data?.code ? `${data.code}` : `${res.status}`;
+      const providerDetail =
+        typeof data?.message === "string" ? `: ${data.message}` : "";
       throw new Error(
-        `TWILIO_${res.status}: authentication rejected using ` +
-          `${API_KEY_SID && API_KEY_SECRET ? "API key" : "account sid + auth token"}` +
-          ` for account ${ACCOUNT_SID?.slice(0, 6)}…`,
+        `TWILIO_${providerCode}${providerDetail} ` +
+          `(using ${config.apiKeySid && config.apiKeySecret ? "API key" : "account sid + auth token"}` +
+          ` for account ${config.accountSid.slice(0, 6)}…)`,
       );
     }
     // Twilio's numeric code is the useful half — 63016 in particular means the
@@ -191,11 +217,12 @@ export interface TwilioSenderStatus {
  * only whether the sender we are configured for is usable.
  */
 export function getTwilioSenderStatus(): TwilioSenderStatus {
-  if (!isTwilioConfigured()) {
+  const config = twilioConfig();
+  if (!config.accountSid || !config.authToken) {
     return {
       configured: false,
       provider: "twilio",
-      number: FROM ?? null,
+      number: config.from ?? null,
       state: "not_configured",
       error: null,
     };
@@ -203,7 +230,7 @@ export function getTwilioSenderStatus(): TwilioSenderStatus {
   return {
     configured: true,
     provider: "twilio",
-    number: FROM!.replace(/^whatsapp:/, ""),
+    number: config.from?.replace(/^whatsapp:/, "") ?? null,
     state: "online",
     error: null,
   };
