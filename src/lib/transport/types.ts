@@ -39,10 +39,26 @@ export interface OutboundMedia {
 /** One value for a template's positional variables, keyed "1", "2", … */
 export type TemplateVariables = Record<string, string>;
 
+/**
+ * Which of Kiara's own numbers a send goes out from.
+ *
+ * Passed per send rather than read from configuration, because the right answer
+ * is already known: it is the number the customer actually wrote to, which the
+ * provider told us on the way in and which is stored on the conversation. An
+ * environment variable can drift from reality; the inbound message cannot.
+ */
+export interface SendOptions {
+  from?: string | null;
+}
+
 export interface MessageTransport {
   readonly provider: TransportProvider;
-  sendText(toE164: string, body: string): Promise<SendResult>;
-  sendMedia(toE164: string, media: OutboundMedia): Promise<SendResult>;
+  sendText(toE164: string, body: string, options?: SendOptions): Promise<SendResult>;
+  sendMedia(
+    toE164: string,
+    media: OutboundMedia,
+    options?: SendOptions,
+  ): Promise<SendResult>;
   /**
    * Send a pre-approved template. Outside the 24-hour service window this is
    * the only thing Meta will deliver, so every proactive path needs one.
@@ -52,6 +68,7 @@ export interface MessageTransport {
     toE164: string,
     contentSid: string,
     variables: TemplateVariables,
+    options?: SendOptions,
   ): Promise<SendResult>;
 }
 

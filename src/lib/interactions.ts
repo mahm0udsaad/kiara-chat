@@ -42,7 +42,10 @@ export type { CsStatus, AgentInfo };
 function deliverInBackground(
   messageId: string,
   conversationId: string,
-  send: (transport: MessageTransport) => Promise<SendResult>
+  send: (
+    transport: MessageTransport,
+    options: { from: string | null },
+  ) => Promise<SendResult>
 ): void {
   after(async () => {
     const admin = getAdminSupabaseClient();
@@ -53,11 +56,20 @@ function deliverInBackground(
     // the UI is showing it as queued either way.
     const transport = await transportForConversation(conversationId);
     const configured = isProviderConfigured(transport.provider);
+    const { data: convRow } = await admin
+      .from("conversations")
+      .select("metadata")
+      .eq("id", conversationId)
+      .maybeSingle();
+    const waNumber =
+      ((convRow?.metadata as Record<string, unknown> | null)?.wa_number as
+        | string
+        | undefined) ?? null;
     let failureMessage: string | null = null;
     let failureCode: string | null = null;
     if (configured) {
       try {
-        const r = await send(transport);
+        const r = await send(transport, { from: waNumber });
         providerId = r.providerMessageId || null;
         sent = true;
       } catch (error) {
@@ -430,6 +442,20 @@ function deliverTextReply(params: {
     const transport = await transportForConversation(params.conversationId);
     const configured = isProviderConfigured(transport.provider);
 
+    // The number she wrote to, recorded from the inbound message itself. Sending
+    // from anything else would reach her as a message from a stranger, and a
+    // misconfigured env var would fail every send with no way to see why.
+    const { data: convRow } = await admin
+      .from("conversations")
+      .select("metadata")
+      .eq("id", params.conversationId)
+      .maybeSingle();
+    const waNumber =
+      ((convRow?.metadata as Record<string, unknown> | null)?.wa_number as
+        | string
+        | undefined) ?? null;
+    const sendOptions = { from: waNumber };
+
     let status = "queued";
     let providerId: string | null = null;
     // Why a send did not happen is the whole story when one does not, and it
@@ -449,9 +475,12 @@ function deliverTextReply(params: {
         return false;
       }
       try {
-        const r = await transport.sendTemplate(params.toE164, contentSid, {
-          "1": greetingName(params.customerName),
-        });
+        const r = await transport.sendTemplate(
+          params.toE164,
+          contentSid,
+          { "1": greetingName(params.customerName) },
+          sendOptions,
+        );
         extra.window_closed = true;
         extra.reengagement_sent = true;
         extra.reengagement_sid = r.providerMessageId;
@@ -477,7 +506,11 @@ function deliverTextReply(params: {
         status = "undelivered";
       } else {
         try {
-          const r = await transport.sendText(params.toE164, params.body);
+          const r = await transport.sendText(
+            params.toE164,
+            params.body,
+            sendOptions,
+          );
           providerId = r.providerMessageId || null;
           status = "sent";
         } catch (error) {
@@ -682,7 +715,7 @@ export async function sendMediaReply(
   if (error) throw new Error(`Failed to record media message: ${error.message}`);
 
   const messageId = msg!.id as string;
-  deliverInBackground(messageId, conversationId, (transport) =>
+  deliverInBackground(messageId, conversationId, (transport, sendOptions) =>
     transport.sendMedia(conv.customer_phone as string, {
       base64,
       contentType: file.contentType,
@@ -692,7 +725,7 @@ export async function sendMediaReply(
       // Twilio fetches media rather than accepting bytes; the copy stored
       // above is what it fetches. OpenWA ignores this and uses base64.
       storagePath: slot.storage_path,
-    })
+    }, sendOptions)
   );
 
   return { messageId, sent: false };

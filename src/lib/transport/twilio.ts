@@ -43,7 +43,7 @@ const SEND_TIMEOUT_MS = 15_000;
 const MEDIA_URL_TTL_SECONDS = 3600;
 
 export function isTwilioConfigured(): boolean {
-  return Boolean(ACCOUNT_SID && AUTH_TOKEN && FROM);
+  return Boolean(ACCOUNT_SID && AUTH_TOKEN);
 }
 
 /** `whatsapp:+9665…` — Twilio addresses every WhatsApp endpoint this way. */
@@ -75,7 +75,10 @@ export function twilioErrorCode(error: unknown): string | null {
   return match ? match[1] : null;
 }
 
-async function createMessage(fields: Record<string, string>): Promise<SendResult> {
+async function createMessage(
+  fields: Record<string, string>,
+  from?: string | null,
+): Promise<SendResult> {
   if (!isTwilioConfigured()) {
     throw new Error(
       "Twilio not configured: set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP_FROM",
@@ -83,7 +86,9 @@ async function createMessage(fields: Record<string, string>): Promise<SendResult
   }
 
   const body = new URLSearchParams({
-    From: waAddress(FROM!),
+    // The conversation's own number wins over configuration: it came from the
+    // provider on the inbound message, so it cannot be stale or mistyped.
+    From: waAddress((from || FROM)!),
     ...(STATUS_CALLBACK ? { StatusCallback: STATUS_CALLBACK } : {}),
     ...fields,
   });
@@ -134,11 +139,11 @@ async function createMessage(fields: Record<string, string>): Promise<SendResult
 export const twilioTransport: MessageTransport = {
   provider: "twilio",
 
-  async sendText(toE164, body) {
-    return createMessage({ To: waAddress(toE164), Body: body });
+  async sendText(toE164, body, options) {
+    return createMessage({ To: waAddress(toE164), Body: body }, options?.from);
   },
 
-  async sendMedia(toE164, media: OutboundMedia) {
+  async sendMedia(toE164, media: OutboundMedia, options) {
     // Twilio fetches media itself, so bytes are useless here — the caller has
     // already put the file in the bucket (every send path stores its own copy
     // before reaching a transport) and we hand Twilio a signed URL to that.
@@ -157,17 +162,17 @@ export const twilioTransport: MessageTransport = {
       // dropped deliberately: the Business Platform has no voice-note flag, so
       // audio arrives as a player rather than a waveform bubble.
       ...(media.caption ? { Body: media.caption } : {}),
-    });
+    }, options?.from);
   },
 
-  async sendTemplate(toE164, contentSid, variables: TemplateVariables) {
+  async sendTemplate(toE164, contentSid, variables: TemplateVariables, options) {
     return createMessage({
       To: waAddress(toE164),
       ContentSid: contentSid,
       ...(Object.keys(variables).length
         ? { ContentVariables: JSON.stringify(variables) }
         : {}),
-    });
+    }, options?.from);
   },
 };
 

@@ -84,6 +84,7 @@ async function parse(res: Response): Promise<SendResult> {
 export const openWaTransport: MessageTransport = {
   provider: "openwa",
   async sendText(toE164, body) {
+    // A linked device is one number; there is nothing to choose between.
     return parse(
       await post("/messages", { to: toE164, body }, ENGINE_SEND_TIMEOUT_MS),
     );
