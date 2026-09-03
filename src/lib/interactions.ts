@@ -9,7 +9,13 @@ import { randomUUID } from "crypto";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID, type KiaraSession } from "@/lib/tenant";
-import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
+import {
+  isProviderConfigured,
+  transportForConversation,
+} from "@/lib/transport";
+import type { MessageTransport, SendResult } from "@/lib/transport/types";
+import { getServiceWindow, isWindowClosedError } from "@/lib/transport/window";
+import { contentSidFor, greetingName } from "@/lib/templates";
 import {
   uploadBase64Media,
   messageTypeFromContentType,
@@ -35,15 +41,20 @@ export type { CsStatus, AgentInfo };
 function deliverInBackground(
   messageId: string,
   conversationId: string,
-  send: () => Promise<{ providerMessageId?: string | null }>
+  send: (transport: MessageTransport) => Promise<SendResult>
 ): void {
   after(async () => {
     const admin = getAdminSupabaseClient();
     let sent = false;
     let providerId: string | null = null;
-    if (isOpenWaConfigured()) {
+    // Resolving which number answers this thread costs a read, so it happens
+    // here rather than on the send path — the message row already exists and
+    // the UI is showing it as queued either way.
+    const transport = await transportForConversation(conversationId);
+    const configured = isProviderConfigured(transport.provider);
+    if (configured) {
       try {
-        const r = await send();
+        const r = await send(transport);
         providerId = r.providerMessageId || null;
         sent = true;
       } catch {
@@ -66,12 +77,13 @@ function deliverInBackground(
       admin
         .from("messages")
         .update({
-          delivery_status: sent
-            ? "sent"
-            : isOpenWaConfigured()
-              ? "failed"
-              : "queued",
+          delivery_status: sent ? "sent" : configured ? "failed" : "queued",
           external_message_sid: providerId,
+          // Same value in both columns: dedupe and ack lookup keep using
+          // external_message_sid, while the Twilio column becomes meaningful.
+          ...(transport.provider === "twilio" && providerId
+            ? { twilio_message_sid: providerId }
+            : {}),
         })
         .eq("id", messageId),
       // Bump activity + clear "handled on WhatsApp" (now handled in-app).
@@ -384,6 +396,123 @@ export async function setConversationRouting(
   return ((data as Conversation) ?? conversation) ?? null;
 }
 
+/**
+ * Deliver a text reply, honouring the 24-hour service window.
+ *
+ * Inside the window this is an ordinary send. Outside it — which on the Twilio
+ * number is every conversation the customer has not just written to — Meta will
+ * deliver nothing but an approved template, so the agent's own words cannot go
+ * out at all. Rather than failing silently, we send the follow-up template so
+ * the customer has a one-tap way to reply (which reopens the window), and mark
+ * the agent's message undelivered with the reason attached. The inbox already
+ * renders `undelivered` distinctly, so the agent can see their text did not
+ * land instead of assuming it did.
+ */
+function deliverTextReply(params: {
+  messageId: string;
+  conversationId: string;
+  toE164: string;
+  customerName: string | null;
+  body: string;
+}): void {
+  after(async () => {
+    const admin = getAdminSupabaseClient();
+    const transport = await transportForConversation(params.conversationId);
+    const configured = isProviderConfigured(transport.provider);
+
+    let status = "queued";
+    let providerId: string | null = null;
+    const extra: Record<string, unknown> = {};
+
+    const sendTemplateFallback = async (): Promise<boolean> => {
+      const contentSid = contentSidFor("booking_followup");
+      if (!contentSid) {
+        extra.window_closed = true;
+        extra.reengagement_sent = false;
+        extra.reason = "TEMPLATE_NOT_CONFIGURED";
+        return false;
+      }
+      try {
+        const r = await transport.sendTemplate(params.toE164, contentSid, {
+          "1": greetingName(params.customerName),
+        });
+        extra.window_closed = true;
+        extra.reengagement_sent = true;
+        extra.reengagement_sid = r.providerMessageId;
+        return true;
+      } catch {
+        extra.window_closed = true;
+        extra.reengagement_sent = false;
+        extra.reason = "TEMPLATE_SEND_FAILED";
+        return false;
+      }
+    };
+
+    if (configured) {
+      // Only the Business Platform enforces a window; a linked device does not.
+      const windowOpen =
+        transport.provider !== "twilio" ||
+        (await getServiceWindow(params.conversationId)).open;
+
+      if (!windowOpen) {
+        await sendTemplateFallback();
+        status = "undelivered";
+      } else {
+        try {
+          const r = await transport.sendText(params.toE164, params.body);
+          providerId = r.providerMessageId || null;
+          status = "sent";
+        } catch (error) {
+          // The window can shut between the check and the send.
+          if (isWindowClosedError(error)) {
+            await sendTemplateFallback();
+            status = "undelivered";
+          } else {
+            status = "failed";
+          }
+        }
+      }
+    }
+
+    const { data: currentMessage } = await admin
+      .from("messages")
+      .select("metadata")
+      .eq("id", params.messageId)
+      .maybeSingle();
+    const currentMeta =
+      (currentMessage?.metadata as Record<string, unknown> | null) ?? {};
+
+    const { data: currentConversation } = await admin
+      .from("conversations")
+      .select("metadata")
+      .eq("id", params.conversationId)
+      .maybeSingle();
+    const convMeta =
+      (currentConversation?.metadata as Record<string, unknown> | null) ?? {};
+
+    await Promise.all([
+      admin
+        .from("messages")
+        .update({
+          delivery_status: status,
+          external_message_sid: providerId,
+          ...(transport.provider === "twilio" && providerId
+            ? { twilio_message_sid: providerId }
+            : {}),
+          metadata: { ...currentMeta, ...extra },
+        })
+        .eq("id", params.messageId),
+      admin
+        .from("conversations")
+        .update({
+          last_message_at: new Date().toISOString(),
+          metadata: { ...convMeta, handled_on_whatsapp: false },
+        })
+        .eq("id", params.conversationId),
+    ]);
+  });
+}
+
 /** Send an agent reply through the transport layer; records it either way. */
 export async function sendReply(
   conversationId: string,
@@ -394,7 +523,7 @@ export async function sendReply(
   const admin = getAdminSupabaseClient();
   const { data: conv } = await admin
     .from("conversations")
-    .select("id, customer_phone")
+    .select("id, customer_phone, customer_name")
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
@@ -432,11 +561,13 @@ export async function sendReply(
   if (error) throw new Error(`Failed to record reply: ${error.message}`);
 
   const messageId = msg!.id as string;
-  deliverInBackground(
+  deliverTextReply({
     messageId,
     conversationId,
-    () => openWaTransport.sendText(conv.customer_phone as string, body)
-  );
+    toE164: conv.customer_phone as string,
+    customerName: (conv.customer_name as string | null) ?? null,
+    body,
+  });
 
   return { messageId, sent: false };
 }
@@ -475,7 +606,7 @@ export async function sendMediaReply(
   }
 
   if (file.buffer.byteLength > MAX_MEDIA_BYTES) {
-    throw new Error("الملف أكبر من الحد المسموح (20 ميجابايت)");
+    throw new Error("الملف أكبر من الحد المسموح (16 ميجابايت)");
   }
 
   const base64 = file.buffer.toString("base64");
@@ -525,17 +656,17 @@ export async function sendMediaReply(
   if (error) throw new Error(`Failed to record media message: ${error.message}`);
 
   const messageId = msg!.id as string;
-  deliverInBackground(
-    messageId,
-    conversationId,
-    () =>
-      openWaTransport.sendMedia(conv.customer_phone as string, {
-        base64,
-        contentType: file.contentType,
-        filename: file.filename ?? undefined,
-        caption: caption || undefined,
-        ptt: options.ptt,
-      })
+  deliverInBackground(messageId, conversationId, (transport) =>
+    transport.sendMedia(conv.customer_phone as string, {
+      base64,
+      contentType: file.contentType,
+      filename: file.filename ?? undefined,
+      caption: caption || undefined,
+      ptt: options.ptt,
+      // Twilio fetches media rather than accepting bytes; the copy stored
+      // above is what it fetches. OpenWA ignores this and uses base64.
+      storagePath: slot.storage_path,
+    })
   );
 
   return { messageId, sent: false };

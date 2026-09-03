@@ -1,29 +1,61 @@
 /**
- * Transport abstraction. Kiara runs on OpenWA now; a Twilio adapter can be
- * dropped in later behind this same interface if the number ever needs to
- * move to the official API. The inbox/data model never sees the transport.
+ * Transport abstraction.
+ *
+ * Kiara now runs two transports at once, and that is deliberate rather than
+ * transitional: the salon's original number (+966593695614) is a linked device
+ * driven by the OpenWA engine, and the newer number (+966508421748) is a Twilio
+ * WhatsApp sender on Meta's Business Platform. A number cannot be both, so the
+ * two coexist and each conversation is answered on the number it arrived on.
+ *
+ * Callers therefore resolve a transport per conversation (see ./index) rather
+ * than importing one directly. The inbox and the data model never see either.
  */
+
+export type TransportProvider = "openwa" | "twilio";
 
 export interface SendResult {
   providerMessageId: string;
 }
 
+export interface OutboundMedia {
+  /** Raw bytes. OpenWA sends these directly; Twilio uploads them first. */
+  base64: string;
+  contentType: string;
+  filename?: string;
+  caption?: string;
+  /**
+   * Send audio as a WhatsApp voice note rather than an audio file. OpenWA only:
+   * the Business Platform exposes no PTT flag, so Twilio sends plain audio.
+   */
+  ptt?: boolean;
+  /**
+   * Bucket path for media already stored in `whatsapp-media`. Twilio fetches
+   * outbound media from a URL rather than accepting bytes, so its adapter signs
+   * this path; OpenWA ignores it and uses `base64`.
+   */
+  storagePath?: string | null;
+}
+
+/** One value for a template's positional variables, keyed "1", "2", … */
+export type TemplateVariables = Record<string, string>;
+
 export interface MessageTransport {
+  readonly provider: TransportProvider;
   sendText(toE164: string, body: string): Promise<SendResult>;
-  sendMedia(
+  sendMedia(toE164: string, media: OutboundMedia): Promise<SendResult>;
+  /**
+   * Send a pre-approved template. Outside the 24-hour service window this is
+   * the only thing Meta will deliver, so every proactive path needs one.
+   * OpenWA has no such concept and sends the rendered text instead.
+   */
+  sendTemplate(
     toE164: string,
-    media: {
-      base64: string;
-      contentType: string;
-      filename?: string;
-      caption?: string;
-      /** Send audio as a WhatsApp voice note rather than an audio file. */
-      ptt?: boolean;
-    }
+    contentSid: string,
+    variables: TemplateVariables,
   ): Promise<SendResult>;
 }
 
-/** Media as the OpenWA service delivers it to the ingest webhook. */
+/** Media as a transport delivers it to the ingest webhook. */
 export interface InboundMediaBlob {
   base64: string;
   contentType: string;
@@ -86,6 +118,9 @@ export type WaPresence =
 /**
  * The customer started (or stopped) typing. Never stored — it is true for a
  * couple of seconds and would churn the conversations table for nothing.
+ *
+ * OpenWA only. The Business Platform exposes no inbound presence at all, so
+ * conversations on the Twilio number never show a typing indicator.
  */
 export interface OpenWaPresenceEvent {
   type: "presence";

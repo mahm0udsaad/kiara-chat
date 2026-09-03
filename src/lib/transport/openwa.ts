@@ -82,15 +82,33 @@ async function parse(res: Response): Promise<SendResult> {
 }
 
 export const openWaTransport: MessageTransport = {
+  provider: "openwa",
   async sendText(toE164, body) {
     return parse(
       await post("/messages", { to: toE164, body }, ENGINE_SEND_TIMEOUT_MS),
     );
   },
   async sendMedia(toE164, media) {
+    // `storagePath` is Twilio's way in; a linked device takes the bytes.
+    const blob = {
+      base64: media.base64,
+      contentType: media.contentType,
+      filename: media.filename,
+      caption: media.caption,
+      ptt: media.ptt,
+    };
     return parse(
-      await post("/messages", { to: toE164, media }, ENGINE_SEND_TIMEOUT_MS),
+      await post("/messages", { to: toE164, media: blob }, ENGINE_SEND_TIMEOUT_MS),
     );
+  },
+  /**
+   * A linked device has no notion of an approved template — it is a phone, and
+   * a phone can say anything to anyone. Callers on this transport send the text
+   * directly; only the Business Platform needs a content sid, so reaching here
+   * means a caller resolved the wrong transport rather than that a send failed.
+   */
+  async sendTemplate() {
+    throw new Error("TEMPLATES_NOT_SUPPORTED: OpenWA sends free-form text");
   },
 };
 

@@ -15,7 +15,7 @@ import { generateObject, jsonSchema } from "ai";
 import { getBotSettings } from "@/lib/ai-settings";
 import { isWithinSchedule } from "@/lib/bot-schedule";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
-import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
+import { isProviderConfigured, transportForConversation } from "@/lib/transport";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { bumpConversationActivity, saveMessage } from "@/lib/server-conversations";
 import { googleAI, isBotConfigured, retrieveKnowledge, STRONG_HIT } from "@/lib/bot/knowledge";
@@ -61,7 +61,12 @@ async function turn(input: BotTurnInput): Promise<BotTurnOutcome> {
   // Media-only messages carry no question to answer — leave them to staff.
   if (!text) return { replied: false, reason: "no_text" };
   if (!isBotConfigured()) return { replied: false, reason: "no_api_key" };
-  if (!isOpenWaConfigured()) return { replied: false, reason: "no_transport" };
+  // Which transport can answer depends on the thread, so the check moves below
+  // the conversation lookup rather than gating on one provider being up.
+  const transport = await transportForConversation(input.conversationId);
+  if (!isProviderConfigured(transport.provider)) {
+    return { replied: false, reason: "no_transport" };
+  }
 
   const settings = await getBotSettings();
   if (!settings.enabled) return { replied: false, reason: "bot_off" };
@@ -117,7 +122,7 @@ async function turn(input: BotTurnInput): Promise<BotTurnOutcome> {
     return { replied: false, reason: "empty_reply" };
   }
 
-  const { providerMessageId } = await openWaTransport.sendText(input.customerPhone, reply);
+  const { providerMessageId } = await transport.sendText(input.customerPhone, reply);
   await saveMessage({
     conversationId: input.conversationId,
     role: "agent",
@@ -126,7 +131,10 @@ async function turn(input: BotTurnInput): Promise<BotTurnOutcome> {
     // Storing the WA id is what makes the engine's fromMe echo dedupe instead
     // of coming back as a second message.
     externalMessageSid: providerMessageId,
-    metadata: { source: "bot" },
+    ...(transport.provider === "twilio"
+      ? { twilioMessageSid: providerMessageId }
+      : {}),
+    metadata: { source: "bot", provider: transport.provider },
     deliveryStatus: "sent",
   });
   await bumpConversationActivity(input.conversationId, { inbound: false });

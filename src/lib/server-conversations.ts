@@ -222,6 +222,12 @@ export async function saveMessage(params: {
   deliveryStatus?: string;
   /** Original WhatsApp send time — keeps history-backfilled messages in order. */
   createdAt?: string;
+  /**
+   * Twilio's `SM`/`MM` sid. Written alongside `external_message_sid` (which
+   * holds the same value) so dedupe and ack lookup keep working untouched
+   * while the Twilio column the platform migration brought over becomes true.
+   */
+  twilioMessageSid?: string | null;
 }): Promise<string | null> {
   const { data, error } = await getAdminSupabaseClient()
     .from("messages")
@@ -234,6 +240,7 @@ export async function saveMessage(params: {
       external_message_sid: params.externalMessageSid,
       channel: "whatsapp",
       delivery_status: params.deliveryStatus ?? "received",
+      ...(params.twilioMessageSid ? { twilio_message_sid: params.twilioMessageSid } : {}),
       ...(params.createdAt ? { created_at: params.createdAt } : {}),
     })
     .select("id")
@@ -288,12 +295,53 @@ export async function markHandledOnWhatsApp(
   await admin.from("conversations").update({ metadata }).eq("id", conversationId);
 }
 
+/**
+ * Record which transport (and which Kiara number) a conversation is running on.
+ *
+ * Set from whichever number the customer last wrote to, so a reply always goes
+ * back out the way her message came in. A customer who has history on the old
+ * number and then messages the new one keeps her single thread — only the
+ * number answering it changes.
+ */
+export async function rememberConversationTransport(
+  conversationId: string,
+  transport: "openwa" | "twilio",
+  waNumber?: string | null,
+): Promise<void> {
+  const admin = getAdminSupabaseClient();
+  const { data } = await admin
+    .from("conversations")
+    .select("metadata")
+    .eq("id", conversationId)
+    .maybeSingle();
+  const metadata = (data?.metadata as Record<string, unknown> | null) ?? {};
+  if (metadata.transport === transport && (!waNumber || metadata.wa_number === waNumber)) {
+    return;
+  }
+  await admin
+    .from("conversations")
+    .update({
+      metadata: {
+        ...metadata,
+        transport,
+        ...(waNumber ? { wa_number: waNumber } : {}),
+      },
+    })
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID);
+}
+
 export async function updateDeliveryStatus(
   externalMessageSid: string,
-  status: string
+  status: string,
+  /** Twilio's own wording, kept verbatim next to our normalised value. */
+  rawProviderStatus?: string | null
 ): Promise<void> {
   await getAdminSupabaseClient()
     .from("messages")
-    .update({ delivery_status: status })
+    .update({
+      delivery_status: status,
+      ...(rawProviderStatus ? { twilio_status: rawProviderStatus } : {}),
+    })
     .eq("external_message_sid", externalMessageSid);
 }
