@@ -16,6 +16,7 @@ import {
 import type { MessageTransport, SendResult } from "@/lib/transport/types";
 import { getServiceWindow, isWindowClosedError } from "@/lib/transport/window";
 import { contentSidFor, greetingName } from "@/lib/templates";
+import { twilioErrorCode } from "@/lib/transport/twilio";
 import {
   uploadBase64Media,
   messageTypeFromContentType,
@@ -52,13 +53,20 @@ function deliverInBackground(
     // the UI is showing it as queued either way.
     const transport = await transportForConversation(conversationId);
     const configured = isProviderConfigured(transport.provider);
+    let failureMessage: string | null = null;
+    let failureCode: string | null = null;
     if (configured) {
       try {
         const r = await send(transport);
         providerId = r.providerMessageId || null;
         sent = true;
-      } catch {
+      } catch (error) {
         sent = false;
+        failureMessage = error instanceof Error ? error.message : String(error);
+        failureCode = twilioErrorCode(error);
+        console.error(
+          `[send] ${transport.provider} media failed: ${failureMessage}`,
+        );
       }
     }
 
@@ -79,6 +87,8 @@ function deliverInBackground(
         .update({
           delivery_status: sent ? "sent" : configured ? "failed" : "queued",
           external_message_sid: providerId,
+          error_message: failureMessage ? failureMessage.slice(0, 500) : null,
+          external_error_code: failureCode,
           // Same value in both columns: dedupe and ack lookup keep using
           // external_message_sid, while the Twilio column becomes meaningful.
           ...(transport.provider === "twilio" && providerId
@@ -422,6 +432,12 @@ function deliverTextReply(params: {
 
     let status = "queued";
     let providerId: string | null = null;
+    // Why a send did not happen is the whole story when one does not, and it
+    // used to be thrown away here — leaving a red tick in the inbox and no way
+    // to tell a closed window from a bad credential without reading Twilio's
+    // console. The columns for this already existed.
+    let failureMessage: string | null = null;
+    let failureCode: string | null = null;
     const extra: Record<string, unknown> = {};
 
     const sendTemplateFallback = async (): Promise<boolean> => {
@@ -440,10 +456,12 @@ function deliverTextReply(params: {
         extra.reengagement_sent = true;
         extra.reengagement_sid = r.providerMessageId;
         return true;
-      } catch {
+      } catch (error) {
         extra.window_closed = true;
         extra.reengagement_sent = false;
         extra.reason = "TEMPLATE_SEND_FAILED";
+        failureMessage = error instanceof Error ? error.message : String(error);
+        failureCode = twilioErrorCode(error);
         return false;
       }
     };
@@ -469,6 +487,12 @@ function deliverTextReply(params: {
             status = "undelivered";
           } else {
             status = "failed";
+            failureMessage =
+              error instanceof Error ? error.message : String(error);
+            failureCode = twilioErrorCode(error);
+            console.error(
+              `[send] ${transport.provider} reply failed: ${failureMessage}`,
+            );
           }
         }
       }
@@ -499,6 +523,8 @@ function deliverTextReply(params: {
           ...(transport.provider === "twilio" && providerId
             ? { twilio_message_sid: providerId }
             : {}),
+          error_message: failureMessage ? failureMessage.slice(0, 500) : null,
+          external_error_code: failureCode,
           metadata: { ...currentMeta, ...extra },
         })
         .eq("id", params.messageId),

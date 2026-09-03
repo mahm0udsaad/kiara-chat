@@ -16,13 +16,19 @@ import { signMediaUrl } from "@/lib/storage-media";
  * message, and outbound media must be fetched by Twilio from a URL rather than
  * handed over as bytes.
  */
-const ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+/*
+ * Every value is trimmed. These are pasted into a deployment dashboard by hand,
+ * and a trailing space or newline rides along more often than not — an untrimmed
+ * `From` is not a valid WhatsApp address and an untrimmed account sid produces a
+ * 404 against an API path that looks correct in the logs.
+ */
+const ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID?.trim();
+const AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN?.trim();
 /** Prefer a revocable API key for sends; fall back to the account credentials. */
-const API_KEY_SID = process.env.TWILIO_API_KEY_SID;
-const API_KEY_SECRET = process.env.TWILIO_API_KEY_SECRET;
-const FROM = process.env.TWILIO_WHATSAPP_FROM;
-const STATUS_CALLBACK = process.env.TWILIO_STATUS_CALLBACK_URL;
+const API_KEY_SID = process.env.TWILIO_API_KEY_SID?.trim();
+const API_KEY_SECRET = process.env.TWILIO_API_KEY_SECRET?.trim();
+const FROM = process.env.TWILIO_WHATSAPP_FROM?.trim();
+const STATUS_CALLBACK = process.env.TWILIO_STATUS_CALLBACK_URL?.trim();
 
 const API_ROOT = "https://api.twilio.com/2010-04-01";
 
@@ -47,9 +53,26 @@ function waAddress(e164: string): string {
 }
 
 function authHeader(): string {
-  const user = API_KEY_SID || ACCOUNT_SID!;
-  const pass = API_KEY_SID ? API_KEY_SECRET! : AUTH_TOKEN!;
+  // An API key is only usable as a pair. Keying off the sid alone meant a
+  // half-configured key sent "SK…:undefined" and came back as a bare 401 with
+  // nothing in it to say which credential was at fault.
+  const useApiKey = Boolean(API_KEY_SID && API_KEY_SECRET);
+  const user = useApiKey ? API_KEY_SID! : ACCOUNT_SID!;
+  const pass = useApiKey ? API_KEY_SECRET! : AUTH_TOKEN!;
   return `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
+}
+
+/**
+ * Twilio's numeric code out of an error this module threw.
+ *
+ * Stored beside the failed message so a send that did not happen can be
+ * explained from the inbox rather than from a console someone has to go and
+ * find. 63016 in particular means the service window had closed.
+ */
+export function twilioErrorCode(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const match = /^TWILIO_([A-Za-z0-9]+):/.exec(error.message);
+  return match ? match[1] : null;
 }
 
 async function createMessage(fields: Record<string, string>): Promise<SendResult> {
@@ -92,6 +115,13 @@ async function createMessage(fields: Record<string, string>): Promise<SendResult
 
   const data = await res.json().catch(() => ({}) as Record<string, unknown>);
   if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        `TWILIO_${res.status}: authentication rejected using ` +
+          `${API_KEY_SID && API_KEY_SECRET ? "API key" : "account sid + auth token"}` +
+          ` for account ${ACCOUNT_SID?.slice(0, 6)}…`,
+      );
+    }
     // Twilio's numeric code is the useful half — 63016 in particular means the
     // service window has closed and the caller should retry with a template.
     const code = data?.code ? `${data.code}` : `${res.status}`;
