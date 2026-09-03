@@ -12,6 +12,8 @@ import { KIARA_RESTAURANT_ID, type KiaraSession } from "@/lib/tenant";
 import {
   isProviderConfigured,
   transportForConversation,
+  twilioTransport,
+  isTwilioConfigured,
 } from "@/lib/transport";
 import type { MessageTransport, SendResult } from "@/lib/transport/types";
 import { getServiceWindow, isWindowClosedError } from "@/lib/transport/window";
@@ -23,7 +25,7 @@ import {
   templateVariable,
   type TemplateKey,
 } from "@/lib/templates";
-import { twilioErrorCode } from "@/lib/transport/twilio";
+import { twilioErrorCode, getTwilioSenderStatus } from "@/lib/transport/twilio";
 import {
   uploadBase64Media,
   messageTypeFromContentType,
@@ -684,14 +686,19 @@ export async function sendTemplateReply(
     clean[variable.key] = value;
   }
 
-  const transport = await transportForConversation(conversationId);
-  if (!isProviderConfigured(transport.provider)) {
-    throw new Error("خدمة الواتساب غير متصلة.");
+  // A template is a Business-Platform capability, full stop — OpenWA cannot
+  // send one. So this never uses the conversation's transport: a customer with
+  // history on the old linked-device number would resolve to OpenWA and the
+  // send would throw TEMPLATES_NOT_SUPPORTED. Sending it over Twilio is exactly
+  // how such a customer is re-engaged onto the new number; when she replies,
+  // her inbound flips the conversation to twilio for good.
+  if (!isTwilioConfigured()) {
+    throw new Error("قوالب الواتساب تحتاج رقم الأعمال (Twilio) وهو غير مُهيّأ.");
   }
-  const waNumber =
-    ((conv.metadata as Record<string, unknown> | null)?.wa_number as
-      | string
-      | undefined) ?? null;
+  const transport = twilioTransport;
+  // Deliberately no `from`: a template comes from the Business number itself
+  // (TWILIO_WHATSAPP_FROM). The conversation's stored wa_number is only ever the
+  // old linked-device number for these threads, which is not a Twilio sender.
 
   let providerId: string | null = null;
   let failure: string | null = null;
@@ -700,7 +707,6 @@ export async function sendTemplateReply(
       conv.customer_phone as string,
       contentSid,
       clean,
-      { from: waNumber },
     );
     providerId = result.providerMessageId || null;
   } catch (error) {
@@ -737,9 +743,22 @@ export async function sendTemplateReply(
     .single();
 
   if (!failure) {
+    // A template just went out over the Business number, so this thread is now
+    // on Twilio — mark it, so a follow-up free-form reply resolves to Twilio
+    // (and its 24h-window handling) rather than the old linked device. Her own
+    // reply would set this too, but staff should not have to wait for it.
+    const meta = (conv.metadata as Record<string, unknown> | null) ?? {};
+    const senderNumber = getTwilioSenderStatus().number;
     await admin
       .from("conversations")
-      .update({ last_message_at: new Date().toISOString() })
+      .update({
+        last_message_at: new Date().toISOString(),
+        metadata: {
+          ...meta,
+          transport: "twilio",
+          ...(senderNumber ? { wa_number: senderNumber } : {}),
+        },
+      })
       .eq("id", conversationId);
   }
 
