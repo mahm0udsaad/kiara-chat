@@ -15,7 +15,14 @@ import {
 } from "@/lib/transport";
 import type { MessageTransport, SendResult } from "@/lib/transport/types";
 import { getServiceWindow, isWindowClosedError } from "@/lib/transport/window";
-import { contentSidFor, greetingName } from "@/lib/templates";
+import {
+  contentSidFor,
+  greetingName,
+  renderTemplate,
+  templateSpec,
+  templateVariable,
+  type TemplateKey,
+} from "@/lib/templates";
 import { twilioErrorCode } from "@/lib/transport/twilio";
 import {
   uploadBase64Media,
@@ -629,6 +636,118 @@ export async function sendReply(
   });
 
   return { messageId, sent: false };
+}
+
+/**
+ * Send an approved template.
+ *
+ * The only way to reach a customer who has not written in the last 24 hours —
+ * including one who has never written at all, which is the whole point of
+ * being able to start a conversation from the app.
+ *
+ * Unlike a free-form reply this is sent inline rather than in the background:
+ * a template send is deliberate, the employee has just filled its variables in
+ * and is watching, and a failure she cannot see would leave her believing a
+ * customer was contacted when she was not.
+ */
+export async function sendTemplateReply(
+  conversationId: string,
+  sender: { email: string | null; teamMemberId?: string | null },
+  key: TemplateKey,
+  variables: Record<string, string>,
+): Promise<{ messageId: string | null; sent: boolean; error: string | null }> {
+  const admin = getAdminSupabaseClient();
+  const { data: conv } = await admin
+    .from("conversations")
+    .select("id, customer_phone, customer_name, metadata")
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (!conv) throw new Error("Conversation not found");
+
+  const contentSid = contentSidFor(key);
+  if (!contentSid) {
+    throw new Error("هذا القالب غير مُهيّأ بعد. راجعي إعدادات النشر.");
+  }
+
+  const spec = templateSpec(key);
+  // Sanitise here rather than trusting the caller: a newline inside a variable
+  // is rejected by Meta at send time, far from whoever typed it.
+  const clean: Record<string, string> = {};
+  for (const variable of spec.variables) {
+    const raw = variables[variable.key] ?? "";
+    const value =
+      variable.prefill === "customer_name" && !raw.trim()
+        ? greetingName(conv.customer_name as string | null)
+        : templateVariable(raw, variable.maxLength ?? 512);
+    if (!value) throw new Error(`الحقل «${variable.label}» مطلوب.`);
+    clean[variable.key] = value;
+  }
+
+  const transport = await transportForConversation(conversationId);
+  if (!isProviderConfigured(transport.provider)) {
+    throw new Error("خدمة الواتساب غير متصلة.");
+  }
+  const waNumber =
+    ((conv.metadata as Record<string, unknown> | null)?.wa_number as
+      | string
+      | undefined) ?? null;
+
+  let providerId: string | null = null;
+  let failure: string | null = null;
+  try {
+    const result = await transport.sendTemplate(
+      conv.customer_phone as string,
+      contentSid,
+      clean,
+      { from: waNumber },
+    );
+    providerId = result.providerMessageId || null;
+  } catch (error) {
+    failure = error instanceof Error ? error.message : String(error);
+    console.error(`[template] ${key} failed: ${failure}`);
+  }
+
+  // Recorded either way, and with the text the customer actually sees — a
+  // thread full of bubbles reading "template sent" tells the next employee
+  // nothing about what this customer has already been told.
+  const { data: msg } = await admin
+    .from("messages")
+    .insert({
+      conversation_id: conversationId,
+      role: "agent",
+      content: renderTemplate(key, clean),
+      message_type: "text",
+      metadata: {
+        source: "app",
+        sent_by_email: sender.email,
+        template: { key, contentSid, variables: clean, buttons: spec.buttons },
+      },
+      sender_team_member_id: sender.teamMemberId ?? null,
+      channel: "whatsapp",
+      delivery_status: failure ? "failed" : "sent",
+      external_message_sid: providerId,
+      ...(transport.provider === "twilio" && providerId
+        ? { twilio_message_sid: providerId }
+        : {}),
+      error_message: failure ? failure.slice(0, 500) : null,
+      external_error_code: twilioErrorCode(failure ? new Error(failure) : null),
+    })
+    .select("id")
+    .single();
+
+  if (!failure) {
+    await admin
+      .from("conversations")
+      .update({ last_message_at: new Date().toISOString() })
+      .eq("id", conversationId);
+  }
+
+  return {
+    messageId: (msg?.id as string) ?? null,
+    sent: !failure,
+    error: failure,
+  };
 }
 
 /**

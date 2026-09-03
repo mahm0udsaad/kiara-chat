@@ -26,6 +26,7 @@ import {
 } from "@/components/inbox/attachment-preview";
 import { CatalogSheet } from "@/components/inbox/catalog-sheet";
 import { SavedRepliesSheet } from "@/components/inbox/saved-replies-sheet";
+import { TemplatesSheet } from "@/components/inbox/templates-sheet";
 import { InlineAlert } from "@/components/screen-state";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
@@ -60,6 +61,7 @@ export function Composer({ conversationId }: { conversationId: string }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [repliesOpen, setRepliesOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [catalogBusy, setCatalogBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
@@ -496,6 +498,11 @@ export function Composer({ conversationId }: { conversationId: string }) {
               />
             ) : null}
             <MenuRow
+              icon="paperplane.fill"
+              label="قوالب"
+              onPress={() => runFromMenu(() => setTemplatesOpen(true))}
+            />
+            <MenuRow
               icon="sparkles"
               label="الباقات والخدمات"
               onPress={() => runFromMenu(() => setCatalogOpen(true))}
@@ -520,6 +527,12 @@ export function Composer({ conversationId }: { conversationId: string }) {
             current.trim() ? `${current.trim()}\n${saved.body}` : saved.body,
           )
         }
+      />
+
+      <TemplatesSheet
+        open={templatesOpen}
+        conversationId={conversationId}
+        onClose={() => setTemplatesOpen(false)}
       />
 
       <CatalogSheet

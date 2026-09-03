@@ -855,3 +855,32 @@ export type OrderAuditLog = {
   arrivalAt: string;
   entries: AuditEntry[];
 };
+
+/**
+ * An approved WhatsApp template the composer can send.
+ *
+ * These exist because Meta delivers nothing else to a customer who has not
+ * written in the last 24 hours — so a template is how the team starts a
+ * conversation rather than merely a canned reply. Only templates that are
+ * actually configured and approved are listed.
+ */
+export type MessageTemplateVariable = {
+  key: string;
+  label: string;
+  /** "customer_name" means the app fills it from the thread. */
+  prefill: string | null;
+  maxLength: number | null;
+};
+
+export type MessageTemplate = {
+  key: string;
+  label: string;
+  description: string;
+  category: "utility" | "marketing";
+  /** Approved body with `{{n}}` placeholders, for the live preview. */
+  body: string;
+  buttons: string[];
+  variables: MessageTemplateVariable[];
+};
+
+export type MessageTemplatesResponse = { templates: MessageTemplate[] };

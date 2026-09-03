@@ -41,6 +41,7 @@ import type {
   FieldOrderAction,
   FieldOrderListView,
   InternalNote,
+  MessageTemplatesResponse,
   OrderDetailResponse,
   OrderPatch,
   OrderAuditLog,
@@ -111,7 +112,6 @@ export function useBootstrap(enabled = true) {
     staleTime: 5 * 60_000,
   });
 }
-
 /** No refinement beyond the open view — the inbox's resting state. */
 export const EMPTY_CONVERSATION_FILTERS: ConversationFilters = {
   status: null,
@@ -1045,5 +1045,43 @@ export function useConversationForPhone() {
           body: JSON.stringify({ phone: input.phone, name: input.name ?? "" }),
         },
       ),
+  });
+}
+
+/**
+ * The approved templates this account can send.
+ *
+ * Long-lived: a template changes only when someone submits a new one to Meta
+ * and waits for approval, so refetching it on every composer open would be
+ * pure noise.
+ */
+export function useMessageTemplates(enabled = true) {
+  return useQuery({
+    queryKey: ["message-templates"] as const,
+    queryFn: () => apiRequest<MessageTemplatesResponse>("/templates"),
+    enabled,
+    staleTime: 10 * 60_000,
+  });
+}
+
+/**
+ * Send one. Unlike a free-form reply this resolves only once the provider has
+ * accepted it — the employee filled the variables in herself and is watching,
+ * and a silent failure would leave her believing a customer was contacted.
+ */
+export function useSendTemplate(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { key: string; variables: Record<string, string> }) =>
+      apiRequest<{ conversationId: string; messageId: string | null }>(
+        `/conversations/${id}/template`,
+        { method: "POST", body: JSON.stringify(input) },
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversationMessages(id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
+      ]);
+    },
   });
 }
