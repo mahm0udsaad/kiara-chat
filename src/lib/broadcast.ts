@@ -187,10 +187,17 @@ export async function syncAudienceFromReservations(): Promise<{ audience: number
   }
 
   if (toInsert.length) {
-    const { error } = await admin.from("customers").insert(toInsert);
-    if (error && error.code !== "23505") {
-      throw new Error(`customer bulk insert failed: ${error.message}`);
-    }
+    // Upsert on the (restaurant_id, phone_number) unique index, ignoring
+    // duplicates — a plain bulk insert is atomic, so a single already-present
+    // phone (e.g. an opted-out customer not in our read) would reject the whole
+    // batch and, on a swallowed 23505, add no one.
+    const { error } = await admin
+      .from("customers")
+      .upsert(toInsert, {
+        onConflict: "restaurant_id,phone_number",
+        ignoreDuplicates: true,
+      });
+    if (error) throw new Error(`customer sync insert failed: ${error.message}`);
   }
   for (const u of toUpdate) {
     await admin.from("customers").update({ metadata: u.metadata }).eq("id", u.id);
