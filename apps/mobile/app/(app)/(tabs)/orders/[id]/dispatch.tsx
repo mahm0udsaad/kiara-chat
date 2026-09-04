@@ -139,7 +139,7 @@ function OutcomeScreen({ kind, sentAt }: { kind: Outcome; sentAt: string | null 
           </View>
           <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
             {sent
-              ? "الطلب وملاحظاته ظاهران الآن في تطبيق السائق والأخصائية، ووصلتهما نسخة على واتساب."
+              ? "الطلب وملاحظاته ظاهران الآن في تطبيق السائق والأخصائية، ووصلهما تنبيه على التطبيق."
               : "الطلب أُسند سابقًا ولم يتغير شيء الآن. إذا لم ينتبها له، استخدمي إعادة الإرسال من صفحة الطلب."}
           </Text>
           {sentAt ? (

@@ -1,24 +1,19 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
-import { getEngineState } from "@/lib/transport/openwa";
 import { getTwilioSenderStatus } from "@/lib/transport/twilio";
 
 /**
- * GET /api/whatsapp/state — the health of both numbers.
+ * GET /api/whatsapp/state — the health of the number Kiara sends on.
  *
- * Kiara sends on two, and they fail in completely different ways: the linked
- * device can silently drop its session and need re-pairing, while the Business
- * Platform sender either is registered or is not. The Connect page has to show
- * both, because "WhatsApp is down" is never true of the pair at once.
+ * There used to be two, and this route reported both because they failed in
+ * completely different ways. The linked device is retired (2026-09-04), so the
+ * Business Platform sender is the whole answer: it is either registered or it
+ * is not, and there is no session to re-pair.
  */
 export async function GET() {
   const session = await getKiaraSession();
   if (!session || session.role !== "admin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const [openwa, twilio] = await Promise.all([
-    getEngineState(),
-    Promise.resolve(getTwilioSenderStatus()),
-  ]);
-  return NextResponse.json({ openwa, twilio });
+  return NextResponse.json({ twilio: getTwilioSenderStatus() });
 }

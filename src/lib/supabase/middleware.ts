@@ -9,10 +9,13 @@ const publicMarketingRoutes = ["/privacy", "/terms", "/support"];
 
 const publicRoutes = [...authEntryRoutes, ...publicMarketingRoutes];
 
-// Bypass the cookie-auth redirect: webhooks (OpenWA ingest), scheduled cron
-// callers and the mobile API authenticate themselves (signature / shared
-// secret / Bearer), and the middleware's cookie-only client can't validate
-// those.
+// Bypass the cookie-auth redirect: webhooks (Twilio ingest and delivery
+// receipts), scheduled cron callers and the mobile API authenticate themselves
+// (signature / shared secret / Bearer), and the middleware's cookie-only client
+// can't validate those.
+//
+// This still has to cover the retired /api/webhooks/openwa, or its deliberate
+// 410 would come back as a login redirect and read like a routing bug.
 const publicPrefixes = [
   "/api/webhooks/",
   "/api/internal/",

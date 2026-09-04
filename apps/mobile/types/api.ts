@@ -750,7 +750,7 @@ export type OrderReminderContext = {
   lastReminderAt: string | null;
   /** Minutes since anyone last touched the order. */
   stalledMinutes: number | null;
-  /** False when OPENWA is not configured — the composer hides that channel. */
+  /** Always false since 2026-09-04 — the WhatsApp channel retired with the linked device, and the composer hides it. */
   whatsappConfigured: boolean;
   recipients: OrderReminderRecipient[];
 };

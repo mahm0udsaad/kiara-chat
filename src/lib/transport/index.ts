@@ -1,71 +1,56 @@
-import { getAdminSupabaseClient } from "@/lib/supabase/admin";
-import { isOpenWaConfigured, openWaTransport } from "./openwa";
 import { isTwilioConfigured, twilioTransport } from "./twilio";
 import type { MessageTransport, TransportProvider } from "./types";
 
 /**
- * Which transport answers a given conversation.
+ * Which transport answers a given conversation. There is now only one.
  *
- * Kiara runs two WhatsApp numbers at once and they are not interchangeable: a
- * customer who wrote to the linked device must be answered from the linked
- * device, and one who wrote to the Business Platform sender must be answered
- * from that sender. Replying on the wrong number would reach her as a message
- * from a stranger.
+ * Kiara ran two WhatsApp numbers side by side until 2026-09-04: the salon's
+ * original +966593695614 as a linked device driven by the OpenWA engine, and
+ * +966508421748 as a Twilio sender on Meta's Business Platform. The linked
+ * device is retired — its session died on 2026-09-03 and was never re-paired,
+ * and the engine has been stopped. Everything leaves on the Business number.
  *
- * So the provider is a property of the conversation, recorded when a message
- * arrives, rather than a deployment-wide switch. Conversations that predate
- * Twilio carry no marker at all, which is exactly right — they resolve to
- * OpenWA and keep behaving as they always have.
+ * `TransportProvider` keeps its "openwa" member because the *data* still has
+ * it: 293 conversations carry no transport marker and most of the message
+ * history was captured through the engine. Reading those rows must keep
+ * working. Sending through it must not, which is why nothing here can hand back
+ * an OpenWA transport any more.
+ *
+ * These functions kept their signatures rather than being inlined away. They
+ * are the reason retiring a whole number was a small change, and the questions
+ * they answer — "where does this reply go?", "can we send at all?" — stay
+ * worth asking in one place if a second number is ever added back.
  */
-const DEFAULT_PROVIDER: TransportProvider = "openwa";
+const ONLY_PROVIDER: TransportProvider = "twilio";
 
-/**
- * Which number a *newly started* conversation belongs to.
- *
- * Only for threads the team opens themselves — from a reservation, from the
- * mobile app by phone, or from a dispatch — where no inbound message has said
- * which number the customer used. Since +966508421748 is now the operational
- * number, those go to Twilio.
- *
- * This deliberately does not touch conversations that already exist. A customer
- * with history on the linked-device number must keep being answered there: she
- * wrote to that number, and a reply from a different one arrives as a message
- * from a stranger.
- */
+/** Which number a conversation belongs to. One number, so one answer. */
 export function defaultOutboundProvider(): TransportProvider {
-  const configured = process.env.WHATSAPP_DEFAULT_PROVIDER?.trim().toLowerCase();
-  if (configured === "openwa") return "openwa";
-  if (configured === "twilio") return "twilio";
-  // Unset: prefer the Business Platform once it is actually usable.
-  return isTwilioConfigured() ? "twilio" : "openwa";
-}
-
-export function transportFor(provider: TransportProvider): MessageTransport {
-  return provider === "twilio" ? twilioTransport : openWaTransport;
+  return ONLY_PROVIDER;
 }
 
 export function isProviderConfigured(provider: TransportProvider): boolean {
-  return provider === "twilio" ? isTwilioConfigured() : isOpenWaConfigured();
+  return provider === "twilio" ? isTwilioConfigured() : false;
 }
 
-/** Read the provider recorded on a conversation. Unmarked threads are OpenWA. */
-export async function providerForConversation(
-  conversationId: string,
-): Promise<TransportProvider> {
-  const { data } = await getAdminSupabaseClient()
-    .from("conversations")
-    .select("metadata")
-    .eq("id", conversationId)
-    .maybeSingle();
-  const metadata = (data?.metadata as Record<string, unknown> | null) ?? {};
-  return metadata.transport === "twilio" ? "twilio" : DEFAULT_PROVIDER;
+/**
+ * Read the provider for a conversation.
+ *
+ * Deliberately no longer reads `metadata.transport`. That marker records which
+ * number a customer *used to* write to, and half of them say "openwa" — a
+ * number that can no longer send. Honouring it would route her reply into a
+ * dead pipe. Old threads are answered from the Business number now, which is
+ * what the `kiara_conversation_opener` template exists to explain to a customer
+ * who has never seen that number before.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function providerForConversation(conversationId: string): Promise<TransportProvider> {
+  return ONLY_PROVIDER;
 }
 
 /** The transport that should carry a reply in this conversation. */
-export async function transportForConversation(
-  conversationId: string,
-): Promise<MessageTransport> {
-  return transportFor(await providerForConversation(conversationId));
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function transportForConversation(conversationId: string): Promise<MessageTransport> {
+  return twilioTransport;
 }
 
 /**
@@ -73,8 +58,8 @@ export async function transportForConversation(
  * only need to know whether to offer the channel — not which pipe it uses.
  */
 export function isAnyTransportConfigured(): boolean {
-  return isOpenWaConfigured() || isTwilioConfigured();
+  return isTwilioConfigured();
 }
 
-export { openWaTransport, isOpenWaConfigured, twilioTransport, isTwilioConfigured };
+export { twilioTransport, isTwilioConfigured };
 export type { MessageTransport, TransportProvider };

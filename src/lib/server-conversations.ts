@@ -1,5 +1,5 @@
 /**
- * Server-side write path for Kiara conversations/messages. Used by the OpenWA
+ * Server-side write path for Kiara conversations/messages. Used by the Twilio
  * ingest webhook (a trusted server-to-server call, so it uses the service-role
  * client and is always pinned to Kiara's tenant). Mirrors the parent app's
  * findOrCreate + saveMessage, keyed on the WhatsApp message id.

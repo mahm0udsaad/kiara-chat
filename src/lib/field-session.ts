@@ -37,6 +37,19 @@ interface FieldSessionTokenPayload {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN_DAYS = 30;
 
+/**
+ * `OPENWA_SEND_TOKEN` is a retired variable and still load-bearing here.
+ *
+ * The engine it authenticated was stopped on 2026-09-04, so nothing else reads
+ * it — but any field link signed while it was the effective secret verifies
+ * only against it. Deleting it from the environment before `FIELD_SESSION_SECRET`
+ * is set would silently log out every field worker holding a 30-day link, and
+ * the failure would look like the links themselves were broken.
+ *
+ * Set `FIELD_SESSION_SECRET` to that same value to make the dependency explicit,
+ * then delete the OpenWA variable. Setting it to anything *else* rotates the
+ * secret and invalidates the outstanding links, which is a deliberate act.
+ */
 function signingSecret(): string {
   const explicit = process.env.FIELD_SESSION_SECRET ?? process.env.OPENWA_SEND_TOKEN;
   if (explicit) return explicit;

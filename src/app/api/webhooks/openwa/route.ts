@@ -1,211 +1,28 @@
+import { NextResponse } from "next/server";
+
 /**
- * POST /api/webhooks/openwa
- * Ingest endpoint for the persistent OpenWA service. Server-to-server, bearer
- * authenticated (OPENWA_INGEST_TOKEN). Persists live inbound + fromMe messages
- * into Kiara's conversations/messages, deduped by the WhatsApp message id, and
- * flags "handled on WhatsApp" for phone-app replies our app didn't send.
+ * POST /api/webhooks/openwa — retired.
+ *
+ * This was the ingest endpoint for the linked-device engine: it persisted live
+ * inbound and fromMe messages, which is how ~99% of the salon's outbound
+ * traffic (typed in the WhatsApp phone app) ever reached Kiara. The engine was
+ * stopped on 2026-09-04 and its pm2 entry removed.
+ *
+ * It answers 410 rather than being deleted outright, deliberately. The engine
+ * code and its session directory still sit on the VPS, so someone could start
+ * it again by hand — and an engine that came back would happily replay its
+ * whole backlog into a database that has since moved to the Business number,
+ * writing messages against a transport that can no longer send. A refusal that
+ * names itself is the difference between "this is retired" and a silent 404
+ * that reads like a deploy went wrong.
  */
-import { after, NextRequest, NextResponse } from "next/server";
-import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
-import { runBotTurn } from "@/lib/bot/reply";
-import { broadcastTyping } from "@/lib/presence";
-import { notifyInboundInboxMessage } from "@/lib/inbox-notifications";
-import {
-  findOrCreateConversation,
-  findOrCreateGroupConversation,
-  findConversationByLid,
-  findConversationByPhone,
-  rememberChatLid,
-  hasMessageWithSid,
-  saveMessage,
-  bumpConversationActivity,
-  markHandledOnWhatsApp,
-  updateDeliveryStatus,
-} from "@/lib/server-conversations";
-import {
-  uploadBase64Media,
-  messageTypeFromContentType,
-  type StoredMediaSlot,
-} from "@/lib/storage-media";
-import type { OpenWaEvent } from "@/lib/transport/types";
-
-export const runtime = "nodejs";
-export const maxDuration = 60;
-
-function authorized(request: NextRequest): boolean {
-  const token = process.env.OPENWA_INGEST_TOKEN;
-  return Boolean(token) && request.headers.get("authorization") === `Bearer ${token}`;
-}
-
-/** Older than this and the message is history replay, not a live question. */
-const LIVE_WINDOW_MS = 10 * 60_000;
-
-function isLive(timestampSeconds: number | undefined): boolean {
-  if (!timestampSeconds) return true; // no timestamp => live push
-  return Date.now() - timestampSeconds * 1000 <= LIVE_WINDOW_MS;
-}
-
-function normalizeE164(value: string): string | null {
-  const s = (value || "").trim();
-  if (!s) return null;
-  if (s.startsWith("+")) return s;
-  const digits = s.replace(/\D/g, "");
-  return digits ? `+${digits}` : null;
-}
-
-export async function POST(request: NextRequest) {
-  if (!authorized(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  let event: OpenWaEvent;
-  try {
-    event = (await request.json()) as OpenWaEvent;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  // Delivery/read acks.
-  if (event.type === "ack") {
-    await updateDeliveryStatus(event.waMessageId, event.status);
-    return NextResponse.json({ ok: true });
-  }
-
-  // Typing indicators: resolved to a thread and fanned out, never stored.
-  if (event.type === "presence") {
-    const phone = normalizeE164(event.customerPhone ?? "");
-    const lid = event.chatLid?.trim() || null;
-    const conv = phone
-      ? await findConversationByPhone(phone)
-      : lid
-        ? await findConversationByLid(lid)
-        : null;
-    if (conv) {
-      await broadcastTyping({ conversationId: conv.id, state: event.state });
-    }
-    return NextResponse.json({ ok: true });
-  }
-  if (event.type !== "message") {
-    return NextResponse.json({ error: "Unknown event type" }, { status: 400 });
-  }
-
-  // Idempotency: WA message id == external_message_sid. A known id means we
-  // already stored it (including messages OUR app sent, which we record on send).
-  if (await hasMessageWithSid(event.waMessageId)) {
-    return NextResponse.json({ deduped: true });
-  }
-
-  const phone = normalizeE164(event.customerPhone ?? "");
-  const chatLid = event.chatLid?.trim() || null;
-  // A group addresses itself by jid; the phone on the event is whoever spoke
-  // inside it, which is a participant and never the thread's address.
-  const groupJid = event.chatJid?.trim().endsWith("@g.us")
-    ? event.chatJid.trim()
-    : null;
-  if (!phone && !chatLid && !groupJid) {
-    return NextResponse.json({ error: "Missing customerPhone" }, { status: 400 });
-  }
-
-  // pushName is only the customer's name on an inbound message; on fromMe it's
-  // Kiara's own account name (the engine already nulls it, belt and braces here).
-  let conv: { id: string } | null = null;
-  if (groupJid) {
-    conv = await findOrCreateGroupConversation(groupJid, event.groupSubject);
-  } else if (phone) {
-    conv = await findOrCreateConversation(
-      phone,
-      event.fromMe ? null : event.customerName
-    );
-    // Bind the lid to the thread while we still have the phone in hand.
-    if (chatLid) await rememberChatLid(conv.id, chatLid);
-  } else if (chatLid) {
-    // Lid-only: a phone-app reply on a chat WhatsApp no longer labels with a
-    // number. It belongs to whichever thread that lid was bound to.
-    conv = await findConversationByLid(chatLid);
-    if (!conv) {
-      // Nothing to attach it to yet — the binding arrives with the customer's
-      // next inbound message. Answer 200 so the engine doesn't retry forever.
-      console.warn(`[openwa] unbound lid, message not stored: ${chatLid}`);
-      return NextResponse.json({ ok: true, unresolved: "lid" });
-    }
-  }
-  if (!conv) {
-    return NextResponse.json({ error: "Unresolved chat" }, { status: 400 });
-  }
-  const conversationId = conv.id;
-
-  let messageType = event.messageType || "text";
-  const mediaSlots: StoredMediaSlot[] = [];
-  if (event.media?.length) {
-    for (const blob of event.media) {
-      mediaSlots.push(
-        await uploadBase64Media({
-          restaurantId: KIARA_RESTAURANT_ID,
-          conversationId: conv.id,
-          contentType: blob.contentType,
-          base64: blob.base64,
-          originalFilename: blob.filename ?? null,
-        })
-      );
-    }
-    if (event.media[0]) {
-      messageType = messageTypeFromContentType(event.media[0].contentType);
-    }
-  }
-
-  const role: "customer" | "agent" = event.fromMe ? "agent" : "customer";
-  const metadata: Record<string, unknown> = {};
-  if (mediaSlots.length) metadata.media = mediaSlots;
-  if (event.fromMe) metadata.source = "whatsapp_app";
-  // In a group the thread is the group, so the bubble has to carry its own
-  // speaker — otherwise every inbound line looks like it came from one person.
-  if (groupJid && !event.fromMe) {
-    if (event.participantName) metadata.participant_name = event.participantName;
-    if (phone) metadata.participant_phone = phone;
-  }
-
-  const messageId = await saveMessage({
-    conversationId: conv.id,
-    role,
-    content: event.body || "",
-    messageType,
-    externalMessageSid: event.waMessageId,
-    metadata,
-    deliveryStatus: event.fromMe ? "sent" : "received",
-    // Preserve the WhatsApp send time (epoch seconds) so backfilled history
-    // interleaves correctly with live messages.
-    createdAt: event.timestamp ? new Date(event.timestamp * 1000).toISOString() : undefined,
-  });
-
-  await bumpConversationActivity(conv.id, { inbound: !event.fromMe });
-
-  // A live inbound wakes the employee who owns the chat, or — when nobody has
-  // claimed it yet — the whole team, so it does not sit unanswered.
-  // Groups are left out: a staff room can produce fifty messages in a minute,
-  // and an unclaimed thread notifies the whole team on every one of them.
-  if (!event.fromMe && !groupJid && isLive(event.timestamp)) {
-    after(() => notifyInboundInboxMessage(conversationId));
-  }
-
-  // fromMe + new id => sent from the phone app (our sends are deduped above).
-  if (event.fromMe) await markHandledOnWhatsApp(conv.id);
-
-  // Hand the message to the auto-reply bot off the response path — the engine
-  // gets its 200 immediately and a slow model call can't stall ingestion. Live
-  // inbound only: the pairing-time history backfill replays old messages
-  // through this same endpoint, and answering a week-old question is worse
-  // than staying quiet.
-  // Groups are excluded outright: the assistant answers a customer asking a
-  // question, and a staff group is a room full of people talking to each other.
-  if (!event.fromMe && !groupJid && phone && isLive(event.timestamp)) {
-    after(() =>
-      runBotTurn({
-        conversationId,
-        customerPhone: phone,
-        body: event.body || "",
-      })
-    );
-  }
-
-  return NextResponse.json({ ok: true, messageId, conversationId });
+export async function POST() {
+  return NextResponse.json(
+    {
+      error: "OPENWA_RETIRED",
+      detail:
+        "The linked-device engine was retired on 2026-09-04. Kiara ingests WhatsApp only through /api/webhooks/twilio.",
+    },
+    { status: 410 },
+  );
 }
