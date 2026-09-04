@@ -67,8 +67,8 @@ const ADDRESS_PHRASES = ["قريب من", "جنب ال", "خميس مشيط", "�
 /** Google plus code — a location on its own, e.g. "7GQ4+2M الرياض". */
 const PLUS_CODE = /\b[23456789CFGHJMPQRVWX]{4,6}\+[23456789CFGHJMPQRVWX]{2,3}\b/;
 
-/** A pasted coordinate pair. */
-const COORDS = /-?\d{1,2}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}/;
+/** A coordinate pair, whether typed or left as the provider's pin body. */
+const COORDS = /(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/;
 
 /**
  * Fold the spellings that vary keystroke to keystroke — hamzas, ta marbuta,
@@ -100,12 +100,96 @@ function looksLikeAddress(text: string): boolean {
 
 const RANK: Record<SharedLocationSource, number> = { pin: 3, link: 2, text: 1 };
 
+type Coordinates = { latitude: number; longitude: number };
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function validCoordinates(latitude: number, longitude: number): Coordinates | null {
+  return latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
+    ? { latitude, longitude }
+    : null;
+}
+
+function coordinatesFrom(message: Message): Coordinates | null {
+  const metadata = recordOf(message.metadata);
+  const candidates = [
+    recordOf(metadata?.location),
+    recordOf(metadata?.locationMessage),
+    recordOf(metadata?.liveLocationMessage),
+    metadata,
+  ].filter((candidate): candidate is Record<string, unknown> => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    const latitude = finiteNumber(
+      candidate.latitude ?? candidate.lat ?? candidate.degreesLatitude
+    );
+    const longitude = finiteNumber(
+      candidate.longitude ?? candidate.lng ?? candidate.lon ?? candidate.degreesLongitude
+    );
+    if (latitude !== null && longitude !== null) {
+      const valid = validCoordinates(latitude, longitude);
+      if (valid) return valid;
+    }
+  }
+
+  const match = COORDS.exec(message.content ?? "");
+  return match ? validCoordinates(Number(match[1]), Number(match[2])) : null;
+}
+
+function mapUrl(coordinates: Coordinates): string {
+  return `https://www.google.com/maps/search/?api=1&query=${coordinates.latitude},${coordinates.longitude}`;
+}
+
+function metadataLabel(message: Message): string {
+  const metadata = recordOf(message.metadata);
+  const candidates = [
+    recordOf(metadata?.location),
+    recordOf(metadata?.locationMessage),
+    recordOf(metadata?.liveLocationMessage),
+    metadata,
+  ].filter((candidate): candidate is Record<string, unknown> => Boolean(candidate));
+  const pieces: string[] = [];
+  for (const candidate of candidates) {
+    for (const key of ["label", "name", "address"] as const) {
+      const value = candidate[key];
+      if (typeof value !== "string") continue;
+      const clean = value.replace(/\s+/g, " ").trim();
+      if (clean && !pieces.includes(clean)) pieces.push(clean);
+    }
+  }
+  return pieces.join(" — ");
+}
+
 function fromPin(message: Message): SharedLocation {
   const content = message.content ?? "";
-  const url = ANY_LINK.exec(content)?.[0] ?? null;
-  const label = content.replace(url ?? "", "").replace(/\s+/g, " ").trim();
+  const existingUrl = ANY_LINK.exec(content)?.[0] ?? null;
+  const coordinates = coordinatesFrom(message);
+  const url = existingUrl || (coordinates ? mapUrl(coordinates) : null);
+  const fromContent = content
+    .replace(existingUrl ?? "", "")
+    .replace(COORDS, "")
+    .replace(/^[\s\-—,:؛]+|[\s\-—,:؛]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const label =
+    metadataLabel(message) ||
+    (!PLUS_CODE.test(fromContent) &&
+    !/^[{[]/.test(fromContent) &&
+    !/(degreesLatitude|degreesLongitude|latitude|longitude)/i.test(fromContent)
+      ? fromContent
+      : "");
   return {
-    value: [label, url].filter(Boolean).join(" — "),
+    value: [label, url].filter(Boolean).join(" — ") || "موقع مُرسل",
     url,
     label: label || null,
     source: "pin",
@@ -121,15 +205,14 @@ function fromPin(message: Message): SharedLocation {
  *
  * Only her own messages count; an agent's link is usually the clinic's.
  */
-export function findSharedLocation(messages: Message[]): SharedLocation | null {
-  let best: SharedLocation | null = null;
-
-  // Newest first, so the first hit at any rank is the freshest one.
+export function findSharedLocations(messages: Message[]): SharedLocation[] {
+  const locations: SharedLocation[] = [];
+  const seen = new Set<string>();
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     if (message.role !== "customer") continue;
     const content = message.content?.trim();
-    if (!content) continue;
+    if (!content && !PIN_TYPES.has(message.message_type)) continue;
 
     let found: SharedLocation | null = null;
     if (PIN_TYPES.has(message.message_type)) {
@@ -145,6 +228,15 @@ export function findSharedLocation(messages: Message[]): SharedLocation | null {
           source: "link",
           at: message.created_at,
         };
+      } else if (coordinatesFrom(message)) {
+        const coordinateUrl = mapUrl(coordinatesFrom(message)!);
+        found = {
+          value: coordinateUrl,
+          url: coordinateUrl,
+          label: null,
+          source: "pin",
+          at: message.created_at,
+        };
       } else if (looksLikeAddress(content)) {
         found = {
           value: content.replace(/\s+/g, " "),
@@ -156,11 +248,24 @@ export function findSharedLocation(messages: Message[]): SharedLocation | null {
       }
     }
 
-    if (!found || !found.value) continue;
-    if (!best || RANK[found.source] > RANK[best.source]) best = found;
-    if (best.source === "pin") break; // Nothing outranks a pin.
+    if (!found || (!found.url && !found.label)) continue;
+    const key = (found.url || found.value).trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    locations.push(found);
   }
+  return locations;
+}
 
+export function findSharedLocation(messages: Message[]): SharedLocation | null {
+  return bestSharedLocation(findSharedLocations(messages));
+}
+
+export function bestSharedLocation(locations: SharedLocation[]): SharedLocation | null {
+  let best: SharedLocation | null = null;
+  for (const location of locations) {
+    if (!best || RANK[location.source] > RANK[best.source]) best = location;
+  }
   return best;
 }
 
@@ -186,15 +291,15 @@ const MAP_LINK_HOSTS = [
  * the guesses outnumber the addresses, so it stays scoped to the recent
  * messages the caller already loaded.
  */
-export async function findSharedLocationInConversation(
+export async function findSharedLocationsInConversation(
   supabase: SupabaseClient,
   conversationId: string,
   recentMessages: Message[] = []
-): Promise<SharedLocation | null> {
+): Promise<SharedLocation[]> {
   const customerMessages = () =>
     supabase
       .from("messages")
-      .select("id, conversation_id, role, content, message_type, created_at")
+      .select("id, conversation_id, role, content, message_type, metadata, created_at")
       .eq("conversation_id", conversationId)
       .eq("role", "customer");
 
@@ -202,12 +307,12 @@ export async function findSharedLocationInConversation(
     customerMessages()
       .in("message_type", [...PIN_TYPES])
       .order("created_at", { ascending: false })
-      .limit(1),
+      .limit(20),
     customerMessages()
       .eq("message_type", "text")
       .or(MAP_LINK_HOSTS.map((host) => `content.ilike.%${host}%`).join(","))
       .order("created_at", { ascending: false })
-      .limit(1),
+      .limit(20),
   ]);
 
   // Same ranking as the in-memory scan: a pin outranks a link, which outranks
@@ -216,5 +321,23 @@ export async function findSharedLocationInConversation(
     ...((link.data ?? []) as Message[]),
     ...((pin.data ?? []) as Message[]),
   ];
-  return findSharedLocation(stored) ?? findSharedLocation(recentMessages);
+  return findSharedLocations(
+    [...recentMessages, ...stored].sort((a, b) =>
+      a.created_at.localeCompare(b.created_at)
+    )
+  );
+}
+
+export async function findSharedLocationInConversation(
+  supabase: SupabaseClient,
+  conversationId: string,
+  recentMessages: Message[] = []
+): Promise<SharedLocation | null> {
+  return bestSharedLocation(
+    await findSharedLocationsInConversation(
+      supabase,
+      conversationId,
+      recentMessages
+    )
+  );
 }

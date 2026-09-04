@@ -43,7 +43,7 @@ Anything marked **BLOCKER** will be hit on day one of a real rollout.
 
 - [ ] `EXPO_PUBLIC_API_URL` in the production build points at the production Vercel URL (not a LAN IP). Confirm in the EAS `production` environment, not just `.env`.
 - [ ] `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` set in the EAS `production` environment.
-- [ ] Server env on Vercel: `SUPABASE_SERVICE_ROLE_KEY`, `KIARA_RESTAURANT_ID`, `OPENWA_URL`, `OPENWA_SEND_TOKEN`, `OPENWA_INGEST_TOKEN`, `CRON_SECRET` — all present and non-empty.
+- [ ] Server env on Vercel: `SUPABASE_SERVICE_ROLE_KEY`, `KIARA_RESTAURANT_ID`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`, `TWILIO_WEBHOOK_BASE_URL`, `CRON_SECRET` — all present and non-empty. (The `OPENWA_*` variables were retired on 2026-09-04 and are no longer read.)
 - [ ] `apps/mobile/.env` (dev) is **not** what the store build reads. Confirm with `eas build --profile production` output.
 - [ ] `npx tsc --noEmit` and `npm run lint` both clean.
 - [ ] **B13** — a clean `npx expo run:ios` succeeds on the team's actual Xcode version. Record that version in the README.
@@ -77,15 +77,15 @@ Anything marked **BLOCKER** will be hit on day one of a real rollout.
 
 Decide first **which model Kiara actually wants**, because they behave differently:
 
-- **Model A — shared queue, exclusive reply (what is implemented today).** Everyone sees every chat; استلام makes it *yours to answer*; others see "مستلمة من موظف آخر" and cannot reply.
+- **Model A — shared queue, exclusive reply (what is implemented today).** Everyone sees every chat; استلام makes it *yours to answer*. Another active employee may explicitly take it over with a required reason when the owner is absent.
 - **Model B — private client books ("each employee has her own clients").** Requires `metadata.routed_to`, settable **only from the web inbox**. There is no mobile UI for it.
 
 - [ ] Product decision recorded: Model A or Model B.
 - [ ] **Model A tests:**
   - [ ] Agent A opens an unassigned chat → sees **استلام المحادثة** → taps it → composer appears.
-  - [ ] Agent B opens the same chat → sees "هذه المحادثة مستلمة من موظف آخر" and **no composer**.
+  - [ ] Agent B opens the same chat → sees the current owner and the audited takeover form, with **no composer** until takeover succeeds.
   - [ ] Two agents tap استلام within the same second → exactly one wins; the loser sees a clear 409 message, not a silent failure.
-  - [ ] Hanan (admin) opens A's chat → is offered **takeover with a required reason** (min 3 chars) and cannot reply without it.
+  - [ ] Any active employee opens A's chat → is offered **takeover with a required reason** (min 3 chars) and cannot reply without it.
   - [ ] The takeover reason is persisted and visible in the owner/accountability report.
   - [ ] The "محادثاتي" filter shows exactly the chats assigned to the signed-in agent, and nothing else.
 - [ ] **Model B tests (if chosen):**

@@ -1,6 +1,16 @@
 import { Link, Stack, useLocalSearchParams } from "expo-router";
-import { memo, useCallback, useMemo } from "react";
-import { FlatList, Pressable, RefreshControl, Text, View } from "react-native";
+import { memo, useCallback, useMemo, useState } from "react";
+import {
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Pressable,
+  RefreshControl,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CustomerAnalysisView } from "@/components/customer-analysis-view";
 import { PrimaryButton } from "@/components/primary-button";
@@ -15,6 +25,7 @@ import {
   useAnalyzeCustomer,
   useBootstrap,
   useCustomerTimeline,
+  useRenameCustomer,
 } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { CustomerInsights, TimelineEvent } from "@/types/api";
@@ -359,6 +370,7 @@ const keyOfEntry = (entry: { key: string }) => entry.key;
 
 export default function CustomerProfileScreen() {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const { phone: rawPhone, name } = useLocalSearchParams<{
     phone: string;
     name?: string;
@@ -369,10 +381,33 @@ export default function CustomerProfileScreen() {
   const isAdmin = useBootstrap().data?.session.role === "admin";
 
   const customer = timeline.data?.customer;
+  const conversationId = customer?.conversationId ?? "";
+  const rename = useRenameCustomer(conversationId, phone);
+  const [nameEditorOpen, setNameEditorOpen] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
   const revenue = timeline.data?.revenue;
   const insights = timeline.data?.insights ?? EMPTY_INSIGHTS;
   const nextVisitAt = insights.nextVisitAt;
   const displayName = customer?.name || name || formatPhone(phone);
+
+  const openNameEditor = () => {
+    rename.reset();
+    setNameDraft(customer?.name || name || "");
+    setNameEditorOpen(true);
+  };
+
+  const closeNameEditor = () => {
+    if (rename.isPending) return;
+    setNameEditorOpen(false);
+    rename.reset();
+  };
+
+  const saveName = () => {
+    if (!conversationId || rename.isPending) return;
+    rename.mutate(nameDraft, {
+      onSuccess: () => setNameEditorOpen(false),
+    });
+  };
 
   /**
    * Bookings collapse into visits; dispatches and notes stay as they are.
@@ -472,12 +507,40 @@ export default function CustomerProfileScreen() {
                   </Text>
                 </View>
                 <View style={{ flex: 1, gap: spacing.xs }}>
-                  <Text
-                    selectable
-                    style={{ ...type.title3, color: colors.text, ...rtlText }}
+                  <View
+                    style={{
+                      flexDirection: "row-reverse",
+                      alignItems: "center",
+                      gap: spacing.sm,
+                    }}
                   >
-                    {displayName}
-                  </Text>
+                    <Text
+                      selectable
+                      numberOfLines={1}
+                      style={{ flex: 1, ...type.title3, color: colors.text, ...rtlText }}
+                    >
+                      {displayName}
+                    </Text>
+                    {conversationId ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="تعديل اسم العميلة"
+                        onPress={openNameEditor}
+                        hitSlop={spacing.sm}
+                        style={({ pressed }) => ({
+                          width: hitSize.min - 6,
+                          height: hitSize.min - 6,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          borderRadius: radius.full,
+                          backgroundColor: colors.brandSoft,
+                          opacity: pressed ? 0.65 : 1,
+                        })}
+                      >
+                        <IconSymbol name="pencil" size={16} color={colors.onBrandSoft} />
+                      </Pressable>
+                    ) : null}
+                  </View>
                   <Text
                     selectable
                     style={{
@@ -784,6 +847,108 @@ export default function CustomerProfileScreen() {
           />
         }
       />
+
+      <Modal
+        visible={nameEditorOpen}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closeNameEditor}
+      >
+        <KeyboardAvoidingView
+          behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
+          style={{ flex: 1, backgroundColor: colors.background }}
+        >
+          <View
+            style={{
+              flexDirection: "row-reverse",
+              alignItems: "center",
+              minHeight: 58,
+              paddingHorizontal: spacing.lg,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+              backgroundColor: colors.surface,
+            }}
+          >
+            <Text style={{ flex: 1, ...type.headline, color: colors.text, ...rtlText }}>
+              تعديل اسم العميلة
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="إغلاق"
+              disabled={rename.isPending}
+              onPress={closeNameEditor}
+              style={({ pressed }) => ({
+                width: hitSize.min,
+                height: hitSize.min,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: radius.full,
+                opacity: pressed ? 0.6 : 1,
+              })}
+            >
+              <IconSymbol name="xmark" size={20} color={colors.textSecondary} />
+            </Pressable>
+          </View>
+
+          <View style={{ flex: 1, gap: spacing.md, padding: spacing.lg }}>
+            <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>
+              اسم العميلة
+            </Text>
+            <TextInput
+              autoFocus
+              accessibilityLabel="اسم العميلة"
+              value={nameDraft}
+              onChangeText={setNameDraft}
+              maxLength={80}
+              placeholder="اكتبي الاسم"
+              placeholderTextColor={colors.textTertiary}
+              returnKeyType="done"
+              onSubmitEditing={saveName}
+              style={{
+                minHeight: hitSize.control,
+                paddingHorizontal: spacing.lg,
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: radius.lg,
+                backgroundColor: colors.surface,
+                ...type.body,
+                color: colors.text,
+                ...rtlText,
+              }}
+            />
+            <Text style={{ ...type.footnote, color: colors.textTertiary, ...rtlText }}>
+              اتركي الحقل فارغًا للرجوع إلى عرض رقم الجوال.
+            </Text>
+            {rename.error ? <InlineAlert message={rename.error.message} /> : null}
+          </View>
+
+          <View
+            style={{
+              gap: spacing.sm,
+              padding: spacing.lg,
+              paddingBottom: spacing.lg + insets.bottom,
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
+              backgroundColor: colors.surface,
+            }}
+          >
+            <PrimaryButton
+              label="حفظ الاسم"
+              loadingLabel="جارٍ حفظ الاسم…"
+              icon="checkmark"
+              loading={rename.isPending}
+              onPress={saveName}
+            />
+            <PrimaryButton
+              label="إلغاء"
+              variant="plain"
+              silent
+              disabled={rename.isPending}
+              onPress={closeNameEditor}
+            />
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </>
   );
 }

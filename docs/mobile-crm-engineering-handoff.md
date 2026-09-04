@@ -101,7 +101,7 @@ What this harness cannot prove, and what still needs a hosted environment:
 Two holes found while testing what Hanan (`hanan@kiara.com`, admin, active,
 7 conversations assigned to her personally) actually gets. Both are closed.
 
-**Admin replies now require an explicit takeover with a reason.** Both reply
+**Replies into a colleague's conversation require an explicit takeover with a reason.** Both reply
 routes previously skipped the assignment check for admins
 (`session.role !== "admin" && ...`), so an admin could reply into another
 employee's thread with no takeover, no reason and no event — the exact
@@ -111,19 +111,15 @@ routes so they cannot drift again:
 
 - assigned to me → allowed
 - unassigned → `CONVERSATION_NOT_TAKEN` for everyone, admins included
-- assigned to someone else, admin → `TAKEOVER_REQUIRED` (409)
-- assigned to someone else, agent → `403`
+- assigned to someone else, active employee/admin → `TAKEOVER_REQUIRED` (409)
 
 `POST /api/{,mobile/v1/}conversations/:id/takeover` performs the override.
 Reason is mandatory (3–500 chars) and lands on a `conversation.taken_over`
-event alongside the previous assignee. It reuses `claim_conversation(p_force)`
-rather than reimplementing assignment, so the database re-checks
-`is_restaurant_admin` itself and the existing `conversation_claim_events`
-history still gets its `reassign` row. Known partial: the reassignment and the
-event are two statements — if the event insert fails the caller gets
-`TAKEOVER_AUDIT_FAILED`, and the override is still visible in
-`conversation_claim_events`, but its reason is not recorded. Folding both into
-one command function would close that.
+event alongside the previous assignee. Since 2026-09-04, any active employee
+may use this rescue flow when the current owner is absent. The dedicated
+`take_over_conversation` command locks the row, verifies active membership,
+compares the owner the caller saw, reassigns it, and writes both assignment and
+operation audit events in one transaction.
 
 **`operation_events.actor_role` records the role at action time.** `actor_type`
 only says whether a team-member id was supplied, so admin and agent actions

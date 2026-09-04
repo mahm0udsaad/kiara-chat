@@ -9,17 +9,17 @@ import {
 } from "@/lib/mobile/http";
 
 /**
- * POST /api/mobile/v1/conversations/:id/takeover — admin override, on record.
+ * POST /api/mobile/v1/conversations/:id/takeover — employee rescue, on record.
  *
  * Distinct from `/take`, which is the ordinary first-claim of an unassigned
- * conversation. This one moves a thread away from the employee holding it, so
- * it is admin-only and the reason is mandatory: it becomes the payload of a
- * `conversation.taken_over` event carrying the previous assignee.
+ * conversation. This one moves a thread away from the employee holding it.
+ * Every active employee may do that, but the reason is mandatory and becomes
+ * part of the `conversation.taken_over` audit event.
  */
 const ERROR_STATUS: Record<string, { status: number; message: string }> = {
-  TAKEOVER_ADMIN_ONLY: {
+  TAKEOVER_MEMBER_REQUIRED: {
     status: 403,
-    message: "استلام محادثة موظفة أخرى متاح للإدارة فقط",
+    message: "يجب أن يكون الحساب مرتبطًا بعضوية فريق نشطة",
   },
   TAKEOVER_REASON_REQUIRED: {
     status: 400,
@@ -29,9 +29,9 @@ const ERROR_STATUS: Record<string, { status: number; message: string }> = {
     status: 409,
     message: "المحادثة غير مسندة لموظفة أخرى — استخدمي استلام المحادثة",
   },
-  TAKEOVER_AUDIT_FAILED: {
-    status: 500,
-    message: "تم نقل المحادثة لكن تعذّر تسجيل السبب — أبلغي المسؤول",
+  TAKEOVER_OWNER_CHANGED: {
+    status: 409,
+    message: "استلمت موظفة أخرى المحادثة للتو — أعيدي فتحها للتأكد",
   },
 };
 
@@ -64,6 +64,7 @@ export async function POST(
       conversationId: id,
       session: auth.session,
       reason,
+      expectedAssignee: existing.assigned_to as string,
     });
 
     const updated = await getConversationById(id, viewer);

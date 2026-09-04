@@ -461,7 +461,7 @@ export function InboxClient({
   // the badge instantly; the server-side metadata clear catches up on refresh.
   const [clearedBookings, setClearedBookings] = useState<Set<string>>(new Set());
   const [optionsOpen, setOptionsOpen] = useState(false);
-  /** Reason an admin gives before overriding the current assignee. */
+  /** Reason an employee gives before rescuing a colleague's conversation. */
   const [takeoverReason, setTakeoverReason] = useState("");
   const [orderOpen, setOrderOpen] = useState(false);
   const [orderSheetMounted, setOrderSheetMounted] = useState(false);
@@ -1384,14 +1384,13 @@ export function InboxClient({
   const selectedReminder = selected
     ? latestReservationFollowUpOf(selected.metadata)
     : null;
-  // Admin is deliberately NOT a blanket reply permission. Overriding another
-  // employee goes through takeover, which records a reason on the event.
+  // Nobody gets blanket reply permission. Any active employee can explicitly
+  // take over first, which preserves exclusive ownership and records a reason.
   const canReply = Boolean(
     selected && myTeamMemberId && selected.assigned_to === myTeamMemberId
   );
   const canTakeOver = Boolean(
-    isAdmin &&
-      selected?.assigned_to &&
+    selected?.assigned_to &&
       myTeamMemberId &&
       selected.assigned_to !== myTeamMemberId
   );
@@ -2020,10 +2019,10 @@ export function InboxClient({
                   </Button>
                 ) : canTakeOver ? (
                   // The reason is required, not optional: it is what the owner
-                  // report shows next to the override.
+                  // report shows next to the employee rescue.
                   <div className="flex flex-col gap-2">
                     <p className="text-sm text-[var(--muted-foreground)]">
-                      {`المحادثة مستلمة من ${ownerLabel(selected)}. لاستلامها اكتبي السبب.`}
+                      {`المحادثة مستلمة من ${ownerLabel(selected)}. إذا كانت غير متاحة يمكنك استلام المحادثة بعد كتابة السبب.`}
                     </p>
                     <div className="flex items-end gap-2">
                       <input

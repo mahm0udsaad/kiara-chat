@@ -22,6 +22,7 @@ import type {
   ConversationActionsInput,
   ConversationDetail,
   ConversationMessagesPage,
+  ConversationLabel,
   ConversationSummary,
   ConversationSection,
   ConversationFilters,
@@ -41,6 +42,7 @@ import type {
   FieldOrderAction,
   FieldOrderListView,
   InternalNote,
+  LabelColor,
   MessageTemplatesResponse,
   OrderDetailResponse,
   OrderPatch,
@@ -110,6 +112,33 @@ export function useBootstrap(enabled = true) {
     // instead of multiplying that wait behind an unexplained full-screen spinner.
     retry: false,
     staleTime: 5 * 60_000,
+  });
+}
+
+/** Create a shared conversation label and expose it to every open label UI. */
+export function useCreateConversationLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; color: LabelColor }) =>
+      apiRequest<{ label: ConversationLabel; created: boolean }>("/labels", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: ({ label }) => {
+      queryClient.setQueryData<BootstrapResponse>(
+        queryKeys.bootstrap,
+        (current) =>
+          current
+            ? {
+                ...current,
+                labels: [
+                  ...current.labels.filter((candidate) => candidate.id !== label.id),
+                  label,
+                ].sort((left, right) => left.name.localeCompare(right.name, "ar")),
+              }
+            : current,
+      );
+    },
   });
 }
 /** No refinement beyond the open view — the inbox's resting state. */
@@ -210,12 +239,35 @@ export function useTakeConversation(id: string) {
   });
 }
 
+/** Rename (or clear) the customer and refresh every surface that shows it. */
+export function useRenameCustomer(id: string, phone: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiRequest<{ ok: true; name: string | null }>(
+        `/conversations/${id}/name`,
+        {
+          method: "POST",
+          body: JSON.stringify({ name }),
+        },
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.customerTimeline(phone) }),
+        queryClient.invalidateQueries({ queryKey: ["orders"] }),
+      ]);
+    },
+  });
+}
+
 /**
- * Admin override: move a conversation away from the employee holding it.
+ * Employee rescue: move a conversation away from the employee holding it.
  *
  * Separate from `useTakeConversation` on purpose — that one claims an
- * unassigned thread, this one overrides a colleague and therefore refuses to
- * run without a reason, which is stored on the accountability event.
+ * unassigned thread, this one takes over from a colleague and therefore
+ * refuses to run without a reason, which is stored on the accountability event.
  */
 export function useTakeOverConversation(id: string) {
   const queryClient = useQueryClient();
@@ -775,8 +827,11 @@ export function useDispatchOrder(id: string) {
   return useMutation({
     mutationFn: ({ specialistVoice, doorPhoto, ...input }: DispatchInput) => {
       // The order and its notes are stored by the command, so the dispatch
-      // itself cannot half-succeed. What can miss is a nudge: `driverSent` and
-      // `specialistSent` are the WhatsApp copies, `notified` the push.
+      // itself cannot half-succeed. What can miss is the nudge: `notified` is
+      // the push, and since 2026-09-04 it is the only one. `driverSent` and
+      // `specialistSent` were the WhatsApp copies and now always report false —
+      // kept in the shape so an older installed build still parses the
+      // response, and read by nothing.
       type Result = {
         order: OrderDetailResponse["order"];
         driverSent: boolean;

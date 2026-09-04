@@ -28,6 +28,7 @@ import { tapFeedback } from "@/lib/haptics";
 import {
   useAddConversationNote,
   useConversationNotes,
+  useCreateConversationLabel,
   useMediaUrl,
   useReleaseConversation,
   useSaveBookingReceipt,
@@ -60,6 +61,24 @@ type PendingReceipt = {
 };
 
 const EMPTY_LABEL_IDS: string[] = [];
+const NEW_LABEL_COLORS: readonly LabelColor[] = [
+  "slate",
+  "amber",
+  "emerald",
+  "blue",
+  "indigo",
+  "red",
+];
+const LABEL_COLOR_NAME: Record<LabelColor, string> = {
+  slate: "رمادي",
+  red: "أحمر",
+  amber: "ذهبي",
+  emerald: "أخضر",
+  blue: "أزرق",
+  indigo: "نيلي",
+  fuchsia: "فوشيا",
+  rose: "وردي",
+};
 const CS_STATUS_OPTIONS: readonly CsStatus[] = ["open", "waiting", "resolved"];
 const SECTION_OPTIONS: { value: ConversationSection | null; label: string }[] = [
   { value: "orders", label: "قسم الطلبات" },
@@ -148,8 +167,12 @@ export function ConversationActionsButton({
     receipt: BookingReceipt;
   } | null>(null);
   const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [newLabelName, setNewLabelName] = useState("");
+  const [newLabelColor, setNewLabelColor] = useState<LabelColor>("blue");
+  const [newLabelError, setNewLabelError] = useState<string | null>(null);
 
   const receiptUpload = useSaveBookingReceipt(conversationId);
+  const labelCreation = useCreateConversationLabel();
   const uploadedReceiptIsCurrent = Boolean(
     uploadedReceipt &&
       uploadedReceipt.conversationId === conversationId &&
@@ -198,7 +221,7 @@ export function ConversationActionsButton({
     Boolean(draftBookingStage === "invoice_required" && draftReceipt);
   const receiptRequired = draftBookingStage === "invoice_required";
   const hasReceipt = Boolean(draftReceipt || savedReceipt);
-  const saving = pending || receiptUpload.isPending;
+  const saving = pending || receiptUpload.isPending || labelCreation.isPending;
 
   function openSheet() {
     setDraftCsStatus(csStatus);
@@ -207,6 +230,8 @@ export function ConversationActionsButton({
     setDraftLabelIds(labelIds);
     setDraftReceipt(null);
     setReceiptError(null);
+    setNewLabelName("");
+    setNewLabelError(null);
     tapFeedback();
     setOpen(true);
   }
@@ -222,6 +247,28 @@ export function ConversationActionsButton({
         ? current.filter((id) => id !== labelId)
         : [...current, labelId],
     );
+  }
+
+  async function createInlineLabel() {
+    const name = newLabelName.trim();
+    if (!name || !canEdit || labelCreation.isPending) return;
+
+    setNewLabelError(null);
+    try {
+      const { label } = await labelCreation.mutateAsync({
+        name,
+        color: newLabelColor,
+      });
+      setDraftLabelIds((current) =>
+        current.includes(label.id) ? current : [...current, label.id],
+      );
+      setNewLabelName("");
+      tapFeedback();
+    } catch (error) {
+      setNewLabelError(
+        error instanceof Error ? error.message : "تعذّر إنشاء التصنيف.",
+      );
+    }
   }
 
   async function pickReceipt() {
@@ -391,6 +438,7 @@ export function ConversationActionsButton({
 
           <ScrollView
             contentInsetAdjustmentBehavior="automatic"
+            keyboardShouldPersistTaps="handled"
             style={{ flex: 1 }}
             contentContainerStyle={{
               gap: spacing.xl,
@@ -550,6 +598,146 @@ export function ConversationActionsButton({
                   لا توجد تصنيفات متاحة.
                 </Text>
               )}
+
+              <View
+                style={{
+                  gap: spacing.sm,
+                  paddingTop: spacing.sm,
+                  borderTopWidth: 1,
+                  borderTopColor: colors.border,
+                }}
+              >
+                <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+                  إضافة تصنيف جديد
+                </Text>
+                <View
+                  style={{
+                    flexDirection: "row-reverse",
+                    alignItems: "center",
+                    gap: spacing.sm,
+                  }}
+                >
+                  <TextInput
+                    testID="conversation-actions-new-label-name"
+                    accessibilityLabel="اسم التصنيف الجديد"
+                    value={newLabelName}
+                    onChangeText={(value) => {
+                      setNewLabelName(value);
+                      if (newLabelError) setNewLabelError(null);
+                    }}
+                    placeholder="اكتبي اسم التصنيف…"
+                    placeholderTextColor={colors.textTertiary}
+                    maxLength={40}
+                    returnKeyType="done"
+                    editable={canEdit && !saving}
+                    onSubmitEditing={() => void createInlineLabel()}
+                    style={{
+                      flex: 1,
+                      minHeight: hitSize.min,
+                      paddingHorizontal: spacing.md,
+                      borderWidth: 1,
+                      borderColor: newLabelError ? colors.danger : colors.borderStrong,
+                      borderRadius: radius.md,
+                      backgroundColor: colors.surface,
+                      color: colors.text,
+                      opacity: canEdit ? 1 : 0.5,
+                      ...type.body,
+                      ...rtlText,
+                    }}
+                  />
+                  <Pressable
+                    testID="conversation-actions-new-label-add"
+                    accessibilityRole="button"
+                    accessibilityLabel="إضافة التصنيف وتحديده"
+                    accessibilityState={{
+                      disabled:
+                        !canEdit || !newLabelName.trim() || labelCreation.isPending,
+                    }}
+                    disabled={!canEdit || !newLabelName.trim() || labelCreation.isPending}
+                    onPress={() => void createInlineLabel()}
+                    style={({ pressed }) => ({
+                      minWidth: hitSize.min,
+                      minHeight: hitSize.min,
+                      flexDirection: "row-reverse",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: spacing.xs,
+                      paddingHorizontal: spacing.md,
+                      borderRadius: radius.md,
+                      backgroundColor: colors.brand,
+                      opacity:
+                        !canEdit || !newLabelName.trim()
+                          ? 0.45
+                          : pressed
+                            ? 0.72
+                            : 1,
+                    })}
+                  >
+                    {labelCreation.isPending ? (
+                      <ActivityIndicator color={colors.onBrand} size="small" />
+                    ) : (
+                      <IconSymbol name="plus" color={colors.onBrand} size={16} />
+                    )}
+                    <Text style={{ ...type.subheadStrong, color: colors.onBrand, ...rtlText }}>
+                      إضافة
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <View
+                  accessibilityRole="radiogroup"
+                  style={{
+                    flexDirection: "row-reverse",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: spacing.sm,
+                  }}
+                >
+                  <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
+                    اللون
+                  </Text>
+                  {NEW_LABEL_COLORS.map((color) => {
+                    const selected = newLabelColor === color;
+                    return (
+                      <Pressable
+                        key={color}
+                        testID={`conversation-actions-new-label-color-${color}`}
+                        accessibilityRole="radio"
+                        accessibilityLabel={`لون ${LABEL_COLOR_NAME[color]}`}
+                        accessibilityState={{ selected, disabled: !canEdit || saving }}
+                        disabled={!canEdit || saving}
+                        onPress={() => {
+                          tapFeedback();
+                          setNewLabelColor(color);
+                        }}
+                        hitSlop={4}
+                        style={({ pressed }) => ({
+                          width: hitSize.min,
+                          height: hitSize.min,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          borderRadius: radius.full,
+                          borderWidth: selected ? 2 : 1,
+                          borderColor: selected ? colors.brand : colors.border,
+                          backgroundColor: selected ? colors.brandSoft : colors.surface,
+                          opacity: !canEdit ? 0.5 : pressed ? 0.68 : 1,
+                        })}
+                      >
+                        <View
+                          style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: radius.full,
+                            backgroundColor: labelColor(color, colors),
+                          }}
+                        />
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {newLabelError ? <InlineAlert message={newLabelError} /> : null}
+              </View>
             </ActionSection>
 
             <View

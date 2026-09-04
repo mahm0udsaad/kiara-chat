@@ -6,9 +6,9 @@
  * somebody else, with no takeover, no reason and no event — which is exactly
  * the intervention an owner report is supposed to be able to show.
  *
- * An admin is not blocked from intervening. She is required to say so first:
- * `TAKEOVER_REQUIRED` is the signal for the client to collect a reason and call
- * the takeover endpoint, after which she is the assignee and replies normally.
+ * Any active employee can intervene, but must say so first. `TAKEOVER_REQUIRED`
+ * is the signal for the client to collect a reason and call the takeover
+ * endpoint, after which she is the assignee and replies normally.
  *
  * Groups are the one exception to all of it: a WhatsApp group is nobody's
  * ticket. Every agent reads and writes in it, so there is no claim to make and
@@ -66,7 +66,7 @@ export function replyDenialFor(
     };
   }
 
-  if (viewer.role === "admin") {
+  if (viewer.teamMemberId) {
     return {
       code: "TAKEOVER_REQUIRED",
       status: 409,

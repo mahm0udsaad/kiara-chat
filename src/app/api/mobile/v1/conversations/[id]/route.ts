@@ -11,7 +11,10 @@ import {
   routedToOf,
   sectionOf,
 } from "@/lib/conversation-meta";
-import { findSharedLocationInConversation } from "@/lib/location";
+import {
+  bestSharedLocation,
+  findSharedLocationsInConversation,
+} from "@/lib/location";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getConversationLabelIds } from "@/lib/labels";
 import {
@@ -63,6 +66,12 @@ export async function GET(
         toClassifiedMobileConversation(conversation),
       ]);
 
+    const sharedLocations = await findSharedLocationsInConversation(
+      await createServerSupabaseClient(),
+      id,
+      page.messages
+    );
+
     return mobileData({
       conversation: {
         ...mobileConversation,
@@ -83,11 +92,8 @@ export async function GET(
       // Prefills the booking sheet's location field. Searched across the whole
       // thread, not just this page: a pin is usually dropped once, early, and
       // the phone must not ask for an address the customer already sent.
-      sharedLocation: await findSharedLocationInConversation(
-        await createServerSupabaseClient(),
-        id,
-        page.messages
-      ),
+      sharedLocation: bestSharedLocation(sharedLocations),
+      sharedLocations,
       hasMore: page.hasMore,
       nextBefore: page.hasMore ? page.messages[0]?.created_at ?? null : null,
     });

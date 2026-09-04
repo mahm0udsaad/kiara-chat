@@ -303,7 +303,7 @@ Rules:
 |---|---|---|
 | Take conversation | Unassigned CS/admin | Atomic first-writer-wins claim |
 | Reply | Assigned CS | Assignment + version check |
-| Admin reply | Admin after explicit takeover | Required reason + event |
+| Colleague rescue | Active CS/admin after explicit takeover | Expected owner + required reason + event |
 | Reservation stage | Assigned CS/admin | Allowed-transition RPC + version |
 | Edit order | Assigned/authorized CS | Version + field-level audit diff |
 | Dispatch | Authorized CS | Atomic `ready -> dispatching` transition + idempotency |
@@ -500,7 +500,7 @@ Gate: a driver and specialist complete a staged order on physical iOS and Androi
 - Build deterministic event-based metrics and drill-down evidence.
 - Add Today exceptions, CS quality, field quality, and integration health.
 - Add date/team/employee filters and export where operationally required.
-- Add explicit admin takeover/override flow.
+- Add explicit employee takeover/override flow for conversations held by absent colleagues.
 
 Gate: Hanan can answer “what failed, when, who owned it then, and what evidence proves it?” without querying raw data.
 

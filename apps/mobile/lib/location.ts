@@ -1,68 +1,35 @@
 import type { ConversationMessage, SharedLocation } from "@/types/api";
 
-/**
- * Where the customer already said she is, read straight out of the thread.
- *
- * A port of the web inbox's `findSharedLocation`, kept client-side for the same
- * reason: the messages are already here, so the booking sheet can prefill the
- * address without waiting on another round trip — and without anyone retyping
- * a pin she dropped an hour ago.
- */
+/** WhatsApp message types used for a dropped or live pin. */
+export const PIN_TYPES = new Set([
+  "location",
+  "locationMessage",
+  "liveLocationMessage",
+]);
 
-/**
- * Message types a WhatsApp pin arrives as. "location" is what the engine writes
- * once it has resolved coordinates ("name — address\nmaps link"); the two raw
- * Baileys names are pins ingested before that step.
- */
-const PIN_TYPES = new Set(["location", "locationMessage", "liveLocationMessage"]);
-
-/** Maps links customers actually paste: Google, its shorteners, and Waze. */
+/** Maps links customers commonly paste into a text message. */
 const MAP_LINK =
   /https?:\/\/(?:maps\.app\.goo\.gl\/\S+|goo\.gl\/maps\/\S+|(?:www\.)?google\.[a-z.]+\/maps\S*|maps\.google\.[a-z.]+\/\S*|(?:www\.)?waze\.com\/\S+)/i;
+const ANY_LINK = /https?:\/\/\S+/i;
+const COORDINATES = /(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/;
 
-const ANY_LINK = /https?:\/\/\S+/;
-
-/**
- * Words that make a typed line an address rather than conversation.
- *
- * The pin and maps-link branches below are self-evidently locations; a typed
- * line is not. Without this guard the "last thing she wrote" is offered as her
- * address — "لي ساعة ونص انتظر" is not an address — and a suggestion that is
- * usually wrong is worse than none, because someone eventually accepts one.
- *
- * Matched as whole words, never as substrings: "حسابها" ends in the letters of
- * أبها, and a city hiding inside an ordinary word is exactly how "كم كل وحده
- * حسابها" got offered as somewhere to send a driver.
- */
 const ADDRESS_WORDS = new Set(
   [
-    // Structure
     "حي", "الحي", "شارع", "الشارع", "طريق", "الطريق", "جاده", "مخرج", "بوابه",
     "فيلا", "فله", "عماره", "مبني", "برج", "شقه", "الدور", "مجمع", "كمبوند",
     "بلوك", "ضاحيه", "منطقه", "حاره", "بجانب", "بجنب", "خلف", "امام", "قرب",
-    "عنواني", "العنوان", "موقعي",
-    // Cities
-    "الرياض", "جده", "مكه", "المدينه", "الدمام", "الخبر", "الظهران", "الطايف",
-    "بريده", "تبوك", "ابها", "القصيم", "ينبع", "الجبيل", "نجران", "جازان",
-    "حايل", "عرعر", "سكاكا", "الاحساء", "الهفوف", "القطيف",
-    // Latin
-    "street", "district", "road", "building", "villa", "compound",
-  ].map(normalizeArabic)
+    "عنواني", "العنوان", "موقعي", "الرياض", "جده", "مكه", "المدينه", "الدمام",
+    "الخبر", "الظهران", "الطايف", "بريده", "تبوك", "ابها", "القصيم", "ينبع",
+    "الجبيل", "نجران", "جازان", "حايل", "عرعر", "سكاكا", "الاحساء", "الهفوف",
+    "القطيف", "street", "district", "road", "building", "villa", "compound",
+  ].map(normalizeArabic),
 );
-
-/** Two-word markers, checked on the normalized text. */
 const ADDRESS_PHRASES = ["قريب من", "جنب ال", "خميس مشيط", "المدينه المنوره"];
+const PLUS_CODE = /\b[23456789CFGHJMPQRVWX]{4,6}\+[23456789CFGHJMPQRVWX]{2,3}\b/i;
+const RANK: Record<SharedLocation["source"], number> = { pin: 3, link: 2, text: 1 };
 
-/** Google plus code — a location on its own, e.g. "7GQ4+2M الرياض". */
-const PLUS_CODE = /\b[23456789CFGHJMPQRVWX]{4,6}\+[23456789CFGHJMPQRVWX]{2,3}\b/;
+type Coordinates = { latitude: number; longitude: number };
 
-/** A pasted coordinate pair. */
-const COORDS = /-?\d{1,2}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}/;
-
-/**
- * Fold the spellings that vary keystroke to keystroke — hamzas, ta marbuta,
- * alef maqsura, diacritics — so one spelling in the list matches them all.
- */
 function normalizeArabic(text: string): string {
   return text
     .replace(/[\u064B-\u0652\u0670]/g, "")
@@ -75,81 +42,171 @@ function normalizeArabic(text: string): string {
 }
 
 function looksLikeAddress(text: string): boolean {
-  if (PLUS_CODE.test(text) || COORDS.test(text)) return true;
+  if (PLUS_CODE.test(text) || COORDINATES.test(text)) return true;
   const normalized = normalizeArabic(text);
   if (ADDRESS_PHRASES.some((phrase) => normalized.includes(phrase))) return true;
-  // Split on anything outside the Arabic block, the Latin letters and the
-  // digits, so each token is a whole word and "حسابها" can never be read as
-  // "ابها". Spelled as an explicit range rather than \p{L}: the same file runs
-  // on Hermes, where unicode property escapes are not something to rely on.
   return normalized
     .split(/[^0-9a-z\u0600-\u06FF]+/)
     .some((word) => word && ADDRESS_WORDS.has(word));
 }
 
-const RANK: Record<SharedLocation["source"], number> = { pin: 3, link: 2, text: 1 };
-
-function fromPin(message: ConversationMessage): SharedLocation {
-  const content = message.content ?? "";
-  const url = ANY_LINK.exec(content)?.[0] ?? null;
-  const label = content.replace(url ?? "", "").replace(/\s+/g, " ").trim();
-  return {
-    value: [label, url].filter(Boolean).join(" — "),
-    url,
-    label: label || null,
-    source: "pin",
-    at: message.created_at,
-  };
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
-/**
- * Best evidence first: a dropped pin IS the address, a pasted maps link is
- * nearly as good, and the last line she typed is only a guess worth offering —
- * never worth filling in on its own.
- *
- * Only her own messages count; an agent's link is usually the salon's.
- */
+function finiteNumber(value: unknown): number | null {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function validCoordinates(latitude: number, longitude: number): Coordinates | null {
+  return latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
+    ? { latitude, longitude }
+    : null;
+}
+
+/** Reads Twilio, Baileys, and normalized location metadata without exposing raw JSON. */
+function coordinatesFrom(message: ConversationMessage): Coordinates | null {
+  const metadata = recordOf(message.metadata);
+  const candidates = [
+    recordOf(metadata?.location),
+    recordOf(metadata?.locationMessage),
+    recordOf(metadata?.liveLocationMessage),
+    metadata,
+  ].filter((candidate): candidate is Record<string, unknown> => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    const latitude = finiteNumber(
+      candidate.latitude ?? candidate.lat ?? candidate.degreesLatitude,
+    );
+    const longitude = finiteNumber(
+      candidate.longitude ?? candidate.lng ?? candidate.lon ?? candidate.degreesLongitude,
+    );
+    if (latitude !== null && longitude !== null) {
+      const valid = validCoordinates(latitude, longitude);
+      if (valid) return valid;
+    }
+  }
+
+  const match = COORDINATES.exec(message.content ?? "");
+  if (!match) return null;
+  return validCoordinates(Number(match[1]), Number(match[2]));
+}
+
+function mapUrl(coordinates: Coordinates): string {
+  return `https://www.google.com/maps/search/?api=1&query=${coordinates.latitude},${coordinates.longitude}`;
+}
+
+function locationMetadataLabel(message: ConversationMessage): string {
+  const metadata = recordOf(message.metadata);
+  const candidates = [
+    recordOf(metadata?.location),
+    recordOf(metadata?.locationMessage),
+    recordOf(metadata?.liveLocationMessage),
+    metadata,
+  ].filter((candidate): candidate is Record<string, unknown> => Boolean(candidate));
+  const pieces: string[] = [];
+  for (const candidate of candidates) {
+    for (const key of ["label", "name", "address"] as const) {
+      const value = candidate[key];
+      if (typeof value !== "string") continue;
+      const clean = value.replace(/\s+/g, " ").trim();
+      if (clean && !pieces.includes(clean)) pieces.push(clean);
+    }
+  }
+  return pieces.join(" — ");
+}
+
+function readablePinLabel(message: ConversationMessage, url: string | null): string {
+  const metadataLabel = locationMetadataLabel(message);
+  if (metadataLabel) return metadataLabel;
+
+  const content = (message.content ?? "")
+    .replace(url ?? "", "")
+    .replace(COORDINATES, "")
+    .replace(/^[\s\-—,:؛]+|[\s\-—,:؛]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!content || PLUS_CODE.test(content)) return "";
+  // Provider payloads occasionally arrive as serialized objects. They are
+  // useful for parsing, never useful as customer-facing copy.
+  if (/^[{[]/.test(content) || /(degreesLatitude|degreesLongitude|latitude|longitude)/i.test(content)) {
+    return "";
+  }
+  return content;
+}
+
+/** Converts one message into a readable, tappable location when possible. */
+export function locationFromMessage(
+  message: ConversationMessage,
+): SharedLocation | null {
+  const content = message.content?.trim() ?? "";
+  if (PIN_TYPES.has(message.message_type)) {
+    const coordinates = coordinatesFrom(message);
+    const existingUrl = ANY_LINK.exec(content)?.[0] ?? null;
+    const url = existingUrl || (coordinates ? mapUrl(coordinates) : null);
+    const label = readablePinLabel(message, existingUrl);
+    return {
+      value: [label, url].filter(Boolean).join(" — ") || "موقع مُرسل",
+      url,
+      label: label || null,
+      source: "pin",
+      at: message.created_at,
+    };
+  }
+
+  if (message.message_type !== "text" || !content) return null;
+  const pastedUrl = MAP_LINK.exec(content)?.[0] ?? null;
+  if (pastedUrl) {
+    const label = content.replace(pastedUrl, "").replace(/\s+/g, " ").trim();
+    return {
+      value: [label, pastedUrl].filter(Boolean).join(" — "),
+      url: pastedUrl,
+      label: label || null,
+      source: "link",
+      at: message.created_at,
+    };
+  }
+
+  const coordinates = coordinatesFrom(message);
+  if (coordinates) {
+    const url = mapUrl(coordinates);
+    return { value: url, url, label: null, source: "pin", at: message.created_at };
+  }
+  if (!looksLikeAddress(content)) return null;
+  const label = content.replace(/\s+/g, " ");
+  return { value: label, url: null, label, source: "text", at: message.created_at };
+}
+
+/** Every distinct customer location, newest first, for order recommendations. */
+export function findSharedLocations(
+  messages: ConversationMessage[],
+): SharedLocation[] {
+  const found: SharedLocation[] = [];
+  const seen = new Set<string>();
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "customer") continue;
+    const location = locationFromMessage(message);
+    if (!location || (!location.url && !location.label)) continue;
+    const key = (location.url || location.value).trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    found.push(location);
+  }
+  return found;
+}
+
+/** Best evidence first, with newest winning when two locations have equal quality. */
 export function findSharedLocation(
   messages: ConversationMessage[],
 ): SharedLocation | null {
   let best: SharedLocation | null = null;
-
-  // Newest first, so the first hit at any rank is the freshest one.
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (!message || message.role !== "customer") continue;
-    const content = message.content?.trim();
-    if (!content) continue;
-
-    let found: SharedLocation | null = null;
-    if (PIN_TYPES.has(message.message_type)) {
-      found = fromPin(message);
-    } else if (message.message_type === "text") {
-      const url = MAP_LINK.exec(content)?.[0] ?? null;
-      if (url) {
-        const label = content.replace(url, "").replace(/\s+/g, " ").trim();
-        found = {
-          value: [label, url].filter(Boolean).join(" — "),
-          url,
-          label: label || null,
-          source: "link",
-          at: message.created_at,
-        };
-      } else if (looksLikeAddress(content)) {
-        found = {
-          value: content.replace(/\s+/g, " "),
-          url: null,
-          label: content.replace(/\s+/g, " "),
-          source: "text",
-          at: message.created_at,
-        };
-      }
-    }
-
-    if (!found || !found.value) continue;
-    if (!best || RANK[found.source] > RANK[best.source]) best = found;
-    if (best.source === "pin") break; // Nothing outranks a pin.
+  for (const location of findSharedLocations(messages)) {
+    if (!best || RANK[location.source] > RANK[best.source]) best = location;
   }
-
   return best;
 }

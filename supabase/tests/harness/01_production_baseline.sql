@@ -107,6 +107,18 @@ create table if not exists public.messages (
   sender_team_member_id uuid
 );
 
+create table if not exists public.conversation_claim_events (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  team_member_id uuid not null references public.team_members(id) on delete cascade,
+  mode text not null check (mode in ('human', 'bot')),
+  claimed_at timestamptz not null default now(),
+  claimed_by_user_id uuid references auth.users(id),
+  event_type text not null default 'claim'
+    check (event_type in ('claim', 'reassign', 'force_bot', 'unassign'))
+);
+
 create table if not exists public.customers (
   id uuid primary key default gen_random_uuid(),
   restaurant_id uuid not null references public.restaurants(id) on delete cascade,
@@ -151,6 +163,7 @@ alter table public.specialists enable row level security;
 alter table public.drivers enable row level security;
 alter table public.conversations enable row level security;
 alter table public.messages enable row level security;
+alter table public.conversation_claim_events enable row level security;
 alter table public.customers enable row level security;
 alter table public.driver_orders enable row level security;
 

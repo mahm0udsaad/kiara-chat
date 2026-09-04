@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server";
 
 import { denyIfRouted } from "@/lib/conversation-access";
+import { getConversationById } from "@/lib/inbox";
 import { takeOverConversation, TakeoverError } from "@/lib/interactions";
 import { getKiaraSession } from "@/lib/tenant";
 
 /**
- * POST /api/conversations/:id/takeover — the web half of the admin override.
+ * POST /api/conversations/:id/takeover — the web half of employee takeover.
  *
  * Same command as the mobile route, so a takeover recorded from a laptop and
  * one recorded from a phone produce the identical event.
  */
 const ERROR_STATUS: Record<string, { status: number; message: string }> = {
-  TAKEOVER_ADMIN_ONLY: {
+  TAKEOVER_MEMBER_REQUIRED: {
     status: 403,
-    message: "استلام محادثة موظفة أخرى متاح للإدارة فقط",
+    message: "يجب أن يكون الحساب مرتبطًا بعضوية فريق نشطة",
   },
   TAKEOVER_REASON_REQUIRED: {
     status: 400,
@@ -23,9 +24,9 @@ const ERROR_STATUS: Record<string, { status: number; message: string }> = {
     status: 409,
     message: "المحادثة غير مسندة لموظفة أخرى — استخدمي استلام المحادثة",
   },
-  TAKEOVER_AUDIT_FAILED: {
-    status: 500,
-    message: "تم نقل المحادثة لكن تعذّر تسجيل السبب — أبلغي المسؤول",
+  TAKEOVER_OWNER_CHANGED: {
+    status: 409,
+    message: "استلمت موظفة أخرى المحادثة للتو — أعيدي فتحها للتأكد",
   },
 };
 
@@ -44,10 +45,25 @@ export async function POST(
   const reason = typeof body?.reason === "string" ? body.reason : "";
 
   try {
+    const existing = await getConversationById(id, {
+      isAdmin: session.role === "admin",
+      teamMemberId: session.teamMemberId,
+    });
+    if (!existing) {
+      return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+    }
+    if (!existing.assigned_to) {
+      return NextResponse.json(
+        { error: ERROR_STATUS.TAKEOVER_NOT_NEEDED.message, code: "TAKEOVER_NOT_NEEDED" },
+        { status: ERROR_STATUS.TAKEOVER_NOT_NEEDED.status },
+      );
+    }
+
     const { previousAssignee } = await takeOverConversation({
       conversationId: id,
       session,
       reason,
+      expectedAssignee: existing.assigned_to,
     });
     return NextResponse.json({ ok: true, previousAssignee });
   } catch (error) {

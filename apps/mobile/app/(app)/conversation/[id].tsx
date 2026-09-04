@@ -3,6 +3,7 @@ import { memo, useEffect, useMemo, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
+  Linking,
   Pressable,
   Text,
   TextInput,
@@ -23,7 +24,12 @@ import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-stat
 import { Badge } from "@/components/ui/badge";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
-import { findSharedLocation } from "@/lib/location";
+import {
+  findSharedLocation,
+  findSharedLocations,
+  locationFromMessage,
+  PIN_TYPES,
+} from "@/lib/location";
 import {
   bookingStageLabel,
   csStatusLabel,
@@ -41,6 +47,7 @@ import {
   useTakeOverConversation,
   useUpdateConversationActions,
 } from "@/lib/queries";
+import { tapFeedback } from "@/lib/haptics";
 import { useTheme } from "@/providers/theme-provider";
 import { useIsTyping } from "@/providers/inbox-live-provider";
 import type { ConversationMessage } from "@/types/api";
@@ -128,6 +135,10 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Conver
   }
 
   const outbound = message.role === "agent";
+  const sharedLocation = locationFromMessage(message);
+  const rendersAsLocation =
+    PIN_TYPES.has(message.message_type) ||
+    Boolean(sharedLocation?.url && sharedLocation.source !== "text");
   const slots = MEDIA_MESSAGE_TYPES.has(message.message_type)
     ? (message.metadata?.media ?? [])
     : [];
@@ -140,6 +151,111 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Conver
     !outbound && typeof message.metadata?.participant_name === "string"
       ? message.metadata.participant_name.trim()
       : "";
+
+  if (rendersAsLocation) {
+    const label = sharedLocation?.label || "موقع مُرسل";
+    const url = sharedLocation?.url ?? null;
+    return (
+      <View
+        style={{
+          maxWidth: "84%",
+          alignSelf: outbound ? "flex-start" : "flex-end",
+          padding: spacing.sm,
+          gap: spacing.sm,
+          borderRadius: radius.lg + 2,
+          borderCurve: "continuous",
+          backgroundColor: outbound ? colors.brand : colors.surface,
+          borderWidth: outbound ? 0 : 1,
+          borderColor: colors.border,
+        }}
+      >
+        {speaker ? (
+          <Text numberOfLines={1} style={{ ...type.caption, color: colors.brand, ...rtlText }}>
+            {speaker}
+          </Text>
+        ) : null}
+        <Pressable
+          accessibilityRole={url ? "link" : "text"}
+          accessibilityLabel={
+            url ? `${label}، فتح الموقع على الخريطة` : `${label}، تعذّر قراءة الإحداثيات`
+          }
+          disabled={!url}
+          onPress={() => {
+            if (!url) return;
+            tapFeedback();
+            void Linking.openURL(url).catch(() => {});
+          }}
+          style={({ pressed }) => ({
+            minWidth: 210,
+            flexDirection: "row-reverse",
+            alignItems: "center",
+            gap: spacing.md,
+            padding: spacing.md,
+            borderRadius: radius.md,
+            backgroundColor: outbound ? "rgba(255,255,255,0.14)" : colors.brandSoft,
+            opacity: pressed ? 0.72 : 1,
+          })}
+        >
+          <View
+            style={{
+              width: 42,
+              height: 42,
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: radius.full,
+              backgroundColor: outbound ? "rgba(255,255,255,0.18)" : colors.surface,
+            }}
+          >
+            <IconSymbol
+              name="mappin.and.ellipse"
+              color={outbound ? colors.onBrand : colors.brand}
+              size={23}
+            />
+          </View>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text
+              numberOfLines={2}
+              style={{
+                ...type.calloutStrong,
+                color: outbound ? colors.onBrand : colors.text,
+                ...rtlText,
+              }}
+            >
+              {label}
+            </Text>
+            <Text
+              style={{
+                ...type.caption,
+                color: outbound ? colors.onBrand : url ? colors.brand : colors.textTertiary,
+                ...rtlText,
+              }}
+            >
+              {url ? "فتح على الخريطة" : "تعذّر قراءة إحداثيات الموقع"}
+            </Text>
+          </View>
+          {url ? (
+            <IconSymbol
+              name="chevron.left"
+              color={outbound ? colors.onBrand : colors.brand}
+              size={18}
+            />
+          ) : null}
+        </Pressable>
+        <Text
+          style={{
+            ...type.caption,
+            fontWeight: "400",
+            opacity: 0.75,
+            color: outbound ? colors.onBrand : colors.textTertiary,
+            fontVariant: ["tabular-nums"],
+            textAlign: "left",
+          }}
+        >
+          {formatters.time.format(new Date(message.created_at))}
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View
@@ -284,6 +400,19 @@ export default function ConversationScreen() {
     () => conversation.data?.sharedLocation ?? findSharedLocation(messages ?? []),
     [conversation.data?.sharedLocation, messages],
   );
+  const sharedLocations = useMemo(() => {
+    const combined = [
+      ...findSharedLocations(messages ?? []),
+      ...(conversation.data?.sharedLocations ?? []),
+    ].sort((left, right) => right.at.localeCompare(left.at));
+    const seen = new Set<string>();
+    return combined.filter((location) => {
+      const key = (location.url || location.value).trim().toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [conversation.data?.sharedLocations, messages]);
 
   useEffect(() => {
     if (canMarkRead && (currentConversation?.unread_count ?? 0) > 0) markRead();
@@ -314,9 +443,9 @@ export default function ConversationScreen() {
   const canTakeConversations =
     bootstrap.data?.capabilities.canTakeConversations === true;
   const canUpdateConversation = isAdmin || isAssignedToMe;
-  // Being an admin is not itself permission to reply into someone else's
-  // thread. The server returns TAKEOVER_REQUIRED for that, and the composer
-  // below offers the takeover instead of a text box.
+  // Nobody replies into someone else's thread directly. Any active employee
+  // can explicitly take it over with a reason; only then does the composer
+  // appear, preserving one owner and one audit trail.
   //
   // A group is the exception: it belongs to the whole team, so every employee
   // writes in it directly and there is no claim step to pass through first.
@@ -330,8 +459,8 @@ export default function ConversationScreen() {
 
   return (
     <KeyboardAvoidingView
-      behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={insets.top + 44}
+      behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={process.env.EXPO_OS === "ios" ? insets.top + 44 : 0}
       style={{ flex: 1, backgroundColor: colors.background }}
     >
       {/* The name in the header is the way into the customer's record: an
@@ -601,6 +730,7 @@ export default function ConversationScreen() {
         conversationId={id}
         booking={booking}
         sharedLocation={sharedLocation}
+        sharedLocations={sharedLocations}
       />
 
       <FlatList
@@ -626,7 +756,8 @@ export default function ConversationScreen() {
           flexGrow: 1,
           justifyContent: "flex-start",
         }}
-        keyboardDismissMode="interactive"
+        keyboardDismissMode={process.env.EXPO_OS === "ios" ? "interactive" : "on-drag"}
+        keyboardShouldPersistTaps="handled"
         onEndReachedThreshold={0.25}
         onEndReached={() => {
           if (messageHistory.hasNextPage && !messageHistory.isFetchingNextPage) {
@@ -717,14 +848,13 @@ export default function ConversationScreen() {
                   message="هذا الحساب غير مرتبط بعضوية فريق نشطة، لذلك لا يمكنه استلام المحادثات. تواصلي مع الإدارة لتصحيح الحساب."
                 />
               )
-            ) : isAdmin ? (
-              // An admin may override a colleague, but not silently: the reason
-              // is required here because it is what the owner report shows
-              // alongside the override.
+            ) : canTakeConversations ? (
+              // Any active employee may rescue a colleague's conversation, but
+              // not silently: the reason appears in the owner report.
               <View style={{ gap: spacing.sm }}>
                 <InlineAlert
                   tone="warning"
-                  message={`هذه المحادثة مستلمة من ${assignedName}. لاستلامها اكتبي السبب.`}
+                  message={`هذه المحادثة مستلمة من ${assignedName}. إذا كانت غير متاحة يمكنك استلام المحادثة بعد كتابة السبب.`}
                 />
                 <TextInput
                   accessibilityLabel="سبب استلام المحادثة من موظفة أخرى"
@@ -760,7 +890,7 @@ export default function ConversationScreen() {
             ) : (
               <InlineAlert
                 tone="warning"
-                message="هذه المحادثة مستلمة من موظف آخر. لا يمكنك الرد عليها الآن."
+                message="هذا الحساب غير مرتبط بعضوية فريق نشطة، لذلك لا يمكنه استلام المحادثات."
               />
             )}
           </>

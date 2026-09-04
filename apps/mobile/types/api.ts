@@ -224,6 +224,8 @@ export type ConversationDetail = {
   messages: ConversationMessage[];
   /** Detail-only; older API builds omit it. */
   sharedLocation?: SharedLocation | null;
+  /** Every distinct chat location, newest first; older API builds omit it. */
+  sharedLocations?: SharedLocation[];
   hasMore: boolean;
   nextBefore: string | null;
 };

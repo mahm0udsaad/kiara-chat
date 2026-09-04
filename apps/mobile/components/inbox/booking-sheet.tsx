@@ -37,6 +37,7 @@ const minDurationHours = 0.5;
 const maxDurationHours = 8;
 /** The stepper's grain — half an hour is how sessions are actually sold. */
 const durationStepHours = 0.5;
+const NO_SHARED_LOCATIONS: SharedLocation[] = [];
 
 /** Arabic-Indic digits and the Arabic decimal mark, as they arrive from the keyboard. */
 function normalizeNumeric(input: string): string {
@@ -227,12 +228,14 @@ export function BookingSheet({
   conversationId,
   booking = null,
   sharedLocation = null,
+  sharedLocations = NO_SHARED_LOCATIONS,
 }: {
   open: boolean;
   onClose: () => void;
   conversationId: string;
   booking?: BookingRequest | null;
   sharedLocation?: SharedLocation | null;
+  sharedLocations?: SharedLocation[];
 }) {
   const { colors, scheme } = useTheme();
   const insets = useSafeAreaInsets();
@@ -312,8 +315,11 @@ export function BookingSheet({
     );
   };
 
-  const usingShared =
-    Boolean(sharedLocation) && location.trim() === sharedLocation?.value.trim();
+  const locationSuggestions = sharedLocations.length
+    ? sharedLocations
+    : sharedLocation
+      ? [sharedLocation]
+      : NO_SHARED_LOCATIONS;
 
   const confirm = () => {
     if (!location.trim()) {
@@ -531,112 +537,97 @@ export function BookingSheet({
                   placeholder="العنوان أو رابط الموقع على الخرائط"
                   error={validation}
                 />
-                {sharedLocation ? (
-                  usingShared ? (
-                    // Already in the field — say where it came from, and let
-                    // her check it on the map before saving the booking.
-                    <View
-                      style={{
-                        flexDirection: "row-reverse",
-                        alignItems: "center",
-                        flexWrap: "wrap",
-                        gap: spacing.sm,
-                      }}
-                    >
-                      <IconSymbol
-                        name="mappin.and.ellipse"
-                        color={colors.brand}
-                        size={14}
-                      />
-                      <Text style={{ ...type.footnote, color: colors.brand, ...rtlText }}>
-                        {SHARED_LABEL[sharedLocation.source]} ·{" "}
-                        {relativeTimeLabel(sharedLocation.at)}
-                      </Text>
-                      {sharedLocation.url ? <MapLink url={sharedLocation.url} /> : null}
-                    </View>
-                  ) : (
-                    <View
-                      style={{
-                        gap: spacing.sm,
-                        padding: spacing.md,
-                        borderRadius: radius.md,
-                        borderCurve: "continuous",
-                        borderWidth: 1,
-                        borderStyle: "dashed",
-                        borderColor: colors.borderStrong,
-                        backgroundColor: colors.surface,
-                      }}
-                    >
-                      <View
-                        style={{
-                          flexDirection: "row-reverse",
-                          alignItems: "flex-start",
-                          gap: spacing.sm,
-                        }}
-                      >
-                        <IconSymbol
-                          name="mappin.and.ellipse"
-                          color={colors.brand}
-                          size={16}
-                        />
-                        <View style={{ flex: 1, gap: 2 }}>
-                          <Text
-                            style={{
-                              ...type.subheadStrong,
-                              color: colors.text,
-                              ...rtlText,
-                            }}
-                          >
-                            {SHARED_LABEL[sharedLocation.source]}
-                            <Text
-                              style={{ ...type.footnote, color: colors.textTertiary }}
-                            >
-                              {" · "}
-                              {relativeTimeLabel(sharedLocation.at)}
-                            </Text>
-                          </Text>
-                          <Text
-                            numberOfLines={2}
-                            style={{
-                              ...type.footnote,
-                              color: colors.textSecondary,
-                              ...rtlText,
-                            }}
-                          >
-                            {sharedLocation.label || sharedLocation.url}
-                          </Text>
-                        </View>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel={`استخدام ${SHARED_LABEL[sharedLocation.source]}`}
-                          onPress={() => {
-                            tapFeedback();
-                            setLocation(sharedLocation.value);
-                            setValidation(null);
+                {locationSuggestions.length ? (
+                  <View style={{ gap: spacing.sm }}>
+                    <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>
+                      مواقع من محادثة العميلة
+                    </Text>
+                    {locationSuggestions.slice(0, 6).map((suggestion, index) => {
+                      const selected = location.trim() === suggestion.value.trim();
+                      return (
+                        <View
+                          key={`${suggestion.url || suggestion.value}-${suggestion.at}`}
+                          style={{
+                            gap: spacing.sm,
+                            padding: spacing.md,
+                            borderRadius: radius.md,
+                            borderCurve: "continuous",
+                            borderWidth: 1,
+                            borderColor: selected ? colors.brand : colors.borderStrong,
+                            backgroundColor: selected ? colors.brandSoft : colors.surface,
                           }}
-                          style={({ pressed }) => ({
-                            minHeight: hitSize.min - 8,
-                            justifyContent: "center",
-                            paddingHorizontal: spacing.md,
-                            borderRadius: radius.full,
-                            backgroundColor: pressed ? colors.brand : colors.brandSoft,
-                          })}
                         >
-                          {({ pressed }) => (
-                            <Text
-                              style={{
-                                ...type.subheadStrong,
-                                color: pressed ? colors.onBrand : colors.onBrandSoft,
+                          <View
+                            style={{
+                              flexDirection: "row-reverse",
+                              alignItems: "center",
+                              gap: spacing.sm,
+                            }}
+                          >
+                            <IconSymbol
+                              name="mappin.and.ellipse"
+                              color={colors.brand}
+                              size={18}
+                            />
+                            <View style={{ flex: 1, gap: 2 }}>
+                              <Text
+                                numberOfLines={2}
+                                style={{ ...type.calloutStrong, color: colors.text, ...rtlText }}
+                              >
+                                {suggestion.label || `موقع مُرسل ${index + 1}`}
+                              </Text>
+                              <Text
+                                style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}
+                              >
+                                {SHARED_LABEL[suggestion.source]} ·{" "}
+                                {relativeTimeLabel(suggestion.at)}
+                              </Text>
+                            </View>
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel={
+                                selected
+                                  ? "هذا الموقع مستخدم"
+                                  : `استخدام ${suggestion.label || "الموقع المرسل"}`
+                              }
+                              disabled={selected}
+                              onPress={() => {
+                                tapFeedback();
+                                setLocation(suggestion.value);
+                                setValidation(null);
                               }}
+                              style={({ pressed }) => ({
+                                minHeight: hitSize.min - 8,
+                                justifyContent: "center",
+                                paddingHorizontal: spacing.md,
+                                borderRadius: radius.full,
+                                backgroundColor: selected
+                                  ? colors.brand
+                                  : pressed
+                                    ? colors.brand
+                                    : colors.brandSoft,
+                              })}
                             >
-                              استخدام
-                            </Text>
-                          )}
-                        </Pressable>
-                      </View>
-                      {sharedLocation.url ? <MapLink url={sharedLocation.url} /> : null}
-                    </View>
-                  )
+                              {({ pressed }) => (
+                                <Text
+                                  style={{
+                                    ...type.subheadStrong,
+                                    color:
+                                      selected || pressed
+                                        ? colors.onBrand
+                                        : colors.onBrandSoft,
+                                  }}
+                                >
+                                  {selected ? "مستخدم" : "استخدام"}
+                                </Text>
+                              )}
+                            </Pressable>
+                          </View>
+                          {suggestion.url ? <MapLink url={suggestion.url} /> : null}
+                        </View>
+                      );
+                    })}
+                  </View>
                 ) : null}
               </View>
 

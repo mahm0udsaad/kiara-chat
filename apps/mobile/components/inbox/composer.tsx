@@ -77,6 +77,7 @@ export function Composer({
   const recorder = useAudioRecorder(VOICE_NOTE_RECORDING);
   const recorderState = useAudioRecorderState(recorder, 250);
   const [recording, setRecording] = useState(false);
+  const inputRef = useRef<TextInput>(null);
   const textAttempt = useRef<{ text: string; idempotencyKey: string } | null>(null);
 
   const canSendText = Boolean(draft.trim()) && !reply.isPending;
@@ -426,12 +427,16 @@ export function Composer({
               </Pressable>
 
               <TextInput
+                ref={inputRef}
                 accessibilityLabel="نص الرد"
                 multiline
+                showSoftInputOnFocus
+                submitBehavior="newline"
                 placeholder="اكتبي الرد…"
                 placeholderTextColor={colors.textTertiary}
                 value={draft}
                 onChangeText={setDraft}
+                onPressIn={() => inputRef.current?.focus()}
                 style={{
                   flex: 1,
                   minHeight: hitSize.comfortable,

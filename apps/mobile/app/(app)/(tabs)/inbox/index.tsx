@@ -174,6 +174,11 @@ const MEDIA_PREVIEW: Record<string, { label: string; icon: IconName }> = {
   locationMessage: { label: "موقع", icon: "mappin.and.ellipse" },
   liveLocationMessage: { label: "موقع مباشر", icon: "mappin.and.ellipse" },
 };
+const LOCATION_PREVIEW_TYPES = new Set([
+  "location",
+  "locationMessage",
+  "liveLocationMessage",
+]);
 
 const LABEL_TONE: Record<LabelColor, BadgeTone> = {
   slate: "neutral",
@@ -244,7 +249,9 @@ const ConversationRow = memo(function ConversationRow({
   // types (for example reactions) remain readable instead of exposing an
   // internal provider type to the employee.
   const previewBody = lastMessage
-    ? lastMessage.text || mediaPreview?.label || ""
+    ? LOCATION_PREVIEW_TYPES.has(lastMessage.messageType)
+      ? mediaPreview?.label || "موقع"
+      : lastMessage.text || mediaPreview?.label || ""
     : isGroup
       ? ""
       : conversation.customer_phone;
