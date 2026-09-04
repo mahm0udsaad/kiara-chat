@@ -1,65 +1,70 @@
+import { isOpenWaConfigured, openWaTransport } from "./openwa";
 import { isTwilioConfigured, twilioTransport } from "./twilio";
 import type { MessageTransport, TransportProvider } from "./types";
 
 /**
- * Which transport answers a given conversation. There is now only one.
+ * Which transport does what — the split that survived the 2026-09-04 rework.
  *
- * Kiara ran two WhatsApp numbers side by side until 2026-09-04: the salon's
- * original +966593695614 as a linked device driven by the OpenWA engine, and
- * +966508421748 as a Twilio sender on Meta's Business Platform. The linked
- * device is retired — its session died on 2026-09-03 and was never re-paired,
- * and the engine has been stopped. Everything leaves on the Business number.
+ * Two numbers, two jobs. They are no longer interchangeable, and per-conversation
+ * routing is deliberately gone — a customer thread is a Twilio thread, full stop.
  *
- * `TransportProvider` keeps its "openwa" member because the *data* still has
- * it: 293 conversations carry no transport marker and most of the message
- * history was captured through the engine. Reading those rows must keep
- * working. Sending through it must not, which is why nothing here can hand back
- * an OpenWA transport any more.
+ * - **+966508421748 — Twilio**, on Meta's Business Platform. Every customer
+ *   conversation lives here: inbound, agent replies, and the approved templates
+ *   that open a chat outside the 24-hour window.
+ *   `transportForConversation()` always resolves here.
  *
- * These functions kept their signatures rather than being inlined away. They
- * are the reason retiring a whole number was a small change, and the questions
- * they answer — "where does this reply go?", "can we send at all?" — stay
- * worth asking in one place if a second number is ever added back.
+ * - **+966595532435 — OpenWA linked device** on the VPS. Staff-only outbound.
+ *   Dispatch notes to drivers and specialists, field reminders, voice notes and
+ *   door photos. Reached by calling `openWaTransport` directly from the staff
+ *   paths — never through `transportForConversation`, because staff are not
+ *   customer conversations. Callers still gate on `isOpenWaConfigured()` so a
+ *   disconnected engine degrades to a push-only nudge instead of throwing.
+ *
+ * `TransportProvider` keeps its `"openwa"` member because history still has
+ * rows tagged that way; nothing new gets that value.
  */
-const ONLY_PROVIDER: TransportProvider = "twilio";
+const ONLY_CUSTOMER_PROVIDER: TransportProvider = "twilio";
 
-/** Which number a conversation belongs to. One number, so one answer. */
+/** Which number a *newly started* customer conversation belongs to. */
 export function defaultOutboundProvider(): TransportProvider {
-  return ONLY_PROVIDER;
+  return ONLY_CUSTOMER_PROVIDER;
+}
+
+export function transportFor(provider: TransportProvider): MessageTransport {
+  return provider === "twilio" ? twilioTransport : openWaTransport;
 }
 
 export function isProviderConfigured(provider: TransportProvider): boolean {
-  return provider === "twilio" ? isTwilioConfigured() : false;
+  return provider === "twilio" ? isTwilioConfigured() : isOpenWaConfigured();
 }
 
 /**
- * Read the provider for a conversation.
+ * Read the provider for a customer conversation. Always Twilio now.
  *
- * Deliberately no longer reads `metadata.transport`. That marker records which
- * number a customer *used to* write to, and half of them say "openwa" — a
- * number that can no longer send. Honouring it would route her reply into a
- * dead pipe. Old threads are answered from the Business number now, which is
- * what the `kiara_conversation_opener` template exists to explain to a customer
- * who has never seen that number before.
+ * Deliberately no longer consults `conversations.metadata.transport`. That
+ * marker records which number a customer *used to* write to, and half of the
+ * pre-Twilio threads say `"openwa"` — honouring it would route her reply into
+ * a number that is now staff-outbound and cannot address her at all.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function providerForConversation(conversationId: string): Promise<TransportProvider> {
-  return ONLY_PROVIDER;
+  return ONLY_CUSTOMER_PROVIDER;
 }
 
-/** The transport that should carry a reply in this conversation. */
+/** The transport that carries a reply in a customer conversation. */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function transportForConversation(conversationId: string): Promise<MessageTransport> {
   return twilioTransport;
 }
 
 /**
- * Is there any way at all to send right now? Used by the composer gates, which
- * only need to know whether to offer the channel — not which pipe it uses.
+ * Is there any way at all to send a customer reply right now? Used by the
+ * composer gates, which only need to know whether to offer the channel.
+ * OpenWA does not count here — it never talks to customers.
  */
 export function isAnyTransportConfigured(): boolean {
   return isTwilioConfigured();
 }
 
-export { twilioTransport, isTwilioConfigured };
+export { openWaTransport, isOpenWaConfigured, twilioTransport, isTwilioConfigured };
 export type { MessageTransport, TransportProvider };

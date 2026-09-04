@@ -12,7 +12,7 @@
  * ever diverge, Meta's copy is the one that goes out.
  */
 
-export type TemplateKey = "booking_followup" | "conversation_opener";
+export type TemplateKey = "booking_followup" | "conversation_opener" | "number_notice";
 
 export interface TemplateVariableSpec {
   /** Positional key as Twilio wants it: "1", "2", … */
@@ -61,6 +61,17 @@ const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
     variables: [
       { key: "1", label: "اسم العميلة", prefill: "customer_name", maxLength: 60 },
     ],
+  },
+  number_notice: {
+    env: "TWILIO_CONTENT_SID_NUMBER_NOTICE",
+    label: "تنويه الرقم",
+    description:
+      "تنبيه جماعي يطلب من العميلة حذف الرقم وإعادة حفظه ليظهر حساب واتساب الأعمال بشكل صحيح.",
+    category: "marketing",
+    body:
+      "📢 تنويه مهم لعملائنا الكرام 🤍\n\nفي حال كان رقم الواتساب الخاص بكيارا لا يظهر لديكم أو لا يعمل بشكل صحيح، نرجو منكم حذف الرقم من جهات الاتصال في جوالكم ثم إعادة حفظه من جديد.\n\n📱 رقم كيارا سبا:\n966508421748\n\nبعد إعادة حفظ الرقم، افتحوا الواتساب من جديد وسيظهر لكم الحساب بإذن الله 🤍\n\nشاكرين لكم تفهّمكم وصبركم، ونسعد دائمًا بخدمتكم 🌿\nKiara Spa | كيارا سبا",
+    buttons: [],
+    variables: [],
   },
 };
 

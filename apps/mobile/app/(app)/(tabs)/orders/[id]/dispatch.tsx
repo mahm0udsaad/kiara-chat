@@ -6,7 +6,6 @@ import {
   Image,
   Keyboard,
   KeyboardAvoidingView,
-  Linking,
   type LayoutChangeEvent,
   Pressable,
   ScrollView,
@@ -34,7 +33,6 @@ import {
   isLocationMissing,
   locationLabel,
   relativeDayLabel,
-  relativeTimeLabel,
   tripTypeLabel,
 } from "@/lib/format";
 import {
@@ -47,7 +45,6 @@ import {
   useDispatchOptions,
   useDispatchOrder,
   useDispatchPreview,
-  useConversation,
   useOrder,
 } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
@@ -142,7 +139,7 @@ function OutcomeScreen({ kind, sentAt }: { kind: Outcome; sentAt: string | null 
           </View>
           <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
             {sent
-              ? "الطلب وملاحظاته ظاهران الآن في تطبيق السائق والأخصائية، ووصلهما تنبيه على التطبيق."
+              ? "الطلب وملاحظاته ظاهران الآن في تطبيق السائق والأخصائية، ووصلتهما نسخة على واتساب."
               : "الطلب أُسند سابقًا ولم يتغير شيء الآن. إذا لم ينتبها له، استخدمي إعادة الإرسال من صفحة الطلب."}
           </Text>
           {sentAt ? (
@@ -172,7 +169,6 @@ function DispatchForm({ id }: { id: string }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const order = useOrder(id);
-  const conversation = useConversation(order.data?.order.conversation_id ?? "");
   const options = useDispatchOptions();
   const dispatch = useDispatchOrder(id);
   const preparePreview = useDispatchPreview(id);
@@ -242,12 +238,6 @@ function DispatchForm({ id }: { id: string }) {
   }
 
   const current = order.data.order;
-  const locationSuggestions =
-    conversation.data?.sharedLocations?.length
-      ? conversation.data.sharedLocations
-      : conversation.data?.sharedLocation
-        ? [conversation.data.sharedLocation]
-        : [];
   // Re-opening a dispatched order used to walk her back through the whole form
   // and fail on the last tap. It is settled before the first field is drawn.
   const finished: Outcome | null =
@@ -443,7 +433,7 @@ function DispatchForm({ id }: { id: string }) {
 
   return (
     <KeyboardAvoidingView
-      behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
+      behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
       style={{ flex: 1, backgroundColor: colors.background }}
     >
       <ScrollView
@@ -510,104 +500,6 @@ function DispatchForm({ id }: { id: string }) {
                   validation?.field === "location" ? validation.message : null
                 }
               />
-              {locationSuggestions.length ? (
-                <View style={{ gap: spacing.sm, marginTop: spacing.md }}>
-                  <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>
-                    مواقع أرسلتها العميلة في المحادثة
-                  </Text>
-                  {locationSuggestions.slice(0, 6).map((suggestion, index) => {
-                    const selected = location.trim() === suggestion.value.trim();
-                    return (
-                      <View
-                        key={`${suggestion.url || suggestion.value}-${suggestion.at}`}
-                        style={{
-                          flexDirection: "row-reverse",
-                          alignItems: "center",
-                          gap: spacing.sm,
-                          padding: spacing.md,
-                          borderRadius: radius.md,
-                          borderWidth: 1,
-                          borderColor: selected ? colors.brand : colors.border,
-                          backgroundColor: selected ? colors.brandSoft : colors.surface,
-                        }}
-                      >
-                        <IconSymbol
-                          name="mappin.and.ellipse"
-                          size={19}
-                          color={colors.brand}
-                        />
-                        <View style={{ flex: 1, gap: 2 }}>
-                          <Text
-                            numberOfLines={2}
-                            style={{ ...type.calloutStrong, color: colors.text, ...rtlText }}
-                          >
-                            {suggestion.label || `موقع مُرسل ${index + 1}`}
-                          </Text>
-                          <Text
-                            style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}
-                          >
-                            {relativeTimeLabel(suggestion.at)}
-                          </Text>
-                        </View>
-                        {suggestion.url ? (
-                          <Pressable
-                            accessibilityRole="link"
-                            accessibilityLabel="فتح الموقع على الخريطة"
-                            onPress={() => {
-                              tapFeedback();
-                              void Linking.openURL(suggestion.url!).catch(() => {});
-                            }}
-                            hitSlop={spacing.sm}
-                            style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
-                          >
-                            <IconSymbol
-                              name="chevron.left"
-                              size={19}
-                              color={colors.brand}
-                            />
-                          </Pressable>
-                        ) : null}
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel={
-                            selected ? "هذا الموقع مستخدم" : "استخدام هذا الموقع"
-                          }
-                          disabled={selected}
-                          onPress={() => {
-                            tapFeedback();
-                            setCustomerLocation(suggestion.value);
-                            clearFieldError("location");
-                            setReviewing(false);
-                          }}
-                          style={({ pressed }) => ({
-                            minHeight: hitSize.min - 8,
-                            justifyContent: "center",
-                            paddingHorizontal: spacing.md,
-                            borderRadius: radius.full,
-                            backgroundColor:
-                              selected || pressed ? colors.brand : colors.brandSoft,
-                          })}
-                        >
-                          {({ pressed }) => (
-                            <Text
-                              style={{
-                                ...type.caption,
-                                fontWeight: "700",
-                                color:
-                                  selected || pressed
-                                    ? colors.onBrand
-                                    : colors.onBrandSoft,
-                              }}
-                            >
-                              {selected ? "مستخدم" : "استخدام"}
-                            </Text>
-                          )}
-                        </Pressable>
-                      </View>
-                    );
-                  })}
-                </View>
-              ) : null}
             </View>
 
             {/* A pin puts the driver on the street; the photo tells him which

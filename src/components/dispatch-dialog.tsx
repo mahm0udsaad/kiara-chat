@@ -406,14 +406,27 @@ export function DispatchDialog({
               </AlertDescription>
             </Alert>
             {/* The order is in both apps the moment it is assigned — that part
-                cannot fail. Only the nudge can, so it is reported on its own and
-                never described as a failed order.
-
-                The two WhatsApp copies were reported here as well until the
-                linked device was retired on 2026-09-04. A warning for a channel
-                that no longer exists would fire on every single dispatch and
-                read as a fault when nothing went wrong, so it is gone and the
-                push — now the only nudge — carries the whole report. */}
+                cannot fail. Only the two nudges can, so each is reported on its
+                own and neither is described as a failed order. */}
+            {result.sent ? null : (
+              <Alert variant="destructive">
+                <AlertTriangle />
+                <AlertTitle>لم تصل نسخة واتساب للسائق</AlertTitle>
+                <AlertDescription>
+                  الطلب ظاهر في تطبيقه، لكن رسالة واتساب لم تُرسل. تحققي من ربط
+                  واتساب ثم استخدمي «إعادة الإرسال» من البطاقة.
+                </AlertDescription>
+              </Alert>
+            )}
+            {result.specialistSent === false ? (
+              <Alert variant="destructive">
+                <AlertTriangle />
+                <AlertTitle>لم تصل نسخة واتساب للأخصائية</AlertTitle>
+                <AlertDescription>
+                  الطلب وملاحظتها ظاهران في تطبيقها؛ راجعي رقمها وربط واتساب.
+                </AlertDescription>
+              </Alert>
+            ) : null}
             {result.notified ? null : (
               <Alert variant="destructive">
                 <AlertTriangle />

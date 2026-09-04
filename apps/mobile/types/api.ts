@@ -224,8 +224,6 @@ export type ConversationDetail = {
   messages: ConversationMessage[];
   /** Detail-only; older API builds omit it. */
   sharedLocation?: SharedLocation | null;
-  /** Every distinct chat location, newest first; older API builds omit it. */
-  sharedLocations?: SharedLocation[];
   hasMore: boolean;
   nextBefore: string | null;
 };
@@ -752,7 +750,7 @@ export type OrderReminderContext = {
   lastReminderAt: string | null;
   /** Minutes since anyone last touched the order. */
   stalledMinutes: number | null;
-  /** Always false since 2026-09-04 — the WhatsApp channel retired with the linked device, and the composer hides it. */
+  /** False when OPENWA is not configured — the composer hides that channel. */
   whatsappConfigured: boolean;
   recipients: OrderReminderRecipient[];
 };

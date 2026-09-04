@@ -6,12 +6,8 @@ import "server-only";
  * The 30-minute cron in `kiara_private.enqueue_field_reminders` is the machine
  * half of this: it picks whoever the step machine says is late and pushes
  * wording it chose. This is the human half — an employee looking at a stalled
- * order picks the person, edits the text, and sends it.
- *
- * It used to offer two channels, push and a WhatsApp copy over the linked
- * device. That device was retired on 2026-09-04, so push is the only one left;
- * the WhatsApp channel is kept in the shape below but permanently unavailable,
- * which is how the composer already knows not to offer it.
+ * order picks the person, edits the text, and sends it as a push, a WhatsApp
+ * message, or both.
  *
  * The two share `field_order_progress.last_reminder_at`: a reminder sent by
  * hand pushes the cron's next automatic nudge out by its own window, so the
@@ -30,6 +26,7 @@ import {
 } from "@/lib/field-staff";
 import { formatDuration, TRIP_TYPE_LABEL } from "@/lib/format";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
+import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import type { FieldOrderProgressState, TripType } from "@/lib/types";
 
@@ -272,10 +269,7 @@ export async function getFieldReminderContext(
   );
   const next = nextFieldAction(progress ?? EMPTY_PROGRESS);
   const customerName = (conversation?.customer_name as string | null) ?? null;
-  // Retired with the linked device (2026-09-04). Reaching a driver on the
-  // Business Platform outside 24 hours needs an approved template per message
-  // type, which is Meta review for something the push already delivers.
-  const whatsappConfigured = false;
+  const whatsappConfigured = isOpenWaConfigured();
 
   const [specialistHasPush, driverHasPush] = await Promise.all([
     order.specialist_id
@@ -362,9 +356,9 @@ export class FieldReminderError extends Error {
 /**
  * Send one employee-authored reminder.
  *
- * Channels are reported independently — a habit worth keeping now that only
- * push remains, because it is what let the WhatsApp half be removed without
- * the caller losing track of whether the push itself landed.
+ * The requested channels are attempted independently and reported
+ * independently: a WhatsApp engine that is down must not hide the fact that
+ * the push went through, or the employee sends the whole thing again.
  */
 export async function sendFieldReminder(input: {
   orderId: string;
@@ -408,10 +402,10 @@ export async function sendFieldReminder(input: {
       `لا يوجد رقم واتساب مسجّل لـ${ROLE_LABEL[input.role]}.`,
     );
   }
-  if (wantsWhatsapp) {
+  if (wantsWhatsapp && !isOpenWaConfigured()) {
     throw new FieldReminderError(
       "WHATSAPP_NOT_CONFIGURED",
-      "لم تعد تذكيرات واتساب متاحة للفريق الميداني. أرسلي إشعار التطبيق.",
+      "واتساب غير متصل. أرسلي إشعار التطبيق أو راجعي حالة الاتصال.",
     );
   }
 
@@ -435,9 +429,18 @@ export async function sendFieldReminder(input: {
           };
         })
       : Promise.resolve(null),
-    // Unreachable: `wantsWhatsapp` throws above. Kept as an explicit null so
-    // the result shape below still reports a WhatsApp outcome of "none".
-    Promise.resolve(null as { sent: boolean; error: string | null } | null),
+    wantsWhatsapp && person.phone
+      ? openWaTransport
+          .sendText(person.phone, message)
+          .then(() => ({ sent: true, error: null as string | null }))
+          .catch((error) => ({
+            sent: false,
+            error:
+              error instanceof Error
+                ? error.message.slice(0, 300)
+                : "OPENWA_SEND_FAILED",
+          }))
+      : Promise.resolve(null),
   ]);
 
   const delivered =
