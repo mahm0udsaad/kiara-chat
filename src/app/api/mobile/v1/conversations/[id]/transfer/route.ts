@@ -84,7 +84,7 @@ export async function POST(
       return mobileError(400, "UNKNOWN_TEAM_MEMBER", "الموظفة غير موجودة");
     }
 
-    await transferConversation(id, teamMemberId, target);
+    await transferConversation(id, target);
     const updated = await getConversationById(id, viewer);
     return mobileData({
       conversation: await toClassifiedMobileConversation(

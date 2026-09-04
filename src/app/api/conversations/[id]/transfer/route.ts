@@ -22,7 +22,7 @@ export async function POST(
     return NextResponse.json({ error: "Not a Kiara agent" }, { status: 403 });
   }
   try {
-    const conversation = await transferConversation(id, teamMemberId, target);
+    const conversation = await transferConversation(id, target);
     return NextResponse.json({ ok: true, conversation });
   } catch (e) {
     return NextResponse.json(

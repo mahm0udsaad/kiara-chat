@@ -213,19 +213,22 @@ export async function takeOverConversation(input: {
   return { previousAssignee: typeof data === "string" ? data : null };
 }
 
-/** Transfer = force-reassign to another agent (authed, same reason as Take). */
+/**
+ * Hand a held conversation to a named active colleague.
+ *
+ * This is deliberately not claim_conversation(p_force := true): that branch is
+ * an admin override. The dedicated RPC lets the current assignee hand off her
+ * own thread, while keeping validation, the ownership change and its audit
+ * record in one transaction.
+ */
 export async function transferConversation(
   conversationId: string,
-  myTeamMemberId: string,
   targetTeamMemberId: string
 ) {
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase.rpc("claim_conversation", {
+  const { data, error } = await supabase.rpc("transfer_conversation", {
     p_conversation_id: conversationId,
-    p_mode: "human",
-    p_team_member_id: myTeamMemberId,
-    p_force: true,
-    p_assign_to_team_member_id: targetTeamMemberId,
+    p_target_team_member_id: targetTeamMemberId,
   });
   if (error) throw new Error(error.message);
   return data;
