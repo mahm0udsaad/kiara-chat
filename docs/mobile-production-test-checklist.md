@@ -43,7 +43,7 @@ Anything marked **BLOCKER** will be hit on day one of a real rollout.
 
 - [ ] `EXPO_PUBLIC_API_URL` in the production build points at the production Vercel URL (not a LAN IP). Confirm in the EAS `production` environment, not just `.env`.
 - [ ] `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` set in the EAS `production` environment.
-- [ ] Server env on Vercel: `SUPABASE_SERVICE_ROLE_KEY`, `KIARA_RESTAURANT_ID`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`, `TWILIO_WEBHOOK_BASE_URL`, `CRON_SECRET` — all present and non-empty. (The `OPENWA_*` variables were retired on 2026-09-04 and are no longer read.)
+- [ ] Server env on Vercel: `SUPABASE_SERVICE_ROLE_KEY`, `KIARA_RESTAURANT_ID`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`, `TWILIO_WEBHOOK_BASE_URL`, `OPENWA_URL`, `OPENWA_SEND_TOKEN`, `OPENWA_INGEST_TOKEN`, `CRON_SECRET` — all present and non-empty.
 - [ ] `apps/mobile/.env` (dev) is **not** what the store build reads. Confirm with `eas build --profile production` output.
 - [ ] `npx tsc --noEmit` and `npm run lint` both clean.
 - [ ] **B13** — a clean `npx expo run:ios` succeeds on the team's actual Xcode version. Record that version in the README.

@@ -26,7 +26,7 @@ A white-labeled WhatsApp customer-service inbox for Kiara spa (Arabic, RTL).
   pinned to one tenant (`src/lib/tenant.ts`, `KIARA_RESTAURANT_ID`). There is no
   staging project. Treat all data as production.
 - WhatsApp transport — a persistent engine on a VPS; inbound arrives at
-  `src/app/api/webhooks/twilio/route.ts` (the OpenWA ingest route was retired on 2026-09-04 and now answers 410).
+  `src/app/api/webhooks/twilio/route.ts`. `/api/webhooks/openwa` still answers 410 — the OpenWA linked device is staff-outbound only and does not ingest customer messages.
 
 **Who uses it:** ~10 customer-service employees (`team_members.role='agent'`)
 plus the owner Hanan (`hanan@kiara.com`, admin). One login per person.

@@ -14,9 +14,10 @@ standalone Next.js app that reuses the **shared whatsapp-cs Supabase project**
 - **Isolation:** enforced **server-side** — RLS (the shared `is_restaurant_member`
   / `is_restaurant_admin` helpers, keyed off `team_members`) plus a **pinned
   Kiara tenant id** (`src/lib/tenant.ts`). The client never supplies a tenant id.
-- **Transport:** WhatsApp via a **Twilio sender on Meta's Business Platform**
-  (`+966508421748`), behind a transport-abstraction layer. The linked-device
-  engine that carried `+966593695614` was retired on 2026-09-04 — see below.
+- **Transport:** WhatsApp via **two numbers with different jobs** — a Twilio
+  sender on Meta's Business Platform (`+966508421748`) for all customer chats,
+  and a linked-device engine (`+966595532435`) that pushes staff-only outbound
+  notifications for dispatch and field reminders. See the section below.
 
 ## Roles
 
@@ -54,8 +55,8 @@ Sign in with a Supabase-auth user that is Kiara's owner or an active
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Shared Supabase project (RLS client). |
 | `SUPABASE_SERVICE_ROLE_KEY` | Admin tasks only (create/suspend agents). Optional for read-only phases. |
 | `KIARA_RESTAURANT_ID` | Pinned tenant (defaults to the Kiara id in code). |
-| ~~`OPENWA_URL` / `OPENWA_INGEST_TOKEN`~~ | Retired 2026-09-04. Read by nothing; safe to delete. |
-| `FIELD_SESSION_SECRET` | Signs field-staff links. Set it explicitly: it otherwise falls back to the retired `OPENWA_SEND_TOKEN`, so deleting that variable before this one is set invalidates every outstanding link. |
+| `OPENWA_URL` / `OPENWA_SEND_TOKEN` / `OPENWA_INGEST_TOKEN` | Persistent OpenWA service on the VPS — the salon's staff-outbound number `+966595532435`. Only reaches drivers and specialists; never touches customer conversations. |
+| `FIELD_SESSION_SECRET` | Signs field-staff links. Set it explicitly: it otherwise falls back to `OPENWA_SEND_TOKEN`, so a future retirement of that variable would silently invalidate every outstanding link. |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | Twilio account. The auth token signs inbound webhooks and fetches inbound media — an API key cannot do either. |
 | `TWILIO_API_KEY_SID` / `TWILIO_API_KEY_SECRET` | Optional, preferred for sending: revocable without rotating the auth token. |
 | `TWILIO_WHATSAPP_FROM` | The Business Platform sender, e.g. `whatsapp:+966508421748`. |
@@ -63,36 +64,43 @@ Sign in with a Supabase-auth user that is Kiara's owner or an active
 | `TWILIO_STATUS_CALLBACK_URL` | Delivery-receipt endpoint (`/api/webhooks/twilio/status`). |
 | `TWILIO_CONTENT_SID_BOOKING_FOLLOWUP` | Approved template sid (`HXbb5e5dbfc42600f2678e55b38445cdac`). Without it, nobody outside the 24-hour window is reachable. |
 | `TWILIO_CONTENT_SID_CONVERSATION_OPENER` | The general opener — logo header, greeting by name (`HX21822b343fb1d89bed64aa0ef27fcd6c`). Marketing category, so Meta's per-customer marketing cap applies. |
-| ~~`WHATSAPP_DEFAULT_PROVIDER`~~ | Retired 2026-09-04. One sender, nothing left to choose. |
+| `WHATSAPP_DEFAULT_PROVIDER` | Effectively fixed at `twilio` — customer conversations only ever go through the Business Platform now. Setting it to `openwa` breaks sends. |
 
-### One WhatsApp number, since 2026-09-04
+### Two WhatsApp numbers, two jobs
 
-Kiara answered on two numbers for a while, deliberately: `+966593695614` as a
-linked device driven by the OpenWA engine on the VPS, and `+966508421748` as a
-Twilio sender on the Business Platform. A number can only be one or the other,
-so they ran side by side and each conversation was answered on the number it
-arrived on.
+Kiara answered on two numbers as a matter of course, then briefly on one, and
+now on two again with a cleaner split. The abstraction that lives in
+`src/lib/transport/index.ts` codifies which does what.
 
-The linked device lost its session on 2026-09-03 and was never re-paired. Its
-last message reached Kiara at 09:18 UTC that day; Twilio had already taken over
-the same afternoon. Rather than re-pair it, the engine was stopped and removed
-from pm2 on 2026-09-04 and the transport deleted from this codebase.
+- **Twilio — `+966508421748`, on Meta's Business Platform.** Every customer
+  conversation lives here: inbound, agent replies, and the approved templates
+  that open a chat outside the 24-hour window. `transportForConversation()`
+  always resolves here.
+- **OpenWA — `+966595532435`, a linked device on the VPS engine.** Staff-only
+  outbound. Dispatch notes to drivers and specialists, field reminders, the
+  specialist voice note, the door photo. Called directly from `dispatch.ts`
+  and `field-reminders.ts` — never through `transportForConversation`, because
+  staff are not customer conversations.
 
-What that leaves behind, and why the code still mentions it:
+What that split leaves behind, and why the code still reads the way it does:
 
-- `TransportProvider` keeps its `"openwa"` member. 293 conversations carry no
-  transport marker and most of the message history was captured through the
-  engine; those rows still have to read back.
-- `transportForConversation` no longer consults
-  `conversations.metadata.transport`. The marker says which number a customer
-  *used to* write to, and honouring it would route her reply into a dead pipe.
-- Every one of those customers is outside the 24-hour window on a number she has
-  never seen, so the first contact has to be a template —
-  `kiara_conversation_opener` exists for exactly that, and a successful template
-  send migrates her thread onto the Business number.
-- Typing indicators and the staff WhatsApp nudges (dispatch notes, field
-  reminders) were linked-device capabilities and are gone. Push carries the
-  field team now.
-- `/api/webhooks/openwa` answers 410 rather than 404: the engine's code and
-  session directory are still on the VPS, and an engine started by hand would
-  otherwise replay its backlog into a database that has moved on.
+- `TransportProvider` keeps its `"openwa"` member because history still has
+  rows tagged that way, but nothing new gets that value on a customer
+  conversation. `transportForConversation` no longer consults
+  `conversations.metadata.transport` — honouring the stored marker would route
+  a customer reply into a number that is now staff-outbound only.
+- Any customer who wrote in on the old number `+966593695614` (retired
+  2026-09-03) is now outside the 24-hour window on a Twilio number she has
+  never seen, so first contact must be an approved template. That is what
+  `kiara_conversation_opener` exists for, and a successful template send
+  migrates her thread onto the Business number.
+- `/api/webhooks/openwa` answers **410**, not 404. Customer ingest is a
+  Twilio-only responsibility now, and a hand-started engine forwarding its
+  fromMe backlog into that endpoint would double-write history. The 410 is a
+  loud, named refusal rather than a silent 404 that reads like a bad deploy.
+- Typing indicators are gone — WhatsApp presence is a linked-device capability
+  and the Business Platform exposes none for customer chats. The presence
+  routes stay as no-ops so shipped mobile builds keep parsing them.
+- The linked device does **not** receive customer messages. If a customer ever
+  writes to `+966595532435` directly, her message is dropped by the 410. That
+  number is not published to customers.
