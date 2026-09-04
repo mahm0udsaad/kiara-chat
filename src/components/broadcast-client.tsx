@@ -74,6 +74,17 @@ export function BroadcastClient({ templateKey }: { templateKey: string }) {
         break;
       }
       setStatus(result.status);
+      // A whole batch failing with nothing sent almost always means the
+      // template is not yet approved by Meta — stop rather than churn through
+      // 676 doomed sends, and show why.
+      if (result.attempted > 0 && result.sent === 0 && result.failed > 0) {
+        setError(
+          result.lastError
+            ? `تعذّر الإرسال — تأكدي من اعتماد القالب. التفاصيل: ${result.lastError}`
+            : "تعذّر الإرسال — يبدو أن القالب لم يُعتمد بعد من واتساب.",
+        );
+        break;
+      }
       if (result.status.remaining <= 0) {
         setNote("اكتمل الإرسال لجميع العميلات 🌿");
         break;
