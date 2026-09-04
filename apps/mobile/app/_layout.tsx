@@ -1,29 +1,43 @@
 import type { ErrorBoundaryProps } from "expo-router";
 import { Stack } from "expo-router/stack";
 import { StatusBar } from "expo-status-bar";
+import { useEffect } from "react";
 import { I18nManager, Platform, Pressable, ScrollView, Text } from "react-native";
 import * as Updates from "expo-updates";
 
 import { AppProviders } from "@/providers/app-providers";
+import { fieldLocaleForSession } from "@/lib/field-i18n";
+import { useBootstrap } from "@/lib/queries";
+import { useAuth } from "@/providers/auth-provider";
 import { useTheme } from "@/providers/theme-provider";
 
-// The app is Arabic-first and always laid out right-to-left. forceRTL persists
-// the flag natively, but it only takes effect on the *next* bundle load — so on
-// a fresh install the first launch would render LTR (mirrored) until the app was
-// killed and reopened. Persisting the flag and reloading once makes the very
-// first frame already RTL. Self-limiting: once isRTL sticks this block never runs
-// again. Scoped to production so dev Fast Refresh doesn't reload in a loop.
-// Native only. There is no persisted RTL flag to set on web, and
-// react-native-web does not implement swapLeftAndRightInRTL at all — calling it
-// throws during the static web render that `eas update --platform all` performs,
-// which is enough to fail the export for every platform.
-if (Platform.OS !== "web") {
-  I18nManager.allowRTL(true);
-  I18nManager.swapLeftAndRightInRTL(true);
-  if (!I18nManager.isRTL) {
-    I18nManager.forceRTL(true);
+/**
+ * Native navigation direction is process-wide, so change it only after the
+ * authenticated bootstrap tells us who is using the device. A reload applies
+ * the new direction once; subsequent launches already match and do nothing.
+ */
+function AppDirectionSync() {
+  const { session, loading } = useAuth();
+  const bootstrap = useBootstrap(Boolean(session) && !loading);
+
+  useEffect(() => {
+    if (Platform.OS === "web" || !bootstrap.data) return;
+    const current = bootstrap.data.session;
+    const locale = fieldLocaleForSession(
+      current.role,
+      current.nationality,
+      current.preferredLanguage,
+    );
+    const shouldUseRtl = locale === "ar";
+    if (I18nManager.isRTL === shouldUseRtl) return;
+
+    I18nManager.allowRTL(true);
+    I18nManager.swapLeftAndRightInRTL(shouldUseRtl);
+    I18nManager.forceRTL(shouldUseRtl);
     if (!__DEV__) void Updates.reloadAsync().catch(() => {});
-  }
+  }, [bootstrap.data]);
+
+  return null;
 }
 
 /**
@@ -128,6 +142,7 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 export default function RootLayout() {
   return (
     <AppProviders>
+      <AppDirectionSync />
       <RootNavigator />
     </AppProviders>
   );

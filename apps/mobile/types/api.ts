@@ -41,6 +41,8 @@ export type BootstrapResponse = {
     fieldStaffAccountId: string | null;
     rosterId: string | null;
     displayName: string | null;
+    nationality: string | null;
+    preferredLanguage: string | null;
   };
   capabilities: {
     canTakeConversations: boolean;

@@ -1,7 +1,8 @@
 import { Pressable, Text, View } from "react-native";
 
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
-import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { hitSize, radius, spacing, type } from "@/constants/theme";
+import { useFieldI18n } from "@/lib/field-i18n";
 import { useTheme } from "@/providers/theme-provider";
 
 type Props = {
@@ -25,12 +26,14 @@ export function DetailRow({
   label,
   value,
   onPress,
-  actionIcon = "chevron.left",
+  actionIcon,
   actionLabel,
   tone = "default",
   monospacedValue = false,
 }: Props) {
   const { colors } = useTheme();
+  const { isRtl, rowDirection, textStyle } = useFieldI18n();
+  const resolvedActionIcon = actionIcon ?? (isRtl ? "chevron.left" : "chevron.right");
 
   const body = (
     <>
@@ -48,21 +51,21 @@ export function DetailRow({
       </View>
 
       <View style={{ flex: 1, gap: 2 }}>
-        <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>{label}</Text>
+        <Text style={{ ...type.caption, color: colors.textTertiary, ...textStyle }}>{label}</Text>
         <Text
           selectable
           style={{
             ...type.calloutStrong,
             color: tone === "muted" ? colors.textTertiary : colors.text,
             ...(monospacedValue ? { fontVariant: ["tabular-nums" as const] } : {}),
-            ...rtlText,
+            ...textStyle,
           }}
         >
           {value}
         </Text>
       </View>
 
-      {onPress ? <IconSymbol name={actionIcon} color={colors.brand} size={18} /> : null}
+      {onPress ? <IconSymbol name={resolvedActionIcon} color={colors.brand} size={18} /> : null}
     </>
   );
 
@@ -70,7 +73,7 @@ export function DetailRow({
     return (
       <View
         style={{
-          flexDirection: "row-reverse",
+          flexDirection: rowDirection,
           alignItems: "center",
           gap: spacing.md,
           paddingVertical: spacing.md,
@@ -88,7 +91,7 @@ export function DetailRow({
       onPress={onPress}
       style={({ pressed }) => ({
         minHeight: hitSize.comfortable,
-        flexDirection: "row-reverse",
+        flexDirection: rowDirection,
         alignItems: "center",
         gap: spacing.md,
         paddingVertical: spacing.md,
@@ -103,17 +106,18 @@ export function DetailRow({
 /** Small uppercase-style heading that introduces a grouped section. */
 export function SectionHeader({ title, action }: { title: string; action?: React.ReactNode }) {
   const { colors } = useTheme();
+  const { rowDirection, textStyle } = useFieldI18n();
   return (
     <View
       style={{
-        flexDirection: "row-reverse",
+        flexDirection: rowDirection,
         alignItems: "center",
         justifyContent: "space-between",
         paddingHorizontal: spacing.xs,
         paddingTop: spacing.xs,
       }}
     >
-      <Text style={{ ...type.subheadStrong, color: colors.textSecondary, ...rtlText }}>
+      <Text style={{ ...type.subheadStrong, color: colors.textSecondary, ...textStyle }}>
         {title}
       </Text>
       {action}

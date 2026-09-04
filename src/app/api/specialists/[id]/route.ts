@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { updateSpecialist, type RosterPatch } from "@/lib/dispatch";
 import { isNationalityCode } from "@/lib/nationalities";
+import { isSpecialistLanguageCode } from "@/lib/specialist-languages";
 
 export async function PATCH(
   request: Request,
@@ -21,6 +22,11 @@ export async function PATCH(
   if (typeof body?.nationality === "string")
     patch.nationality = isNationalityCode(body.nationality) ? body.nationality : null;
   else if (body?.nationality === null) patch.nationality = null;
+  if (typeof body?.preferredLanguage === "string")
+    patch.preferredLanguage = isSpecialistLanguageCode(body.preferredLanguage)
+      ? body.preferredLanguage
+      : null;
+  else if (body?.preferredLanguage === null) patch.preferredLanguage = null;
   if (patch.fullName !== undefined && !patch.fullName.trim())
     return NextResponse.json({ error: "الاسم مطلوب" }, { status: 400 });
 

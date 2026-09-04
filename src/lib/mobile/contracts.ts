@@ -31,6 +31,8 @@ export interface MobileSession {
   fieldStaffAccountId: string | null;
   rosterId: string | null;
   displayName: string | null;
+  nationality: string | null;
+  preferredLanguage: string | null;
 }
 
 /**
@@ -98,6 +100,8 @@ export function toMobileSession(session: {
     fieldStaffAccountId: null,
     rosterId: null,
     displayName: null,
+    nationality: null,
+    preferredLanguage: null,
   };
 }
 
@@ -111,5 +115,7 @@ export function fieldStaffToMobileSession(session: FieldStaffSession): MobileSes
     fieldStaffAccountId: session.accountId,
     rosterId: session.rosterId,
     displayName: session.displayName,
+    nationality: session.nationality,
+    preferredLanguage: session.preferredLanguage,
   };
 }

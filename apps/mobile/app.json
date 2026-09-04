@@ -2,7 +2,7 @@
   "expo": {
     "name": "كيارا للعمليات",
     "slug": "kiara-operations",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "kiara",
@@ -85,13 +85,20 @@
         {
           "supportedLocales": {
             "ios": [
-              "ar"
+              "ar",
+              "id",
+              "fil",
+              "ru",
+              "am"
             ],
             "android": [
-              "ar"
+              "ar",
+              "id",
+              "fil",
+              "ru",
+              "am"
             ]
-          },
-          "forcesRTL": true
+          }
         }
       ],
       "expo-system-ui",

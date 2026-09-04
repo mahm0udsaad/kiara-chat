@@ -100,8 +100,10 @@ export interface Specialist {
   full_name: string;
   phone: string | null;
   is_active: boolean;
-  /** Code from NATIONALITIES (src/lib/nationalities.ts); drives translation. */
+  /** Code from NATIONALITIES; supplies the default language. */
   nationality?: string | null;
+  /** Explicit app/dispatch language override; null derives from nationality. */
+  preferred_language?: string | null;
 }
 
 /** A delivery driver (السائق) the order is dispatched to over WhatsApp. */

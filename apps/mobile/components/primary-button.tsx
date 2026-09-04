@@ -1,7 +1,8 @@
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
-import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { hitSize, radius, spacing, type } from "@/constants/theme";
+import { useFieldI18n } from "@/lib/field-i18n";
 import { commitFeedback } from "@/lib/haptics";
 import { useTheme } from "@/providers/theme-provider";
 
@@ -38,6 +39,7 @@ export function PrimaryButton({
   silent = false,
 }: Props) {
   const { colors } = useTheme();
+  const { rowDirection, textStyle } = useFieldI18n();
   const blocked = disabled || loading;
 
   const accent =
@@ -75,7 +77,7 @@ export function PrimaryButton({
       }}
       style={({ pressed }) => ({
         minHeight: hitSize.control,
-        flexDirection: "row-reverse",
+        flexDirection: rowDirection,
         alignItems: "center",
         justifyContent: "center",
         gap: spacing.sm,
@@ -93,7 +95,7 @@ export function PrimaryButton({
         <>
           <ActivityIndicator color={surface.foreground} />
           {loadingLabel ? (
-            <Text style={{ ...type.bodyStrong, color: surface.foreground, ...rtlText }}>
+            <Text style={{ ...type.bodyStrong, color: surface.foreground, ...textStyle }}>
               {loadingLabel}
             </Text>
           ) : null}
@@ -101,7 +103,7 @@ export function PrimaryButton({
       ) : (
         <>
           {icon ? <IconSymbol name={icon} color={surface.foreground} size={18} /> : null}
-          <Text style={{ ...type.bodyStrong, color: surface.foreground, ...rtlText }}>
+          <Text style={{ ...type.bodyStrong, color: surface.foreground, ...textStyle }}>
             {label}
           </Text>
         </>

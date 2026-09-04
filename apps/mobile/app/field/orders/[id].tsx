@@ -10,25 +10,28 @@ import { Badge } from "@/components/ui/badge";
 import { Card, Divider } from "@/components/ui/card";
 import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { hitSize, radius, spacing, type } from "@/constants/theme";
 import {
-  durationLabel,
   formatPhone,
-  formatters,
   locationLabel,
   locationUrl,
-  relativeDayLabel,
-  tripTypeLabel,
 } from "@/lib/format";
+import { useFieldI18n } from "@/lib/field-i18n";
 import { successFeedback } from "@/lib/haptics";
 import { useFieldOrder, useFieldOrderAction } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
-import type { FieldOrder, FieldOrderAction } from "@/types/api";
-
-const STEP_LABELS = ["تأكيد الرحلة", "ركوب الأخصائية", "بدء الخدمة", "إنهاء الخدمة", "عودة السائق"];
+import type { FieldOrder } from "@/types/api";
 
 function ProgressRail({ order }: { order: FieldOrder }) {
   const { colors } = useTheme();
+  const { rowDirection, t } = useFieldI18n();
+  const stepLabels = [
+    t("stepConfirmRide"),
+    t("stepPickup"),
+    t("stepStartService"),
+    t("stepCompleteService"),
+    t("stepDriverReturn"),
+  ];
   const done = [
     Boolean(order.progress.driverConfirmedAt),
     Boolean(order.progress.specialistPickupAt),
@@ -37,8 +40,8 @@ function ProgressRail({ order }: { order: FieldOrder }) {
     Boolean(order.progress.driverReturnedAt),
   ];
   return (
-    <View style={{ flexDirection: "row-reverse", alignItems: "flex-start", gap: spacing.xs }}>
-      {STEP_LABELS.map((label, index) => (
+    <View style={{ flexDirection: rowDirection, alignItems: "flex-start", gap: spacing.xs }}>
+      {stepLabels.map((label, index) => (
         <View key={label} style={{ flex: 1, alignItems: "center", gap: spacing.xs }}>
           <View
             style={{
@@ -83,14 +86,15 @@ function ProgressRail({ order }: { order: FieldOrder }) {
  */
 function DispatchNote({ order }: { order: FieldOrder }) {
   const { colors } = useTheme();
+  const { t, textStyle } = useFieldI18n();
   if (!order.note && !order.voiceNoteUrl && !order.doorPhotoUrl) return null;
   const hasAttachment = Boolean(order.voiceNoteUrl || order.doorPhotoUrl);
   return (
     <View style={{ gap: spacing.sm }}>
-      <SectionHeader title="ملاحظات الإدارة" />
+      <SectionHeader title={t("managementNotes")} />
       <Card style={{ gap: spacing.md }}>
         {order.note ? (
-          <Text selectable style={{ ...type.body, color: colors.text, ...rtlText }}>
+          <Text selectable style={{ ...type.body, color: colors.text, ...textStyle }}>
             {order.note}
           </Text>
         ) : null}
@@ -108,17 +112,18 @@ function DispatchNote({ order }: { order: FieldOrder }) {
  */
 function DoorPhoto({ url }: { url: string }) {
   const { colors } = useTheme();
+  const { rowDirection, t, textStyle } = useFieldI18n();
   return (
     <View style={{ gap: spacing.sm }}>
-      <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.xs }}>
+      <View style={{ flexDirection: rowDirection, alignItems: "center", gap: spacing.xs }}>
         <IconSymbol name="mappin.and.ellipse" size={16} color={colors.textSecondary} />
-        <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
-          باب العميلة
+        <Text style={{ ...type.footnote, color: colors.textSecondary, ...textStyle }}>
+          {t("customerDoor")}
         </Text>
       </View>
       <Image
         source={{ uri: url }}
-        accessibilityLabel="صورة باب العميلة"
+        accessibilityLabel={t("customerDoorPhoto")}
         resizeMode="cover"
         style={{
           width: "100%",
@@ -134,6 +139,7 @@ function DoorPhoto({ url }: { url: string }) {
 /** Playback for the recorded half of the note. */
 function VoiceNote({ url }: { url: string }) {
   const { colors } = useTheme();
+  const { rowDirection, t, textStyle } = useFieldI18n();
   const player = useAudioPlayer({ uri: url });
   const status = useAudioPlayerStatus(player);
 
@@ -144,10 +150,10 @@ function VoiceNote({ url }: { url: string }) {
   }, [status.didJustFinish, player]);
 
   return (
-    <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+    <View style={{ flexDirection: rowDirection, alignItems: "center", gap: spacing.sm }}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={status.playing ? "إيقاف الاستماع" : "الاستماع للملاحظة"}
+        accessibilityLabel={status.playing ? t("stopListening") : t("listenToNote")}
         onPress={() => (status.playing ? player.pause() : player.play())}
         style={({ pressed }) => ({
           width: hitSize.min,
@@ -166,42 +172,45 @@ function VoiceNote({ url }: { url: string }) {
         />
       </Pressable>
       <IconSymbol name="waveform" color={colors.textSecondary} size={18} />
-      <Text style={{ flex: 1, ...type.footnote, color: colors.textSecondary, ...rtlText }}>
-        ملاحظة صوتية من الإدارة
+      <Text style={{ flex: 1, ...type.footnote, color: colors.textSecondary, ...textStyle }}>
+        {t("managementVoiceNote")}
       </Text>
     </View>
   );
 }
 
-const confirmationText: Record<FieldOrderAction, { title: string; body: string }> = {
-  confirm_ride: { title: "تأكيد الرحلة والانطلاق", body: "أؤكد أنني انطلقت لاصطحاب الأخصائية." },
-  driver_arrived: { title: "وصلت لمقر الأخصائية", body: "سيتم تنبيه الأخصائية بوصولك الآن." },
-  confirm_pickup: { title: "ركبتُ مع السائق", body: "أؤكد ركوبي مع السائق والتوجه إلى العميلة." },
-  start_service: { title: "بدء الخدمة", body: "أؤكد وصولي إلى منزل العميلة وبدء الخدمة الآن." },
-  complete_order: { title: "إنهاء الخدمة والمغادرة", body: "أؤكد انتهاء الخدمة ومغادرتي منزل العميلة." },
-  driver_return: { title: "إنهاء الرحلة والعودة", body: "أؤكد عودتي وإتمام رحلة هذا الطلب." },
-};
-
 export default function FieldOrderDetailScreen() {
   const { colors } = useTheme();
+  const {
+    actionLabel,
+    confirmation,
+    duration,
+    formatTime,
+    isRtl,
+    relativeDay,
+    rowDirection,
+    t,
+    textStyle,
+    tripType,
+  } = useFieldI18n();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ id: string | string[] }>();
   const id = useMemo(() => (Array.isArray(params.id) ? params.id[0] ?? "" : params.id ?? ""), [params.id]);
   const detail = useFieldOrder(id);
   const action = useFieldOrderAction(id);
-  if (detail.isLoading) return <LoadingScreen label="جارٍ تحميل الطلب…" />;
+  if (detail.isLoading) return <LoadingScreen label={t("loadingOrder")} />;
   if (detail.isError || !detail.data) {
-    return <ErrorState title="تعذر تحميل الطلب" message={detail.error?.message ?? "الطلب غير موجود"} onRetry={() => void detail.refetch()} />;
+    return <ErrorState title={t("orderLoadError")} message={detail.error ? t("orderLoadError") : t("orderNotFound")} onRetry={() => void detail.refetch()} />;
   }
   const order = detail.data.order;
   const next = order.nextAction;
   const confirm = () => {
     if (!next) return;
-    const copy = confirmationText[next];
+    const copy = confirmation(next);
     Alert.alert(copy.title, copy.body, [
-      { text: "رجوع", style: "cancel" },
+      { text: t("cancel"), style: "cancel" },
       {
-        text: "تأكيد",
+        text: t("confirm"),
         onPress: () =>
           action.mutate(
             { action: next, expectedVersion: order.progress.version },
@@ -224,17 +233,17 @@ export default function FieldOrderDetailScreen() {
         contentContainerStyle={{ padding: spacing.lg, gap: spacing.xl, paddingBottom: spacing["4xl"] }}
       >
         <Card style={{ gap: spacing.lg }}>
-          <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.md }}>
+          <View style={{ flexDirection: rowDirection, alignItems: "center", gap: spacing.md }}>
             <View style={{ flex: 1, gap: spacing.xs }}>
-              <Text style={{ ...type.title2, color: colors.text, ...rtlText }}>
-                {order.customerName || "العميلة"}
+              <Text style={{ ...type.title2, color: colors.text, ...textStyle }}>
+                {order.customerName || t("customer")}
               </Text>
-              <Text selectable style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+              <Text selectable style={{ ...type.footnote, color: colors.textSecondary, ...textStyle, writingDirection: "ltr" }}>
                 {formatPhone(order.customerPhone)}
               </Text>
             </View>
             <Badge
-              label={order.progress.driverReturnedAt ? "مكتمل" : order.canAct ? "بانتظارك" : "بانتظار الخطوة التالية"}
+              label={order.progress.driverReturnedAt ? t("completed") : order.canAct ? t("waitingForYou") : t("waitingNextStep")}
               tone={order.progress.driverReturnedAt ? "success" : order.canAct ? "warning" : "neutral"}
               icon={order.progress.driverReturnedAt ? "checkmark.circle" : "clock"}
             />
@@ -244,20 +253,20 @@ export default function FieldOrderDetailScreen() {
         </Card>
 
         <View style={{ gap: spacing.sm }}>
-          <SectionHeader title="تفاصيل الطلب" />
+          <SectionHeader title={t("orderDetailsSection")} />
           <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
-            <DetailRow icon="calendar" label="الموعد" value={`${relativeDayLabel(order.arrivalAt)} · ${formatters.time.format(new Date(order.arrivalAt))}`} />
+            <DetailRow icon="calendar" label={t("appointment")} value={`${relativeDay(order.arrivalAt)} · ${formatTime(order.arrivalAt)}`} />
             <Divider inset={46} />
-            <DetailRow icon="clock" label="مدة الخدمة" value={durationLabel(order.durationMinutes)} />
+            <DetailRow icon="clock" label={t("serviceDuration")} value={duration(order.durationMinutes)} />
             <Divider inset={46} />
-            <DetailRow icon="car" label="نوع الرحلة" value={tripTypeLabel[order.tripType]} />
+            <DetailRow icon="car" label={t("tripType")} value={tripType(order.tripType)} />
             <Divider inset={46} />
             <DetailRow
               icon="mappin.and.ellipse"
-              label="موقع العميلة"
-              value={locationLabel(order.customerLocation)}
-              actionIcon="chevron.left"
-              actionLabel="فتح الموقع"
+              label={t("customerLocation")}
+              value={locationLabel(order.customerLocation, t("mapLocation"))}
+              actionIcon={isRtl ? "chevron.left" : "chevron.right"}
+              actionLabel={t("openLocation")}
               onPress={() => void Linking.openURL(locationUrl(order.customerLocation))}
             />
           </Card>
@@ -266,17 +275,17 @@ export default function FieldOrderDetailScreen() {
         <DispatchNote order={order} />
 
         <View style={{ gap: spacing.sm }}>
-          <SectionHeader title="فريق الطلب" />
+          <SectionHeader title={t("orderTeam")} />
           <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
-            <DetailRow icon="sparkles" label="الأخصائية" value={order.specialistName ?? "غير محددة"} />
+            <DetailRow icon="sparkles" label={t("specialist")} value={order.specialistName ?? t("unassignedFeminine")} />
             <Divider inset={46} />
-            <DetailRow icon="car" label="السائق" value={order.driverName ?? "غير محدد"} />
+            <DetailRow icon="car" label={t("driver")} value={order.driverName ?? t("unassignedMasculine")} />
           </Card>
         </View>
 
         <View
           style={{
-            flexDirection: "row-reverse",
+            flexDirection: rowDirection,
             alignItems: "flex-start",
             gap: spacing.sm,
             padding: spacing.md,
@@ -285,28 +294,28 @@ export default function FieldOrderDetailScreen() {
           }}
         >
           <IconSymbol name="bell" size={17} color={colors.onBrandSoft} />
-          <Text style={{ flex: 1, ...type.footnote, color: colors.onBrandSoft, ...rtlText }}>
-            إذا بقيت الخطوة المطلوبة دون تفاعل لمدة 30 دقيقة فسيصل تذكير تلقائي.
+          <Text style={{ flex: 1, ...type.footnote, color: colors.onBrandSoft, ...textStyle }}>
+            {t("automaticReminder")}
           </Text>
         </View>
-        {action.error ? <InlineAlert message={action.error.message} /> : null}
+        {action.error ? <InlineAlert message={t("actionFailed")} /> : null}
       </ScrollView>
 
       <ActionBar bottomInset={insets.bottom}>
         {order.canPingArrival ? (
           <PrimaryButton
-            label="وصلت لمقر الأخصائية"
+            label={t("driverArrived")}
             icon="mappin.and.ellipse"
             loading={action.isPending}
             onPress={pingArrival}
           />
         ) : null}
         {next && order.canAct ? (
-          <PrimaryButton label={order.nextActionLabel ?? "تأكيد الخطوة"} icon="checkmark.circle" loading={action.isPending} onPress={confirm} />
+          <PrimaryButton label={actionLabel(next)} icon="checkmark.circle" loading={action.isPending} onPress={confirm} />
         ) : next ? (
-          <PrimaryButton label={order.nextActionLabel ?? "بانتظار الخطوة التالية"} icon="hourglass" variant="tinted" disabled onPress={() => undefined} />
+          <PrimaryButton label={actionLabel(next)} icon="hourglass" variant="tinted" disabled onPress={() => undefined} />
         ) : (
-          <PrimaryButton label="تم إنهاء الطلب" icon="checkmark.circle" tone="success" variant="tinted" disabled onPress={() => undefined} />
+          <PrimaryButton label={t("orderFinished")} icon="checkmark.circle" tone="success" variant="tinted" disabled onPress={() => undefined} />
         )}
       </ActionBar>
     </View>

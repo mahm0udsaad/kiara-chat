@@ -16,6 +16,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NATIONALITIES, nationalityOf } from "@/lib/nationalities";
+import {
+  SPECIALIST_LANGUAGES,
+  specialistLanguageOf,
+} from "@/lib/specialist-languages";
 import type { Specialist, Driver } from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Modal } from "@/components/ui/modal";
@@ -48,6 +52,36 @@ function NationalitySelect({
       {NATIONALITIES.map((n) => (
         <option key={n.code} value={n.code}>
           {n.label} — {n.languageLabel}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** Null/empty means the app language follows nationality. */
+function LanguageSelect({
+  value,
+  onChange,
+  className,
+}: {
+  value: string;
+  onChange: (code: string) => void;
+  className?: string;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      aria-label="لغة الأخصائية"
+      className={cn(
+        "min-h-11 w-full rounded-lg border bg-[var(--surface)] px-3 text-sm outline-none focus:border-[var(--brand)]",
+        className,
+      )}
+    >
+      <option value="">اللغة حسب الجنسية</option>
+      {SPECIALIST_LANGUAGES.map((language) => (
+        <option key={language.code} value={language.code}>
+          {language.label} — {language.autonym}
         </option>
       ))}
     </select>
@@ -145,6 +179,7 @@ function RosterSection<T extends Row>({
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [nationality, setNationality] = useState("");
+  const [preferredLanguage, setPreferredLanguage] = useState("");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -165,6 +200,7 @@ function RosterSection<T extends Row>({
           fullName: name.trim(),
           phone: phone.trim() || undefined,
           nationality: (withNationality && nationality) || undefined,
+          preferredLanguage: (withNationality && preferredLanguage) || undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -173,13 +209,14 @@ function RosterSection<T extends Row>({
       setName("");
       setPhone("");
       setNationality("");
+      setPreferredLanguage("");
     } catch {
       setError("تعذّرت الإضافة");
     } finally {
       setAdding(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, phone, nationality, withNationality, kind, phoneRequired, onItems]);
+  }, [name, phone, nationality, preferredLanguage, withNationality, kind, phoneRequired, onItems]);
 
   const patch = useCallback(
     async (id: string, body: Record<string, unknown>) => {
@@ -229,7 +266,10 @@ function RosterSection<T extends Row>({
           className="min-h-11 w-full rounded-lg border px-3 text-sm outline-none focus:border-[var(--brand)]"
         />
         {withNationality ? (
-          <NationalitySelect value={nationality} onChange={setNationality} />
+          <>
+            <NationalitySelect value={nationality} onChange={setNationality} />
+            <LanguageSelect value={preferredLanguage} onChange={setPreferredLanguage} />
+          </>
         ) : null}
         <button
           type="button"
@@ -260,11 +300,12 @@ function RosterSection<T extends Row>({
               kind={kind}
               account={accounts.find((account) => account.rosterId === it.id) ?? null}
               onAccount={onAccount}
-              onSave={(fullName, phoneVal, nat) =>
+              onSave={(fullName, phoneVal, nat, language) =>
                 patch(it.id, {
                   fullName,
                   phone: phoneVal,
                   ...(withNationality ? { nationality: nat || null } : {}),
+                  ...(withNationality ? { preferredLanguage: language || null } : {}),
                 })
               }
               onToggleActive={() => patch(it.id, { isActive: !it.is_active })}
@@ -291,7 +332,12 @@ function RosterRow({
   row: Row;
   busy: boolean;
   withNationality: boolean;
-  onSave: (fullName: string, phone: string, nationality: string) => Promise<boolean>;
+  onSave: (
+    fullName: string,
+    phone: string,
+    nationality: string,
+    preferredLanguage: string,
+  ) => Promise<boolean>;
   onToggleActive: () => void;
   kind: Kind;
   account: FieldStaffAccountSummary | null;
@@ -303,6 +349,9 @@ function RosterRow({
   const rowNationality = (row as Specialist).nationality ?? "";
   const [nationality, setNationality] = useState(rowNationality);
   const natInfo = nationalityOf(rowNationality);
+  const rowPreferredLanguage = (row as Specialist).preferred_language ?? "";
+  const [preferredLanguage, setPreferredLanguage] = useState(rowPreferredLanguage);
+  const languageInfo = specialistLanguageOf(rowNationality, rowPreferredLanguage);
   const [accountOpen, setAccountOpen] = useState(false);
   const [accountPassword, setAccountPassword] = useState("");
   const [accountBusy, setAccountBusy] = useState(false);
@@ -349,7 +398,7 @@ function RosterRow({
   };
 
   const save = async () => {
-    const ok = await onSave(name, phone, nationality);
+    const ok = await onSave(name, phone, nationality, preferredLanguage);
     if (ok) setEditing(false);
   };
 
@@ -369,11 +418,18 @@ function RosterRow({
           className="min-h-10 w-full rounded-lg border px-2 text-sm outline-none focus:border-[var(--brand)]"
         />
         {withNationality ? (
-          <NationalitySelect
-            value={nationality}
-            onChange={setNationality}
-            className="min-h-10 px-2"
-          />
+          <>
+            <NationalitySelect
+              value={nationality}
+              onChange={setNationality}
+              className="min-h-10 px-2"
+            />
+            <LanguageSelect
+              value={preferredLanguage}
+              onChange={setPreferredLanguage}
+              className="min-h-10 px-2"
+            />
+          </>
         ) : null}
         <div className="flex shrink-0 gap-1.5">
           <button
@@ -392,6 +448,7 @@ function RosterRow({
               setName(row.full_name);
               setPhone(row.phone ?? "");
               setNationality(rowNationality);
+              setPreferredLanguage(rowPreferredLanguage);
             }}
             aria-label="إلغاء"
             className="flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-black/5"
@@ -411,9 +468,21 @@ function RosterRow({
           {natInfo ? (
             <span
               className="mr-2 rounded-full bg-[var(--brand-soft)] px-1.5 py-0.5 text-[10px] text-[var(--brand)]"
-              title={`تُرسل رسائلها مترجمة إلى ${natInfo.languageLabel}`}
+              title={`الجنسية: ${natInfo.label}`}
             >
               {natInfo.label}
+            </span>
+          ) : null}
+          {withNationality ? (
+            <span
+              className="mr-2 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700"
+              title={
+                rowPreferredLanguage
+                  ? "لغة محددة يدويًا"
+                  : "اللغة مشتقة من الجنسية"
+              }
+            >
+              {languageInfo.label}
             </span>
           ) : null}
           {account ? (

@@ -196,10 +196,10 @@ export function locationUrl(location: string) {
  * Showing the raw maps URL beside the label buys the reader nothing and pushes
  * the part she needs off the end of the line.
  */
-export function locationLabel(location: string) {
+export function locationLabel(location: string, fallback = "موقع على الخريطة") {
   const withoutLink = location.replace(EMBEDDED_LINK, "").trim();
   const trimmed = withoutLink.replace(/[—–-]\s*$/, "").trim();
-  return trimmed || "موقع على الخريطة";
+  return trimmed || fallback;
 }
 
 export function telUrl(phone: string) {

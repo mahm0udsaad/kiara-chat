@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { listSpecialists, createSpecialist } from "@/lib/dispatch";
 import { isNationalityCode } from "@/lib/nationalities";
+import { isSpecialistLanguageCode } from "@/lib/specialist-languages";
 
 export async function GET() {
   const session = await getKiaraSession();
@@ -21,10 +22,21 @@ export async function POST(request: Request) {
   const rawNationality = (body?.nationality as string | undefined)?.trim();
   const nationality =
     rawNationality && isNationalityCode(rawNationality) ? rawNationality : null;
+  const rawPreferredLanguage = (body?.preferredLanguage as string | undefined)?.trim();
+  const preferredLanguage =
+    rawPreferredLanguage && isSpecialistLanguageCode(rawPreferredLanguage)
+      ? rawPreferredLanguage
+      : null;
   if (!fullName) return NextResponse.json({ error: "الاسم مطلوب" }, { status: 400 });
 
   try {
-    const specialist = await createSpecialist(session.userId, fullName, phone, nationality);
+    const specialist = await createSpecialist(
+      session.userId,
+      fullName,
+      phone,
+      nationality,
+      preferredLanguage,
+    );
     return NextResponse.json({ ok: true, specialist });
   } catch (e) {
     return NextResponse.json(

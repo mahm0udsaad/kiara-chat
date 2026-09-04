@@ -35,6 +35,8 @@ export interface FieldStaffSession {
   rosterId: string;
   displayName: string;
   phone: string | null;
+  nationality: string | null;
+  preferredLanguage: string | null;
 }
 
 /** One definition, shared with the operations app's order payload. */
@@ -247,12 +249,23 @@ export async function getFieldStaffSession(): Promise<FieldStaffSession | null> 
   const role = account.role as FieldStaffRole;
   const rosterId = accountRosterId(account as Record<string, unknown>, role);
   const table = role === "specialist" ? "specialists" : "drivers";
-  const { data: roster } = await admin
+  const { data: rosterData } = await admin
     .from(table)
-    .select("full_name, phone, is_active")
+    .select(
+      role === "specialist"
+        ? "full_name, phone, is_active, nationality, preferred_language"
+        : "full_name, phone, is_active",
+    )
     .eq("id", rosterId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
+  const roster = rosterData as unknown as {
+    full_name: string;
+    phone: string | null;
+    is_active: boolean;
+    nationality?: string | null;
+    preferred_language?: string | null;
+  } | null;
   if (!roster?.is_active) return null;
 
   return {
@@ -263,6 +276,12 @@ export async function getFieldStaffSession(): Promise<FieldStaffSession | null> 
     rosterId,
     displayName: roster.full_name as string,
     phone: (roster.phone as string | null) ?? null,
+    nationality:
+      role === "specialist" ? ((roster.nationality as string | null) ?? null) : null,
+    preferredLanguage:
+      role === "specialist"
+        ? ((roster.preferred_language as string | null) ?? null)
+        : null,
   };
 }
 

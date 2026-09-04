@@ -1,6 +1,7 @@
 import { Text, View } from "react-native";
 
-import { radius, rtlText, spacing, type } from "@/constants/theme";
+import { radius, spacing, type } from "@/constants/theme";
+import { useFieldI18n } from "@/lib/field-i18n";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { useTheme } from "@/providers/theme-provider";
 
@@ -19,6 +20,7 @@ type Props = {
  */
 export function Badge({ label, tone = "neutral", icon }: Props) {
   const { colors } = useTheme();
+  const { rowDirection, textStyle } = useFieldI18n();
 
   const palette: Record<BadgeTone, { bg: string; fg: string }> = {
     neutral: { bg: colors.surfaceSunken, fg: colors.textSecondary },
@@ -33,7 +35,7 @@ export function Badge({ label, tone = "neutral", icon }: Props) {
   return (
     <View
       style={{
-        flexDirection: "row-reverse",
+        flexDirection: rowDirection,
         alignItems: "center",
         gap: spacing.xs,
         paddingHorizontal: spacing.sm + 2,
@@ -43,7 +45,7 @@ export function Badge({ label, tone = "neutral", icon }: Props) {
       }}
     >
       {icon ? <IconSymbol name={icon} color={fg} size={13} /> : null}
-      <Text style={{ ...type.caption, color: fg, ...rtlText }}>{label}</Text>
+      <Text style={{ ...type.caption, color: fg, ...textStyle }}>{label}</Text>
     </View>
   );
 }

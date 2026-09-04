@@ -14,7 +14,7 @@ import { fieldSessionStateOf } from "@/lib/field-session";
 import { ensureFieldOrderProgress } from "@/lib/field-staff";
 import { notifyFieldOrderAssigned } from "@/lib/field-push";
 import { findSharedLocationInConversation } from "@/lib/location";
-import { nationalityOf } from "@/lib/nationalities";
+import { specialistDispatchLanguageOf } from "@/lib/specialist-languages";
 import { normalizePhone } from "@/lib/phone";
 import {
   claimOutboxEvent,
@@ -45,13 +45,18 @@ import type {
 
 type AuthedClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
-const SPECIALIST_COLS = "id, full_name, phone, is_active, nationality";
+const SPECIALIST_COLS = "id, full_name, phone, is_active, nationality, preferred_language";
+const NATIONALITY_SPECIALIST_COLS = "id, full_name, phone, is_active, nationality";
 /** Until the nationality migration runs, reads fall back to these columns. */
 const LEGACY_SPECIALIST_COLS = "id, full_name, phone, is_active";
+const missingPreferredLanguage = (err: { message: string } | null) =>
+  Boolean(err?.message.includes("preferred_language"));
 const missingNationality = (err: { message: string } | null) =>
   Boolean(err?.message.includes("nationality"));
 const NATIONALITY_SCHEMA_ERROR =
   "تحديث الجنسيات غير مطبّق على قاعدة البيانات. تواصلي مع مسؤول النظام ثم أعيدي المحاولة.";
+const LANGUAGE_SCHEMA_ERROR =
+  "تحديث لغات الأخصائيات غير مطبّق على قاعدة البيانات. تواصلي مع مسؤول النظام ثم أعيدي المحاولة.";
 const DRIVER_COLS = "id, full_name, phone, is_active";
 /**
  * The columns that existed before the operational command migration. Kept as
@@ -190,6 +195,7 @@ export async function listSpecialists(
     return q.order("full_name");
   };
   let { data, error } = await run(SPECIALIST_COLS);
+  if (missingPreferredLanguage(error)) ({ data, error } = await run(NATIONALITY_SPECIALIST_COLS));
   if (missingNationality(error)) ({ data, error } = await run(LEGACY_SPECIALIST_COLS));
   if (error) throw new Error(error.message);
   return (data ?? []) as unknown as Specialist[];
@@ -199,28 +205,40 @@ export async function createSpecialist(
   userId: string,
   fullName: string,
   phone: string | null,
-  nationality: string | null = null
+  nationality: string | null = null,
+  preferredLanguage: string | null = null,
 ): Promise<Specialist> {
   const supabase = await createServerSupabaseClient();
-  const insert = (withNationality: boolean) =>
+  const insert = (mode: "full" | "nationality" | "legacy") =>
     supabase
       .from("specialists")
       .insert({
         restaurant_id: KIARA_RESTAURANT_ID,
         full_name: fullName.trim(),
         phone: phone?.trim() || null,
-        ...(withNationality ? { nationality } : {}),
+        ...(mode !== "legacy" ? { nationality } : {}),
+        ...(mode === "full" ? { preferred_language: preferredLanguage } : {}),
         created_by: userId,
       })
-      .select(withNationality ? SPECIALIST_COLS : LEGACY_SPECIALIST_COLS)
+      .select(
+        mode === "full"
+          ? SPECIALIST_COLS
+          : mode === "nationality"
+            ? NATIONALITY_SPECIALIST_COLS
+            : LEGACY_SPECIALIST_COLS,
+      )
       .single();
-  let { data, error } = await insert(true);
+  let { data, error } = await insert("full");
+  if (missingPreferredLanguage(error)) {
+    if (preferredLanguage) throw new Error(LANGUAGE_SCHEMA_ERROR);
+    ({ data, error } = await insert("nationality"));
+  }
   if (missingNationality(error)) {
     // Creating without a nationality can remain compatible with an older
     // schema. If one was chosen, retrying without it would discard the value
     // while falsely reporting a successful save.
     if (nationality) throw new Error(NATIONALITY_SCHEMA_ERROR);
-    ({ data, error } = await insert(false));
+    ({ data, error } = await insert("legacy"));
   }
   if (error) throw new Error(error.message);
   return data as unknown as Specialist;
@@ -233,6 +251,8 @@ export interface RosterPatch {
   isActive?: boolean;
   /** Specialists only — the drivers table has no such column. */
   nationality?: string | null;
+  /** Specialists only — explicit app/dispatch language override. */
+  preferredLanguage?: string | null;
 }
 
 function buildRosterPatch(patch: RosterPatch): Record<string, unknown> {
@@ -241,6 +261,7 @@ function buildRosterPatch(patch: RosterPatch): Record<string, unknown> {
   if (patch.phone !== undefined) upd.phone = patch.phone?.trim() || null;
   if (patch.isActive !== undefined) upd.is_active = patch.isActive;
   if (patch.nationality !== undefined) upd.nationality = patch.nationality;
+  if (patch.preferredLanguage !== undefined) upd.preferred_language = patch.preferredLanguage;
   return upd;
 }
 
@@ -258,6 +279,15 @@ export async function updateSpecialist(
       .select(cols)
       .single();
   let { data, error } = await run(SPECIALIST_COLS, buildRosterPatch(patch));
+  if (missingPreferredLanguage(error)) {
+    if (patch.preferredLanguage !== undefined) throw new Error(LANGUAGE_SCHEMA_ERROR);
+    const withoutLanguage = { ...patch };
+    delete withoutLanguage.preferredLanguage;
+    ({ data, error } = await run(
+      NATIONALITY_SPECIALIST_COLS,
+      buildRosterPatch(withoutLanguage),
+    ));
+  }
   if (missingNationality(error)) {
     // Never report success after removing a field the employee explicitly
     // changed. This was why nationality disappeared when the row re-rendered.
@@ -780,7 +810,7 @@ export async function getOrderConversationId(id: string): Promise<string | null>
 
 /**
  * Assign a specialist and driver to an existing booking and attach both notes.
- * The specialist's copy is translated to her mother language when configured;
+ * The specialist's copy is translated to her preferred language when configured;
  * the driver's is the dispatch copy. Both are read in the app, not sent.
  */
 type DispatchContext = {
@@ -796,6 +826,7 @@ type DispatchContext = {
     full_name: string;
     phone: string | null;
     nationality?: string | null;
+    preferred_language?: string | null;
   };
   driver: { id: string; full_name: string; phone: string | null };
   customerName: string | null;
@@ -829,6 +860,7 @@ async function loadDispatchContext(
     full_name: string;
     phone: string | null;
     nationality?: string | null;
+    preferred_language?: string | null;
   };
   const fetchSpecialist = async (cols: string) => {
     const { data, error } = await supabase
@@ -840,11 +872,13 @@ async function loadDispatchContext(
     return { data: data as SpecialistContact | null, error };
   };
   const specialistPromise = fetchSpecialist(
-    "id, full_name, phone, nationality"
+    "id, full_name, phone, nationality, preferred_language"
   ).then(async (result) =>
-    missingNationality(result.error)
-      ? (await fetchSpecialist("id, full_name, phone")).data
-      : result.data
+    missingPreferredLanguage(result.error)
+      ? (await fetchSpecialist("id, full_name, phone, nationality")).data
+      : missingNationality(result.error)
+        ? (await fetchSpecialist("id, full_name, phone")).data
+        : result.data
   );
   const [specialist, { data: driver }, { data: conv }, price, services] = await Promise.all([
     specialistPromise,
@@ -905,9 +939,12 @@ export async function previewBookingDispatch(
     services: context.services,
     sessionLink: null,
   });
-  const nationality = nationalityOf(context.specialist.nationality);
-  const translated = nationality?.targetLanguage
-    ? await translateMessage(arabicSpecialistMessage, nationality.targetLanguage)
+  const language = specialistDispatchLanguageOf(
+    context.specialist.nationality,
+    context.specialist.preferred_language,
+  );
+  const translated = language.targetLanguage
+    ? await translateMessage(arabicSpecialistMessage, language.targetLanguage)
     : null;
 
   return {
@@ -918,7 +955,7 @@ export async function previewBookingDispatch(
     // translation had happened when it had not — she would send it believing
     // the specialist could read it.
     specialistLanguage: translated
-      ? (nationality?.languageLabel ?? "العربية")
+      ? language.label
       : "العربية",
     automaticAdditions: [],
   };

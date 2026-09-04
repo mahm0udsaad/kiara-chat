@@ -1,7 +1,8 @@
 import { useRef } from "react";
 import { I18nManager, Pressable, ScrollView, Text, View } from "react-native";
 
-import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { hitSize, radius, spacing, type } from "@/constants/theme";
+import { useFieldI18n } from "@/lib/field-i18n";
 import { tapFeedback } from "@/lib/haptics";
 import { useTheme } from "@/providers/theme-provider";
 
@@ -35,6 +36,7 @@ export function Segmented<T extends string>({
   testIDPrefix,
 }: Props<T>) {
   const { colors } = useTheme();
+  const { isRtl, rowDirection, textStyle } = useFieldI18n();
   const scroller = useRef<ScrollView>(null);
   // A horizontal ScrollView still opens at its left edge under RTL, which hides
   // the first (right-most) filter. Park it on the right once, then leave it be.
@@ -47,7 +49,9 @@ export function Segmented<T extends string>({
         key={option.value}
         accessibilityRole="tab"
         accessibilityLabel={
-          option.count === undefined ? option.label : `${option.label}، ${option.count}`
+          option.count === undefined
+            ? option.label
+            : `${option.label}${isRtl ? "،" : ","} ${option.count}`
         }
         accessibilityState={{ selected: active }}
         testID={testIDPrefix ? `${testIDPrefix}-${option.value}` : undefined}
@@ -58,7 +62,7 @@ export function Segmented<T extends string>({
         style={({ pressed }) => ({
           flex: layout === "fill" ? 1 : undefined,
           minHeight: hitSize.min,
-          flexDirection: "row-reverse",
+          flexDirection: rowDirection,
           alignItems: "center",
           justifyContent: "center",
           gap: spacing.xs + 2,
@@ -75,7 +79,7 @@ export function Segmented<T extends string>({
           style={{
             ...type.subheadStrong,
             color: active ? colors.text : colors.textSecondary,
-            ...rtlText,
+            ...textStyle,
           }}
         >
           {option.label}
@@ -107,7 +111,7 @@ export function Segmented<T extends string>({
   });
 
   const track = {
-    flexDirection: "row-reverse",
+    flexDirection: rowDirection,
     gap: spacing.xs,
     padding: spacing.xs,
     borderRadius: radius.lg,
@@ -125,7 +129,7 @@ export function Segmented<T extends string>({
         accessibilityLabel={accessibilityLabel}
         contentContainerStyle={track}
         onContentSizeChange={(width) => {
-          if (parked.current || !I18nManager.isRTL) return;
+          if (parked.current || !isRtl || !I18nManager.isRTL) return;
           parked.current = true;
           // Over-scrolling clamps to the far edge, which under RTL is the first
           // filter. Wait a frame so the ScrollView has measured itself first.
