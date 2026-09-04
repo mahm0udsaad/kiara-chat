@@ -162,14 +162,25 @@ export async function syncAudienceFromReservations(): Promise<{ audience: number
         .update({ metadata: { ...meta, last_booking_at: b.last, next_booking_at: b.next } })
         .eq("id", current.id);
     } else {
-      await admin.from("customers").insert({
+      // `source` is guarded by a check constraint that admits only the values
+      // already in use; a recent booking is still a Rekaz-sourced customer.
+      const { error } = await admin.from("customers").insert({
         restaurant_id: KIARA_RESTAURANT_ID,
         phone_number: b.phone,
         full_name: b.name,
-        source: "rekaz_reservation",
+        source: "rekaz_import",
         opted_out: false,
-        metadata: { last_booking_at: b.last, next_booking_at: b.next },
+        metadata: {
+          origin: "rekaz_reservation",
+          last_booking_at: b.last,
+          next_booking_at: b.next,
+        },
       });
+      // A duplicate phone (23505) means someone else added her between our read
+      // and this write — harmless. Anything else must surface, not vanish.
+      if (error && error.code !== "23505") {
+        throw new Error(`customer insert failed: ${error.message}`);
+      }
     }
   }
 
