@@ -152,19 +152,26 @@ export async function syncAudienceFromReservations(): Promise<{ audience: number
   const existing = await loadAllCustomers();
   const byPhone = new Map(existing.map((c) => [digits(c.phone_number), c]));
 
+  // Split into new customers (one bulk insert) and booking-date updates (only
+  // those whose dates actually changed). Row-at-a-time here meant hundreds of
+  // sequential round-trips — slow enough to risk the function's budget, and it
+  // hid a failing insert behind an unchecked error.
+  const toInsert: Record<string, unknown>[] = [];
+  const toUpdate: { id: string; metadata: Record<string, unknown> }[] = [];
+
   for (const [d, b] of booking) {
     const current = byPhone.get(d);
     if (current) {
       const meta = (current.metadata as Record<string, unknown> | null) ?? {};
       if (meta.last_booking_at === b.last && meta.next_booking_at === b.next) continue;
-      await admin
-        .from("customers")
-        .update({ metadata: { ...meta, last_booking_at: b.last, next_booking_at: b.next } })
-        .eq("id", current.id);
+      toUpdate.push({
+        id: current.id,
+        metadata: { ...meta, last_booking_at: b.last, next_booking_at: b.next },
+      });
     } else {
-      // `source` is guarded by a check constraint that admits only the values
+      // `source` is guarded by a check constraint admitting only the values
       // already in use; a recent booking is still a Rekaz-sourced customer.
-      const { error } = await admin.from("customers").insert({
+      toInsert.push({
         restaurant_id: KIARA_RESTAURANT_ID,
         phone_number: b.phone,
         full_name: b.name,
@@ -176,15 +183,20 @@ export async function syncAudienceFromReservations(): Promise<{ audience: number
           next_booking_at: b.next,
         },
       });
-      // A duplicate phone (23505) means someone else added her between our read
-      // and this write — harmless. Anything else must surface, not vanish.
-      if (error && error.code !== "23505") {
-        throw new Error(`customer insert failed: ${error.message}`);
-      }
     }
   }
 
-  return { audience: (await loadAllCustomers()).length };
+  if (toInsert.length) {
+    const { error } = await admin.from("customers").insert(toInsert);
+    if (error && error.code !== "23505") {
+      throw new Error(`customer bulk insert failed: ${error.message}`);
+    }
+  }
+  for (const u of toUpdate) {
+    await admin.from("customers").update({ metadata: u.metadata }).eq("id", u.id);
+  }
+
+  return { audience: existing.length + toInsert.length };
 }
 
 export interface BroadcastStatus {
