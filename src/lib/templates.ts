@@ -12,7 +12,7 @@
  * ever diverge, Meta's copy is the one that goes out.
  */
 
-export type TemplateKey = "booking_followup";
+export type TemplateKey = "booking_followup" | "conversation_opener";
 
 export interface TemplateVariableSpec {
   /** Positional key as Twilio wants it: "1", "2", … */
@@ -46,6 +46,18 @@ const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
     category: "utility",
     body: "مرحبًا {{1}} 🌸 معكِ فريق كيّارا سبا. نودّ متابعة حجزكِ وتحديد الموعد المناسب لكِ.",
     buttons: ["تأكيد الحجز", "تغيير الموعد"],
+    variables: [
+      { key: "1", label: "اسم العميلة", prefill: "customer_name", maxLength: 60 },
+    ],
+  },
+  conversation_opener: {
+    env: "TWILIO_CONTENT_SID_CONVERSATION_OPENER",
+    label: "بدء محادثة",
+    description:
+      "الافتتاحية العامة: شعار كيّارا ثم تحية باسم العميلة. لأي عميلة خارج نافذة الـ٢٤ ساعة بدون سبب محدد.",
+    category: "marketing",
+    body: "السلام عليكم {{1}} 🌸\nمعكِ خدمة عملاء كيارا سبا 🍃",
+    buttons: ["أرغب بالاستفسار"],
     variables: [
       { key: "1", label: "اسم العميلة", prefill: "customer_name", maxLength: 60 },
     ],
