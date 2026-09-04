@@ -1,17 +1,19 @@
 /**
- * One-time template broadcasts to the customer list.
+ * One-time template broadcasts to the customer list, with recency segments.
  *
- * State lives on the customer row itself (`customers.metadata.broadcasts`)
- * rather than in a new table — so this needs no migration and is resumable by
- * construction: a send that already happened leaves a marker, and the next
- * pass simply skips anyone already marked `sent`. A `failed` marker is retried,
- * because the usual reason a marketing send fails early is that the template is
- * still awaiting Meta approval, and those should go out once it clears.
+ * Two facts about the data shape this file:
+ *  - The `customers` table is a stale one-time Rekaz import; who is actually
+ *    booking now lives in `rekaz_reservations` and barely overlaps it. So the
+ *    audience is the UNION of both, deduped by phone, materialised into
+ *    `customers` so send-state and segment live in one place.
+ *  - Send-state lives on the customer row (`customers.metadata.broadcasts`), so
+ *    a broadcast needs no new table and is resumable: a confirmed send leaves a
+ *    marker the next pass skips; a failure is retried (a marketing send fails
+ *    until Meta finishes approving the template).
  *
- * Sends go over Twilio from the Business number (a template is a Business-
- * Platform capability), and deliberately do NOT open a conversation per
- * recipient — 676 empty threads would bury the inbox. When a customer replies,
- * the inbound webhook creates her thread naturally.
+ * Booking recency is denormalised onto the customer at sync time
+ * (`metadata.last_booking_at` / `next_booking_at`) so a segment is a cheap read
+ * rather than a join on every request.
  */
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
@@ -24,17 +26,23 @@ import {
   type TemplateKey,
 } from "@/lib/templates";
 
-/**
- * WhatsApp caps how many unique customers a business can *start* a conversation
- * with in 24 hours by messaging-tier. A brand-new, unverified number usually
- * sits at 250/day — so a 676-person blast spans about three days, and trying to
- * push it all at once just earns rejections. The cap is deliberately
- * conservative and overridable once the number's real tier is known.
- */
 export const DAILY_SEND_CAP = Number(process.env.BROADCAST_DAILY_CAP || 250);
-
-/** How many to send per drain call, to stay well inside a function's budget. */
 const BATCH_SIZE = 20;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export type Segment = "all" | "week" | "month" | "upcoming" | "dormant";
+
+export const SEGMENTS: { key: Segment; label: string; hint: string }[] = [
+  { key: "all", label: "كل العملاء", hint: "القائمة كاملة" },
+  { key: "week", label: "حجزوا هذا الأسبوع", hint: "آخر حجز خلال ٧ أيام" },
+  { key: "month", label: "حجزوا هذا الشهر", hint: "آخر حجز خلال ٣٠ يومًا" },
+  { key: "upcoming", label: "لديهم حجز قادم", hint: "موعد قادم لم يحن بعد" },
+  { key: "dormant", label: "بدون حجز حديث", hint: "لا حجز في الفترة المسجّلة" },
+];
+
+export function isSegment(v: string): v is Segment {
+  return SEGMENTS.some((s) => s.key === v);
+}
 
 interface CustomerRow {
   id: string;
@@ -51,25 +59,32 @@ interface BroadcastMark {
   at: string;
 }
 
-function marks(row: CustomerRow): Record<string, BroadcastMark> {
-  const m = (row.metadata?.broadcasts as Record<string, BroadcastMark>) ?? {};
-  return m;
+const digits = (p: string | null | undefined) => (p || "").replace(/\D/g, "");
+const marks = (row: CustomerRow) =>
+  (row.metadata?.broadcasts as Record<string, BroadcastMark>) ?? {};
+const lastBooking = (row: CustomerRow) =>
+  (row.metadata?.last_booking_at as string | undefined) ?? null;
+const nextBooking = (row: CustomerRow) =>
+  (row.metadata?.next_booking_at as string | undefined) ?? null;
+
+function inSegment(row: CustomerRow, segment: Segment): boolean {
+  if (segment === "all") return true;
+  const now = Date.now();
+  const lp = lastBooking(row) ? new Date(lastBooking(row)!).getTime() : null;
+  const nx = nextBooking(row) ? new Date(nextBooking(row)!).getTime() : null;
+  switch (segment) {
+    case "week":
+      return lp !== null && lp > now - 7 * DAY_MS;
+    case "month":
+      return lp !== null && lp > now - 30 * DAY_MS;
+    case "upcoming":
+      return nx !== null && nx > now;
+    case "dormant":
+      return lp === null && nx === null;
+  }
 }
 
-export interface BroadcastStatus {
-  templateKey: TemplateKey;
-  approvedConfigured: boolean;
-  total: number;
-  sent: number;
-  failed: number;
-  remaining: number;
-  sentLast24h: number;
-  dailyCap: number;
-  dailyRemaining: number;
-}
-
-/** Everyone eligible: has a phone, not opted out. */
-async function loadEligible(): Promise<CustomerRow[]> {
+async function loadAllCustomers(): Promise<CustomerRow[]> {
   const admin = getAdminSupabaseClient();
   const rows: CustomerRow[] = [];
   const pageSize = 1000;
@@ -89,35 +104,131 @@ async function loadEligible(): Promise<CustomerRow[]> {
   return rows;
 }
 
-export async function broadcastStatus(
-  templateKey: TemplateKey,
-): Promise<BroadcastStatus> {
-  const rows = await loadEligible();
-  let sent = 0;
-  let failed = 0;
-  let sentLast24h = 0;
-  const since = Date.now() - 24 * 60 * 60 * 1000;
-  for (const row of rows) {
-    const mark = marks(row)[templateKey];
-    if (!mark) continue;
-    if (mark.status === "sent") {
-      sent += 1;
-      if (new Date(mark.at).getTime() >= since) sentLast24h += 1;
-    } else if (mark.status === "failed") {
-      failed += 1;
+/**
+ * Fold recent bookings into the customer list: create rows for customers who
+ * only exist in `rekaz_reservations`, and stamp everyone's latest past booking
+ * and nearest future booking so segments read straight off the row. Idempotent
+ * — safe to run before every send.
+ */
+export async function syncAudienceFromReservations(): Promise<{ audience: number }> {
+  const admin = getAdminSupabaseClient();
+
+  const resv: { customer_phone: string | null; customer_name: string | null; arrival_at: string | null }[] = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await admin
+      .from("rekaz_reservations")
+      .select("customer_phone, customer_name, arrival_at")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const batch = data ?? [];
+    resv.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+
+  const now = Date.now();
+  const booking = new Map<
+    string,
+    { phone: string; name: string | null; last: string | null; next: string | null }
+  >();
+  for (const r of resv) {
+    const d = digits(r.customer_phone);
+    if (!d) continue;
+    const at = r.arrival_at ? new Date(r.arrival_at).getTime() : null;
+    const entry =
+      booking.get(d) ?? { phone: `+${d}`, name: r.customer_name?.trim() || null, last: null, next: null };
+    if (at !== null) {
+      if (at <= now) {
+        if (!entry.last || at > new Date(entry.last).getTime()) entry.last = r.arrival_at;
+      } else if (!entry.next || at < new Date(entry.next).getTime()) {
+        entry.next = r.arrival_at;
+      }
+    }
+    if (!entry.name && r.customer_name?.trim()) entry.name = r.customer_name.trim();
+    booking.set(d, entry);
+  }
+
+  const existing = await loadAllCustomers();
+  const byPhone = new Map(existing.map((c) => [digits(c.phone_number), c]));
+
+  for (const [d, b] of booking) {
+    const current = byPhone.get(d);
+    if (current) {
+      const meta = (current.metadata as Record<string, unknown> | null) ?? {};
+      if (meta.last_booking_at === b.last && meta.next_booking_at === b.next) continue;
+      await admin
+        .from("customers")
+        .update({ metadata: { ...meta, last_booking_at: b.last, next_booking_at: b.next } })
+        .eq("id", current.id);
+    } else {
+      await admin.from("customers").insert({
+        restaurant_id: KIARA_RESTAURANT_ID,
+        phone_number: b.phone,
+        full_name: b.name,
+        source: "rekaz_reservation",
+        opted_out: false,
+        metadata: { last_booking_at: b.last, next_booking_at: b.next },
+      });
     }
   }
-  const remaining = rows.length - sent;
+
+  return { audience: (await loadAllCustomers()).length };
+}
+
+export interface BroadcastStatus {
+  templateKey: TemplateKey;
+  segment: Segment;
+  approvedConfigured: boolean;
+  total: number;
+  sent: number;
+  failed: number;
+  remaining: number;
+  sentLast24h: number;
+  dailyCap: number;
+  dailyRemaining: number;
+  segmentCounts: Record<Segment, number>;
+}
+
+function countSegments(rows: CustomerRow[]): Record<Segment, number> {
+  const out = { all: 0, week: 0, month: 0, upcoming: 0, dormant: 0 } as Record<Segment, number>;
+  for (const row of rows) for (const s of SEGMENTS) if (inSegment(row, s.key)) out[s.key] += 1;
+  return out;
+}
+
+export async function broadcastStatus(
+  templateKey: TemplateKey,
+  segment: Segment,
+): Promise<BroadcastStatus> {
+  const all = await loadAllCustomers();
+  const rows = all.filter((r) => inSegment(r, segment));
+  const since = Date.now() - DAY_MS;
+  let sent = 0;
+  let failed = 0;
+  // The daily cap is global to the number, so it counts sends across every
+  // segment — not just this one.
+  let sentLast24h = 0;
+  for (const row of all) {
+    const mark = marks(row)[templateKey];
+    if (mark?.status === "sent" && new Date(mark.at).getTime() >= since) sentLast24h += 1;
+  }
+  for (const row of rows) {
+    const mark = marks(row)[templateKey];
+    if (mark?.status === "sent") sent += 1;
+    else if (mark?.status === "failed") failed += 1;
+  }
   return {
     templateKey,
+    segment,
     approvedConfigured: Boolean(contentSidFor(templateKey)),
     total: rows.length,
     sent,
     failed,
-    remaining,
+    remaining: rows.length - sent,
     sentLast24h,
     dailyCap: DAILY_SEND_CAP,
     dailyRemaining: Math.max(0, DAILY_SEND_CAP - sentLast24h),
+    segmentCounts: countSegments(all),
   };
 }
 
@@ -130,16 +241,11 @@ export interface DrainResult {
   lastError: string | null;
 }
 
-/**
- * Send the next batch. Picks recipients not yet marked `sent`, sends each, and
- * writes the outcome back to that customer. Honours the daily cap so a run can
- * be repeated freely without ever exceeding what WhatsApp allows in a day.
- */
 export async function sendBroadcastBatch(
   templateKey: TemplateKey,
+  segment: Segment,
 ): Promise<DrainResult> {
   const admin = getAdminSupabaseClient();
-
   if (!isTwilioConfigured()) throw new Error("Twilio is not configured.");
   const contentSid = contentSidFor(templateKey);
   if (!contentSid) {
@@ -148,28 +254,24 @@ export async function sendBroadcastBatch(
     );
   }
 
-  const rows = await loadEligible();
-  const sentLast24h = rows.filter((r) => {
+  const all = await loadAllCustomers();
+  const since = Date.now() - DAY_MS;
+  const sentLast24h = all.filter((r) => {
     const m = marks(r)[templateKey];
-    return (
-      m?.status === "sent" &&
-      Date.now() - new Date(m.at).getTime() < 24 * 60 * 60 * 1000
-    );
+    return m?.status === "sent" && new Date(m.at).getTime() >= since;
   }).length;
-
   let budget = Math.max(0, DAILY_SEND_CAP - sentLast24h);
   const dailyCapReached = budget <= 0;
 
-  // Retry failures too (a marketing send fails while the template is still in
-  // review); only a confirmed `sent` is skipped.
-  const pending = rows.filter((r) => marks(r)[templateKey]?.status !== "sent");
+  const pending = all.filter(
+    (r) => inSegment(r, segment) && marks(r)[templateKey]?.status !== "sent",
+  );
 
+  const spec = templateSpec(templateKey);
   let attempted = 0;
   let sent = 0;
   let failed = 0;
   let lastError: string | null = null;
-
-  const spec = templateSpec(templateKey);
 
   for (const row of pending) {
     if (attempted >= BATCH_SIZE || budget <= 0) break;
@@ -178,13 +280,10 @@ export async function sendBroadcastBatch(
     attempted += 1;
     budget -= 1;
 
-    // Fill any variables the template declares (the notice has none).
     const vars: Record<string, string> = {};
     for (const v of spec.variables) {
       vars[v.key] =
-        v.prefill === "customer_name"
-          ? greetingName(row.full_name)
-          : templateVariable("", v.maxLength ?? 512);
+        v.prefill === "customer_name" ? greetingName(row.full_name) : templateVariable("", v.maxLength ?? 512);
     }
 
     let mark: BroadcastMark;
@@ -195,11 +294,7 @@ export async function sendBroadcastBatch(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastError = message;
-      mark = {
-        status: "failed",
-        error: message.slice(0, 300),
-        at: new Date().toISOString(),
-      };
+      mark = { status: "failed", error: message.slice(0, 300), at: new Date().toISOString() };
       failed += 1;
     }
 
@@ -207,9 +302,7 @@ export async function sendBroadcastBatch(
     const broadcasts = (meta.broadcasts as Record<string, BroadcastMark>) ?? {};
     await admin
       .from("customers")
-      .update({
-        metadata: { ...meta, broadcasts: { ...broadcasts, [templateKey]: mark } },
-      })
+      .update({ metadata: { ...meta, broadcasts: { ...broadcasts, [templateKey]: mark } } })
       .eq("id", row.id);
   }
 
@@ -219,6 +312,6 @@ export async function sendBroadcastBatch(
     failed,
     dailyCapReached: dailyCapReached || budget <= 0,
     lastError,
-    status: await broadcastStatus(templateKey),
+    status: await broadcastStatus(templateKey, segment),
   };
 }

@@ -1,18 +1,25 @@
 /**
  * Admin-only broadcast control.
  *
- * GET  /api/broadcasts/[key]  → status (counts, daily headroom)
- * POST /api/broadcasts/[key]  → send the next batch, return updated status
+ * GET  /api/broadcasts/[key]?segment=all  → status + per-segment counts
+ * POST /api/broadcasts/[key]              → send the next batch to a segment
+ *        body: { segment?, action?: "sync" }  ("sync" refreshes the audience
+ *        from recent bookings instead of sending)
  *
- * The client drives the send by polling POST until `remaining` hits 0 or the
- * daily cap is reached — which keeps a paid, outward-facing blast under a
- * human's eye rather than firing autonomously, and makes it trivially
- * resumable across the days a large list will span.
+ * The client drives the send by polling POST until a segment is exhausted or
+ * the daily cap is hit — keeping a paid, outward-facing blast under a human's
+ * eye and trivially resumable across the days a large list spans.
  */
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { isTemplateKey } from "@/lib/templates";
-import { broadcastStatus, sendBroadcastBatch } from "@/lib/broadcast";
+import {
+  broadcastStatus,
+  sendBroadcastBatch,
+  syncAudienceFromReservations,
+  isSegment,
+  type Segment,
+} from "@/lib/broadcast";
 
 export const maxDuration = 60;
 
@@ -25,8 +32,13 @@ async function requireAdmin() {
   return { session };
 }
 
+function segmentOf(request: Request): Segment {
+  const raw = new URL(request.url).searchParams.get("segment") ?? "all";
+  return isSegment(raw) ? raw : "all";
+}
+
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ key: string }> },
 ) {
   const { error } = await requireAdmin();
@@ -35,11 +47,11 @@ export async function GET(
   if (!isTemplateKey(key)) {
     return NextResponse.json({ error: "قالب غير معروف" }, { status: 404 });
   }
-  return NextResponse.json(await broadcastStatus(key));
+  return NextResponse.json(await broadcastStatus(key, segmentOf(request)));
 }
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ key: string }> },
 ) {
   const { error } = await requireAdmin();
@@ -48,8 +60,23 @@ export async function POST(
   if (!isTemplateKey(key)) {
     return NextResponse.json({ error: "قالب غير معروف" }, { status: 404 });
   }
+
+  const body = (await request.json().catch(() => ({}))) as {
+    segment?: string;
+    action?: string;
+  };
+  const segment: Segment =
+    body.segment && isSegment(body.segment) ? body.segment : segmentOf(request);
+
   try {
-    return NextResponse.json(await sendBroadcastBatch(key));
+    if (body.action === "sync") {
+      const result = await syncAudienceFromReservations();
+      return NextResponse.json({
+        synced: result.audience,
+        status: await broadcastStatus(key, segment),
+      });
+    }
+    return NextResponse.json(await sendBroadcastBatch(key, segment));
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "تعذّر الإرسال" },
