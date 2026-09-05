@@ -17,15 +17,10 @@ import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { successFeedback, tapFeedback } from "@/lib/haptics";
 import { useCreateCampaignTemplate } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
+import { TEMPLATE_TYPE_META, TEMPLATE_TYPES } from "@/components/campaigns/meta";
+import { IconSymbol } from "@/components/ui/icon-symbol";
 
 type ContentType = "text" | "media" | "quick_reply" | "call_to_action";
-
-const TYPES: { key: ContentType; label: string; hint: string }[] = [
-  { key: "text", label: "نص", hint: "رسالة نصية فقط" },
-  { key: "media", label: "صورة/وسائط", hint: "نص مع صورة أو ملف" },
-  { key: "quick_reply", label: "أزرار رد سريع", hint: "نص مع أزرار للرد" },
-  { key: "call_to_action", label: "أزرار إجراء", hint: "رابط أو اتصال" },
-];
 
 const CATEGORIES = [
   { key: "MARKETING", label: "تسويقي" },
@@ -141,15 +136,31 @@ export function NewTemplateSheet({ open, onClose }: { open: boolean; onClose: ()
                   </Field>
 
                   <Field label="النوع">
-                    <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.xs }}>
-                      {TYPES.map((t) => (
-                        <Chip
-                          key={t.key}
-                          label={t.label}
-                          active={contentType === t.key}
-                          onPress={() => { tapFeedback(); setContentType(t.key); }}
-                        />
-                      ))}
+                    <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
+                      {TEMPLATE_TYPES.map((t) => {
+                        const m = TEMPLATE_TYPE_META[t.key] ?? { label: t.key, icon: "doc.text" as const, hint: "" };
+                        const active = contentType === t.key;
+                        return (
+                          <Pressable
+                            key={t.key}
+                            onPress={() => { tapFeedback(); setContentType(t.key); }}
+                            style={{
+                              width: "47%",
+                              flexGrow: 1,
+                              gap: 4,
+                              padding: spacing.md,
+                              borderRadius: radius.lg,
+                              borderWidth: 1,
+                              borderColor: active ? colors.brand : colors.border,
+                              backgroundColor: active ? colors.surfaceSunken : colors.surface,
+                            }}
+                          >
+                            <IconSymbol name={m.icon} color={active ? colors.brand : colors.textSecondary} size={20} />
+                            <Text style={{ ...type.bodyStrong, color: colors.text, ...rtlText }}>{m.label}</Text>
+                            <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>{m.hint}</Text>
+                          </Pressable>
+                        );
+                      })}
                     </View>
                   </Field>
 
@@ -186,6 +197,43 @@ export function NewTemplateSheet({ open, onClose }: { open: boolean; onClose: ()
                           placeholder={`زر ${i + 1}`}
                         />
                       ))}
+                    </Field>
+                  ) : null}
+
+                  {body.trim() ? (
+                    <Field label="معاينة">
+                      <View
+                        style={{
+                          alignSelf: "flex-start",
+                          maxWidth: "85%",
+                          padding: spacing.md,
+                          borderRadius: radius.lg,
+                          backgroundColor: colors.surfaceSunken,
+                          gap: spacing.sm,
+                        }}
+                      >
+                        <Text style={{ ...type.body, color: colors.text, ...rtlText }}>{body.trim()}</Text>
+                        {needsButtons
+                          ? buttons
+                              .map((b) => b.trim())
+                              .filter(Boolean)
+                              .map((b, i) => (
+                                <View
+                                  key={i}
+                                  style={{
+                                    alignItems: "center",
+                                    paddingVertical: spacing.sm,
+                                    borderRadius: radius.md,
+                                    borderWidth: 1,
+                                    borderColor: colors.border,
+                                    backgroundColor: colors.surface,
+                                  }}
+                                >
+                                  <Text style={{ ...type.caption, color: colors.brand }}>{b}</Text>
+                                </View>
+                              ))
+                          : null}
+                      </View>
                     </Field>
                   ) : null}
 

@@ -8,6 +8,8 @@ import { radius, rtlText, spacing, type } from "@/constants/theme";
 import { successFeedback, tapFeedback } from "@/lib/haptics";
 import { useCreateCampaign } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
+import { SEGMENT_META, TEMPLATE_TYPE_META } from "@/components/campaigns/meta";
+import { IconSymbol } from "@/components/ui/icon-symbol";
 import type { CampaignSegment, CampaignTemplate, CampaignsResponse } from "@/types/api";
 
 /**
@@ -99,7 +101,19 @@ export function NewCampaignSheet({
                         gap: 4,
                       }}
                     >
-                      <Text style={{ ...type.bodyStrong, color: colors.text, ...rtlText }}>{t.name}</Text>
+                      <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: 6 }}>
+                        <IconSymbol
+                          name={(TEMPLATE_TYPE_META[t.contentType] ?? { icon: "doc.text" as const }).icon}
+                          color={colors.brand}
+                          size={15}
+                        />
+                        <Text style={{ ...type.bodyStrong, color: colors.text, flex: 1, ...rtlText }} numberOfLines={1}>
+                          {t.name}
+                        </Text>
+                        {templateSid === t.sid ? (
+                          <IconSymbol name="checkmark.circle" color={colors.success} size={18} />
+                        ) : null}
+                      </View>
                       <Text numberOfLines={2} style={{ ...type.caption, color: colors.textSecondary, ...rtlText }}>
                         {t.body || t.contentType}
                       </Text>
@@ -124,9 +138,20 @@ export function NewCampaignSheet({
                         backgroundColor: segment === s.key ? colors.surfaceSunken : colors.surface,
                       }}
                     >
-                      <View>
-                        <Text style={{ ...type.body, color: colors.text, ...rtlText }}>{s.label}</Text>
-                        <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>{s.hint}</Text>
+                      <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm, flex: 1 }}>
+                        <View
+                          style={{
+                            width: 34, height: 34, borderRadius: 17,
+                            alignItems: "center", justifyContent: "center",
+                            backgroundColor: colors.surfaceSunken,
+                          }}
+                        >
+                          <IconSymbol name={(SEGMENT_META[s.key] ?? SEGMENT_META.all).icon} color={colors.brand} size={16} />
+                        </View>
+                        <View>
+                          <Text style={{ ...type.body, color: colors.text, ...rtlText }}>{s.label}</Text>
+                          <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>{s.hint}</Text>
+                        </View>
                       </View>
                       <Text style={{ ...type.title3, color: colors.brand }}>{segmentCounts[s.key] ?? 0}</Text>
                     </Pressable>
