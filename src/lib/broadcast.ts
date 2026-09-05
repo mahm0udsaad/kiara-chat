@@ -243,6 +243,10 @@ function countSegments(rows: CustomerRow[]): Record<Segment, number> {
   return out;
 }
 
+export async function segmentCounts(): Promise<Record<Segment, number>> {
+  return countSegments(await loadAllCustomers());
+}
+
 export async function broadcastStatus(
   templateKey: TemplateKey,
   segment: Segment,

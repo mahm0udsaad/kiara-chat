@@ -892,3 +892,39 @@ export type MessageTemplate = {
 };
 
 export type MessageTemplatesResponse = { templates: MessageTemplate[] };
+
+/** استهدافات — approved-template campaigns to customer segments. */
+export type CampaignTemplate = {
+  sid: string;
+  name: string;
+  language: string;
+  contentType: string;
+  category: "MARKETING" | "UTILITY" | "AUTHENTICATION" | null;
+  status: "received" | "pending" | "approved" | "rejected" | "unsubmitted";
+  rejectionReason: string | null;
+  body: string;
+  dateCreated: string | null;
+};
+export type CampaignTemplatesResponse = { templates: CampaignTemplate[]; configured: boolean };
+
+export type CampaignSegment = "all" | "week" | "month" | "upcoming" | "dormant";
+
+export type Campaign = {
+  id: string;
+  contentSid: string;
+  templateName: string;
+  category: string;
+  segment: CampaignSegment;
+  status: "active" | "paused" | "done";
+  createdBy: string | null;
+  createdAt: string;
+  total: number;
+  sent: number;
+  failed: number;
+  remaining: number;
+};
+export type CampaignsResponse = {
+  campaigns: Campaign[];
+  segments: { key: CampaignSegment; label: string; hint: string }[];
+  segmentCounts: Record<CampaignSegment, number>;
+};

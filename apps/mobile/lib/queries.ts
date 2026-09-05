@@ -42,6 +42,8 @@ import type {
   FieldOrderListView,
   InternalNote,
   MessageTemplatesResponse,
+  CampaignTemplatesResponse,
+  CampaignsResponse,
   OrderDetailResponse,
   OrderPatch,
   OrderAuditLog,
@@ -1133,6 +1135,83 @@ export function useSendTemplate(id: string) {
         queryClient.invalidateQueries({ queryKey: queryKeys.conversationMessages(id) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
       ]);
+    },
+  });
+}
+
+/** استهدافات — templates (with live approval status) and campaigns. */
+export function useCampaignTemplates(enabled = true) {
+  return useQuery({
+    queryKey: ["campaign-templates"] as const,
+    queryFn: () => apiRequest<CampaignTemplatesResponse>("/campaign-templates"),
+    enabled,
+    // Approval status changes on Meta's clock; poll while the screen is open so
+    // a freshly-submitted template flips to approved without a manual refresh.
+    refetchInterval: 30_000,
+  });
+}
+
+export function useCreateCampaignTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      name: string;
+      contentType: string;
+      category: string;
+      body: string;
+      variables?: Record<string, string>;
+      mediaUrl?: string;
+      quickReplies?: { title: string; id: string }[];
+      ctaButtons?: unknown[];
+    }) =>
+      apiRequest<{ sid: string; name: string; status: string }>("/campaign-templates", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["campaign-templates"] });
+    },
+  });
+}
+
+export function useCampaigns(enabled = true) {
+  return useQuery({
+    queryKey: ["campaigns"] as const,
+    queryFn: () => apiRequest<CampaignsResponse>("/campaigns"),
+    enabled,
+    refetchInterval: 20_000,
+  });
+}
+
+export function useCreateCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      contentSid: string;
+      templateName: string;
+      category: string;
+      segment: string;
+    }) =>
+      apiRequest<{ campaign: unknown }>("/campaigns", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["campaigns"] });
+    },
+  });
+}
+
+export function useSetCampaignStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; status: "active" | "paused" }) =>
+      apiRequest<{ ok: boolean }>(`/campaigns/${input.id}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status: input.status }),
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["campaigns"] });
     },
   });
 }

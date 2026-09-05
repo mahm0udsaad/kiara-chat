@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import Constants from "expo-constants";
-import { Alert, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { useRouter } from "expo-router";
 
 import { PrimaryButton } from "@/components/primary-button";
 import { LegalLinks } from "@/components/legal-links";
@@ -8,6 +9,7 @@ import { ErrorState, LoadingScreen } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, Divider } from "@/components/ui/card";
+import { IconSymbol } from "@/components/ui/icon-symbol";
 import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { rtlText, spacing, type } from "@/constants/theme";
 import { useBootstrap } from "@/lib/queries";
@@ -35,6 +37,7 @@ const capabilityLabels = {
 
 export default function AccountScreen() {
   const { colors } = useTheme();
+  const router = useRouter();
   const bootstrap = useBootstrap();
   const { signOut } = useAuth();
   const queryClient = useQueryClient();
@@ -122,6 +125,34 @@ export default function AccountScreen() {
           ))}
         </View>
       </Card>
+
+      {/* استهدافات — bulk campaigns to customer segments. All staff. */}
+      <View style={{ gap: spacing.sm }}>
+        <SectionHeader title="التسويق" />
+        <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push("/campaigns" as never)}
+            style={{
+              flexDirection: "row-reverse",
+              alignItems: "center",
+              justifyContent: "space-between",
+              paddingVertical: spacing.md,
+            }}
+          >
+            <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+              <IconSymbol name="paperplane.fill" color={colors.brand} size={20} />
+              <View>
+                <Text style={{ ...type.body, color: colors.text, ...rtlText }}>استهدافات</Text>
+                <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+                  إنشاء قوالب وحملات لفئات العملاء
+                </Text>
+              </View>
+            </View>
+            <IconSymbol name="chevron.left" color={colors.textTertiary} size={18} />
+          </Pressable>
+        </Card>
+      </View>
 
       {/* Notifications — a phone that never registered used to look identical
           to one that did, and simply received nothing. */}

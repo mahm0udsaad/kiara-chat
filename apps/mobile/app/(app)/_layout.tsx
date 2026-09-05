@@ -37,6 +37,19 @@ export default function AppLayout() {
           opened from a chat and from the calendar alike, and neither tab owns
           a customer. Pushed here, it keeps one instance and one back stack. */}
       <Stack.Screen
+        name="campaigns/index"
+        options={{
+          headerShown: true,
+          title: "استهدافات",
+          headerTintColor: colors.brand,
+          headerTitleStyle: { color: colors.text },
+          headerStyle: { backgroundColor: colors.surface },
+          headerShadowVisible: false,
+          headerBackButtonDisplayMode: "minimal",
+          contentStyle: { backgroundColor: colors.background },
+        }}
+      />
+      <Stack.Screen
         name="customer/[phone]/index"
         options={{
           headerShown: true,
