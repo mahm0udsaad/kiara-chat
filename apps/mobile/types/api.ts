@@ -300,6 +300,8 @@ export type OrderSummary = {
   field_progress?: FieldOrderProgress | null;
   /** Set when the order was raised from a Rekaz visit; the merge key. */
   rekaz_source_id?: string | null;
+  expected_end_at?: string;
+  approved_services?: { sourceId: string | null; name: string; minutes: number }[];
 };
 
 export type CustomerAnalysisResult = {

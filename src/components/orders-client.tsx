@@ -1,5 +1,6 @@
 "use client";
 
+import { OrderServiceChanges } from "@/components/order-service-changes";
 import {
   lazy,
   Suspense,
@@ -933,6 +934,9 @@ function OrderDetailsSheet({
             {order.customer_name ?? "—"} · <span dir="ltr">{order.customer_phone}</span>
           </DetailRow>
 
+          <Separator />
+
+          <OrderServiceChanges key={order.id} orderId={order.id} onApproved={() => onOpenChange(false)} />
           <Separator />
 
           <FieldGroup>

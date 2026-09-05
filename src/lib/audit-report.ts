@@ -117,6 +117,7 @@ const EVENT_TITLE: Record<string, string> = {
   "conversation.customer_renamed": "عدّلت اسم العميلة",
   "order.created": "أنشأت طلب سائق",
   "order.updated": "عدّلت بيانات الطلب",
+  "order.service_approved": "اعتمدت تعديل خدمات الزيارة",
   "order.dispatch_prepared": "أسندت الطلب للسائق والأخصائية",
   "order.dispatch_completed": "اكتمل إسناد الطلب",
   "rekaz.sync_completed": "مزامنة حجوزات ركاز",

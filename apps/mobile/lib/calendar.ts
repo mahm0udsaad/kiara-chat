@@ -125,6 +125,9 @@ export function mergeVisits(
   const ordersBySource = new Map<string, OrderSummary>();
   for (const order of orders) {
     if (order.rekaz_source_id) ordersBySource.set(order.rekaz_source_id, order);
+    for (const service of order.approved_services ?? []) {
+      if (service.sourceId) ordersBySource.set(service.sourceId, order);
+    }
   }
 
   const claimed = new Set<string>();
@@ -141,7 +144,8 @@ export function mergeVisits(
     const orderId = reservation.order?.id?.trim();
     // The day is part of the key even for an order id, so a group can never
     // straddle two days and disappear from one of them in the agenda.
-    const key = orderId
+    const linkedOrder = ordersBySource.get(reservation.id);
+    const key = linkedOrder ? `visit:${linkedOrder.id}` : orderId
       ? `order:${dayKeyOf(reservation.arrivalAt)}|${orderId}`
       : `slot:${digitsOf(reservation.customerPhone)}|${reservation.arrivalAt}`;
     const bucket = grouped.get(key);
@@ -172,16 +176,16 @@ export function mergeVisits(
 
     visits.push({
       key: `rekaz:${key}`,
-      arrivalAt: span.startsAt,
-      endsAt: span.endsAt,
-      durationMinutes: span.minutes,
-      serviceCount: group.length,
+      arrivalAt: order?.arrival_at ?? span.startsAt,
+      endsAt: order?.expected_end_at ?? span.endsAt,
+      durationMinutes: order?.duration_minutes ?? span.minutes,
+      serviceCount: order?.approved_services?.length ?? group.length,
       customerName: first.customerName || order?.customer_name || "",
       customerPhone: first.customerPhone,
       reservation: first,
       order: order ?? null,
       conversationId: order?.conversation_id ?? null,
-      services: countedServices(group),
+      services: order?.approved_services?.length ? order.approved_services.map(s => s.name) : countedServices(group),
       providers: [...new Set(group.flatMap((item) => item.providers))],
       location: first.location?.label?.trim() || order?.customer_location || "",
       amount: group.reduce((total, item) => total + (item.amount || 0), 0),
@@ -195,7 +199,7 @@ export function mergeVisits(
     visits.push({
       key: `order:${order.id}`,
       arrivalAt: order.arrival_at,
-      endsAt: new Date(
+      endsAt: order.expected_end_at ?? new Date(
         new Date(order.arrival_at).getTime() + order.duration_minutes * 60_000,
       ).toISOString(),
       durationMinutes: order.duration_minutes,
@@ -446,6 +450,9 @@ export function buildDaySchedule(
   const ordersBySource = new Map<string, OrderSummary>();
   for (const order of orders) {
     if (order.rekaz_source_id) ordersBySource.set(order.rekaz_source_id, order);
+    for (const service of order.approved_services ?? []) {
+      if (service.sourceId) ordersBySource.set(service.sourceId, order);
+    }
   }
 
   const byColumn = new Map<string, ScheduleSlot[]>();

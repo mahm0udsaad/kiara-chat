@@ -1,3 +1,4 @@
+import { OrderServiceChanges } from "@/components/order-service-changes";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo } from "react";
 import { Linking, Pressable, ScrollView, Text, View } from "react-native";
@@ -312,6 +313,8 @@ export default function OrderDetailScreen() {
             />
           </View>
         </Card>
+
+        <Card variant="raised"><OrderServiceChanges key={order.id} orderId={order.id}/></Card>
 
         {/* On-demand AI read of the same customer conversation used on web. */}
         <Card

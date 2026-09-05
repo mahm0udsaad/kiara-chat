@@ -200,6 +200,8 @@ export interface DriverOrder {
    * sides on this id replaces the old phone-plus-day guess.
    */
   rekaz_source_id?: string | null;
+  expected_end_at?: string;
+  approved_services?: { sourceId: string | null; name: string; minutes: number }[];
   /**
    * What the field team reads in the app. Dispatch composes these; nothing is
    * sent to a driver's or specialist's WhatsApp. Undefined on rows read before

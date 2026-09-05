@@ -412,7 +412,7 @@ export default function ConversationScreen() {
       seen.add(key);
       return true;
     });
-  }, [conversation.data?.sharedLocation, messages]);
+  }, [conversation.data, messages]);
 
   useEffect(() => {
     if (canMarkRead && (currentConversation?.unread_count ?? 0) > 0) markRead();

@@ -111,20 +111,20 @@ export async function previewRekazSync(
 export async function applyRekazSync(input: {
   reservations: RekazReservation[];
   window: RekazFetchWindow;
-  session: KiaraSession;
+  session: KiaraSession | null;
 }): Promise<RekazSyncCounts & { syncRunId: string; replayed: boolean }> {
   const syncRunId = randomUUID();
   const admin = getAdminSupabaseClient();
   const { data, error } = await admin.rpc("kiara_apply_rekaz_snapshot", {
     p_restaurant_id: KIARA_RESTAURANT_ID,
     p_sync_run_id: syncRunId,
-    p_actor_user_id: input.session.userId,
-    p_actor_team_member_id: input.session.teamMemberId,
+    p_actor_user_id: input.session?.userId ?? null,
+    p_actor_team_member_id: input.session?.teamMemberId ?? null,
     p_rows: rekazSyncRows(input.reservations),
     p_window_start: input.window.start,
     p_window_end: input.window.end,
     // The role at pull time, so a later demotion cannot rewrite who ran it.
-    p_actor_role: input.session.role,
+    p_actor_role: input.session?.role ?? null,
   });
   if (error) {
     await admin
@@ -133,8 +133,8 @@ export async function applyRekazSync(input: {
         id: syncRunId,
         restaurant_id: KIARA_RESTAURANT_ID,
         status: "failed",
-        actor_user_id: input.session.userId,
-        actor_team_member_id: input.session.teamMemberId,
+        actor_user_id: input.session?.userId ?? null,
+        actor_team_member_id: input.session?.teamMemberId ?? null,
         incoming_count: input.reservations.length,
         error_code: error.code ?? "REKAZ_APPLY_FAILED",
         error_message: error.message.slice(0, 2_000),

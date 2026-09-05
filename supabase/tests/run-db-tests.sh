@@ -70,7 +70,7 @@ for f in $(ls "$REPO_ROOT"/supabase/migrations/2026*.sql | sort); do
   fi
   echo "    $(basename "$f")"
   case "$(basename "$f")" in
-    *field_reminders_supabase_cron*)
+    *field_reminders_supabase_cron*|*campaigns_drain_cron*)
       # pg_cron/pg_net are Supabase-managed and cannot be installed into a
       # stock build. The stubs in the harness stand in for them, so only the
       # two CREATE EXTENSION lines are dropped — the rest runs verbatim.

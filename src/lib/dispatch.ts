@@ -547,29 +547,18 @@ async function rekazVisitSpan(
   };
 }
 
-/**
- * The services behind a saved order, for the copy the specialist reads.
- *
- * Only a Rekaz-raised order has any: one created from a conversation was
- * booked by an employee who wrote what it was for in her own note, and an
- * empty list simply drops the section rather than printing a heading with
- * nothing under it.
- */
+/** Approved services, including manual additions and linked Rekaz reservations. */
 export async function servicesForOrder(
-  order: Pick<DriverOrder, "rekaz_source_id" | "arrival_at">,
+  order: Pick<DriverOrder, "id" | "rekaz_source_id" | "arrival_at">,
 ): Promise<VisitService[]> {
-  const sourceId = order.rekaz_source_id?.trim();
-  if (!sourceId) return [];
+  // Read approved services, never the unreviewed latest Rekaz payload.
   const admin = getAdminSupabaseClient();
-  const { data } = await admin
-    .from("rekaz_reservations")
-    .select("payload")
+  const { data, error } = await admin.from("order_visit_services")
+    .select("name, starts_at, minutes")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq("source_id", sourceId)
-    .maybeSingle();
-  const rekazOrderId =
-    (data?.payload as { order?: { id?: string } | null } | null)?.order?.id?.trim() ?? "";
-  return rekazVisitServices(admin, rekazOrderId, order.arrival_at);
+    .eq("order_id", order.id).order("starts_at");
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(row => ({name:row.name,startsAt:row.starts_at,minutes:row.minutes}));
 }
 
 export async function createBookingFromReservation(
@@ -1367,12 +1356,14 @@ async function withNames(
     ...new Set(values.filter((v): v is string => Boolean(v))),
   ];
 
-  const [specialists, drivers, customers, editors, progress] = await Promise.all([
+  const [specialists, drivers, customers, editors, progress, services] = await Promise.all([
     rosterNames(supabase, "specialists", uniq(orders.map((o) => o.specialist_id))),
     rosterNames(supabase, "drivers", uniq(orders.map((o) => o.driver_id))),
     customerDetails(supabase, uniq(orders.map((o) => o.conversation_id))),
     teamMemberNames(supabase, uniq(orders.map((o) => o.updated_by))),
     fieldProgressFor(orders.map((o) => o.id)),
+    getAdminSupabaseClient().from("order_visit_services").select("order_id, source_id, name, minutes")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID).in("order_id", orders.map(o => o.id)).order("starts_at"),
   ]);
 
   return orders.map((o) => {
@@ -1396,6 +1387,9 @@ async function withNames(
         "driver"
       ),
       field_progress: progress.get(o.id) ?? null,
+      expected_end_at: new Date(Date.parse(progress.get(o.id)?.serviceStartedAt ?? o.arrival_at) + o.duration_minutes * 60_000).toISOString(),
+      approved_services: services.error ? undefined : (services.data ?? []).filter(s => s.order_id === o.id)
+        .map(s => ({sourceId:s.source_id, name:s.name, minutes:s.minutes})),
     };
   });
 }
