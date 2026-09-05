@@ -35,6 +35,11 @@ import { defaultOutboundProvider } from "@/lib/transport";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { translateMessage } from "@/lib/translate";
+import {
+  specialistOrderCancelledCopy,
+  specialistOrderUpdatedCopy,
+  type SpecialistFieldCopy,
+} from "@/lib/field-notification-copy";
 import { uploadBase64Media } from "@/lib/storage-media";
 import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
 import type {
@@ -1291,11 +1296,37 @@ export async function updateDriverOrder(
   const specialistId = row.specialist_id;
   const driverId = row.driver_id;
 
+  // The specialist is told in her own language on both channels; the driver
+  // copy stays Arabic. Her row is read once here so the push (fired now) and
+  // the WhatsApp copy (below) share the same resolved language and phone.
+  let specialistPhone: string | null = null;
+  let specialistCopy: SpecialistFieldCopy | null = null;
+  if (specialistId) {
+    const { data: sp } = await getAdminSupabaseClient()
+      .from("specialists")
+      .select("phone, nationality, preferred_language")
+      .eq("id", specialistId)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .maybeSingle();
+    if (sp) {
+      specialistPhone = (sp.phone as string | null) ?? null;
+      specialistCopy = specialistOrderUpdatedCopy({
+        nationality: sp.nationality as string | null,
+        preferredLanguage: sp.preferred_language as string | null,
+        customerName,
+        arrivalAt: row.arrival_at,
+      });
+    }
+  }
+
   notifyFieldOrderUpdated({
     orderId: id,
     customerName,
     specialistId,
     driverId,
+    specialistCopy: specialistCopy
+      ? { title: specialistCopy.pushTitle, body: specialistCopy.pushBody }
+      : undefined,
   }).catch(() => null);
 
   if (isOpenWaConfigured()) {
@@ -1321,19 +1352,8 @@ export async function updateDriverOrder(
           }
         }
 
-        if (specialistId) {
-          const res = await admin
-            .from("specialists")
-            .select("phone")
-            .eq("id", specialistId)
-            .eq("restaurant_id", KIARA_RESTAURANT_ID)
-            .maybeSingle();
-          if (res.data?.phone) {
-            await openWaTransport.sendText(
-              res.data.phone,
-              `🌸 *تحديث في الموعد*\n\nتم تعديل تفاصيل موعدكِ مع ${nameStr}.\n🕒 موعد الوصول: ${arrival}`,
-            );
-          }
+        if (specialistPhone && specialistCopy) {
+          await openWaTransport.sendText(specialistPhone, specialistCopy.whatsappBody);
         }
       } catch {
         // WhatsApp errors are non-fatal
@@ -1401,11 +1421,35 @@ export async function cancelDriverOrder(
   const specialistId = row.specialist_id;
   const driverId = row.driver_id;
 
+  // Localise the specialist's cancellation to her language on both channels;
+  // the driver copy stays Arabic. Read her row once and share it.
+  let specialistPhone: string | null = null;
+  let specialistCopy: SpecialistFieldCopy | null = null;
+  if (specialistId) {
+    const { data: sp } = await admin
+      .from("specialists")
+      .select("phone, nationality, preferred_language")
+      .eq("id", specialistId)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .maybeSingle();
+    if (sp) {
+      specialistPhone = (sp.phone as string | null) ?? null;
+      specialistCopy = specialistOrderCancelledCopy({
+        nationality: sp.nationality as string | null,
+        preferredLanguage: sp.preferred_language as string | null,
+        customerName,
+      });
+    }
+  }
+
   notifyFieldOrderCancelled({
     orderId: id,
     customerName,
     specialistId,
     driverId,
+    specialistCopy: specialistCopy
+      ? { title: specialistCopy.pushTitle, body: specialistCopy.pushBody }
+      : undefined,
   }).catch(() => null);
 
   if (isOpenWaConfigured()) {
@@ -1427,19 +1471,8 @@ export async function cancelDriverOrder(
           }
         }
 
-        if (specialistId) {
-          const res = await admin
-            .from("specialists")
-            .select("phone")
-            .eq("id", specialistId)
-            .eq("restaurant_id", KIARA_RESTAURANT_ID)
-            .maybeSingle();
-          if (res.data?.phone) {
-            await openWaTransport.sendText(
-              res.data.phone,
-              `❌ *إلغاء موعد*\n\nتم إلغاء الموعد المخصص لكِ لـ ${nameStr}.`,
-            );
-          }
+        if (specialistPhone && specialistCopy) {
+          await openWaTransport.sendText(specialistPhone, specialistCopy.whatsappBody);
         }
       } catch {
         // WhatsApp errors are non-fatal

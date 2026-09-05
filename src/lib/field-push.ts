@@ -428,6 +428,12 @@ export async function notifyFieldOrderUpdated(input: {
   specialistId: string | null;
   driverId: string | null;
   changesSummary?: string;
+  /**
+   * Copy already localised to the specialist's language. When omitted the
+   * specialist is addressed in Arabic like the driver. The driver copy is
+   * always Arabic.
+   */
+  specialistCopy?: { title: string; body: string };
 }): Promise<FieldPushDeliverySummary> {
   const specialistIds = input.specialistId ? [input.specialistId] : [];
   const driverIds = input.driverId ? [input.driverId] : [];
@@ -441,8 +447,8 @@ export async function notifyFieldOrderUpdated(input: {
   const messages: PushMessage[] = [
     ...(input.specialistId ? (specialistTokens.get(input.specialistId) ?? []) : []).map((to) =>
       fieldMessage(to, {
-        title: "تعديل في طلبكِ",
-        body: bodyText,
+        title: input.specialistCopy?.title ?? "تعديل في طلبكِ",
+        body: input.specialistCopy?.body ?? bodyText,
         data,
       }),
     ),
@@ -462,6 +468,12 @@ export async function notifyFieldOrderCancelled(input: {
   customerName: string | null;
   specialistId: string | null;
   driverId: string | null;
+  /**
+   * Copy already localised to the specialist's language. When omitted the
+   * specialist is addressed in Arabic like the driver. The driver copy is
+   * always Arabic.
+   */
+  specialistCopy?: { title: string; body: string };
 }): Promise<FieldPushDeliverySummary> {
   const specialistIds = input.specialistId ? [input.specialistId] : [];
   const driverIds = input.driverId ? [input.driverId] : [];
@@ -474,8 +486,8 @@ export async function notifyFieldOrderCancelled(input: {
   const messages: PushMessage[] = [
     ...(input.specialistId ? (specialistTokens.get(input.specialistId) ?? []) : []).map((to) =>
       fieldMessage(to, {
-        title: "إلغاء الطلب",
-        body: `تم إلغاء طلب ${name}.`,
+        title: input.specialistCopy?.title ?? "إلغاء الطلب",
+        body: input.specialistCopy?.body ?? `تم إلغاء طلب ${name}.`,
         data,
       }),
     ),
