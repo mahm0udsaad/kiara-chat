@@ -28,6 +28,14 @@ type TypingPayload = {
 
 type InboxPayload = {
   conversationId?: string;
+  kind?: string;
+  customerName?: string | null;
+};
+
+export type UnclaimedAlert = {
+  conversationId: string;
+  customerName: string | null;
+  at: number;
 };
 
 /**
@@ -45,6 +53,11 @@ type InboxPayload = {
 type InboxLiveContextValue = {
   subscribe: (conversationId: string, listener: () => void) => () => void;
   getSnapshot: (conversationId: string) => boolean;
+  // The newest unclaimed message, for the app-wide bell. A subscribable store,
+  // like typing, so only the banner re-renders when it changes.
+  subscribeAlert: (listener: () => void) => () => void;
+  getAlert: () => UnclaimedAlert | null;
+  dismissAlert: () => void;
 };
 
 const InboxLiveContext = createContext<InboxLiveContextValue | null>(null);
@@ -66,6 +79,29 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
   const typing = useRef(new Set<string>());
   const listeners = useRef(new Map<string, Set<() => void>>());
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const alert = useRef<UnclaimedAlert | null>(null);
+  const alertListeners = useRef(new Set<() => void>());
+  const notifyAlert = useCallback(() => {
+    for (const listener of alertListeners.current) listener();
+  }, []);
+  const subscribeAlert = useCallback((listener: () => void) => {
+    alertListeners.current.add(listener);
+    return () => alertListeners.current.delete(listener);
+  }, []);
+  const getAlert = useCallback(() => alert.current, []);
+  const setAlert = useCallback(
+    (next: UnclaimedAlert) => {
+      alert.current = next;
+      notifyAlert();
+    },
+    [notifyAlert],
+  );
+  const dismissAlert = useCallback(() => {
+    if (alert.current) {
+      alert.current = null;
+      notifyAlert();
+    }
+  }, [notifyAlert]);
 
   const notify = useCallback((conversationId: string) => {
     const subscribers = listeners.current.get(conversationId);
@@ -113,8 +149,8 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
   // Stable for the life of the provider — every callback above is itself stable,
   // so no consumer ever re-renders because of this value.
   const contextValue = useMemo(
-    () => ({ subscribe, getSnapshot }),
-    [subscribe, getSnapshot],
+    () => ({ subscribe, getSnapshot, subscribeAlert, getAlert, dismissAlert }),
+    [subscribe, getSnapshot, subscribeAlert, getAlert, dismissAlert],
   );
 
   useEffect(() => {
@@ -176,6 +212,15 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
           const event = (payload ?? {}) as InboxPayload;
           if (!event.conversationId) return;
           clearTyping(event.conversationId);
+          // Unique-to-Kiara in-app bell: a new message on a thread nobody has
+          // claimed, while the app is open (where the OS shows no push banner).
+          if (event.kind === "inbox_unassigned") {
+            setAlert({
+              conversationId: event.conversationId,
+              customerName: event.customerName ?? null,
+              at: Date.now(),
+            });
+          }
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: ["conversations"] }),
             queryClient.invalidateQueries({
@@ -193,7 +238,7 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
       cancelled = true;
       if (liveChannel) void supabase.removeChannel(liveChannel);
     };
-  }, [clearTyping, operationsStaff, queryClient, session?.access_token, teamMemberId]);
+  }, [clearTyping, operationsStaff, queryClient, session?.access_token, teamMemberId, setAlert]);
 
   return (
     <InboxLiveContext.Provider value={contextValue}>
@@ -219,4 +264,21 @@ export function useIsTyping(conversationId: string): boolean {
     ),
     useCallback(() => getSnapshot(conversationId), [getSnapshot, conversationId]),
   );
+}
+
+/** The newest unclaimed message for the app-wide bell, or null. */
+export function useUnclaimedAlert(): UnclaimedAlert | null {
+  const value = use(InboxLiveContext);
+  if (!value) throw new Error("useUnclaimedAlert must be used inside InboxLiveProvider");
+  const { subscribeAlert, getAlert } = value;
+  return useSyncExternalStore(
+    useCallback((onChange: () => void) => subscribeAlert(onChange), [subscribeAlert]),
+    useCallback(() => getAlert(), [getAlert]),
+  );
+}
+
+export function useDismissUnclaimedAlert(): () => void {
+  const value = use(InboxLiveContext);
+  if (!value) throw new Error("useDismissUnclaimedAlert must be used inside InboxLiveProvider");
+  return value.dismissAlert;
 }

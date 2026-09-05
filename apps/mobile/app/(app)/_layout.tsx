@@ -1,5 +1,8 @@
 import { Redirect } from "expo-router";
 import { Stack } from "expo-router/stack";
+import { View } from "react-native";
+
+import { UnclaimedBell } from "@/components/unclaimed-bell";
 
 import { LoadingScreen } from "@/components/screen-state";
 import { useAuth } from "@/providers/auth-provider";
@@ -12,7 +15,8 @@ export default function AppLayout() {
   if (!session) return <Redirect href="/login" />;
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <View style={{ flex: 1 }}>
+      <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" />
       {/* The chat sits above the tabs for the same reason, plus one of its
           own: it is the only screen whose bottom edge is interactive all the
@@ -75,6 +79,8 @@ export default function AppLayout() {
           contentStyle: { backgroundColor: colors.background },
         }}
       />
-    </Stack>
+      </Stack>
+      <UnclaimedBell />
+    </View>
   );
 }

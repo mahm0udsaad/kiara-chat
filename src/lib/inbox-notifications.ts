@@ -286,6 +286,9 @@ async function sendPush(input: {
 async function broadcastLiveRefresh(input: {
   teamMemberId: string;
   conversationId: string;
+  /** Lets the client show an in-app bell only for unclaimed threads. */
+  kind?: InboxAlertKind;
+  customerName?: string | null;
 }): Promise<void> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -302,6 +305,8 @@ async function broadcastLiveRefresh(input: {
     body: JSON.stringify({
       conversationId: input.conversationId,
       receivedAt: new Date().toISOString(),
+      kind: input.kind ?? "inbox_message",
+      customerName: input.customerName ?? null,
     }),
   });
   if (!response.ok) {
@@ -366,7 +371,7 @@ export async function notifyInboundInboxMessage(
   if (owner) {
     settledOrLogged(
       await Promise.allSettled([
-        broadcastLiveRefresh({ teamMemberId: owner, conversationId }),
+        broadcastLiveRefresh({ teamMemberId: owner, conversationId, kind: "inbox_message", customerName }),
         sendPush({
           teamMemberIds: owner,
           conversationId,
@@ -393,7 +398,12 @@ export async function notifyInboundInboxMessage(
   settledOrLogged(
     await Promise.allSettled([
       ...team.map((teamMemberId) =>
-        broadcastLiveRefresh({ teamMemberId, conversationId })
+        broadcastLiveRefresh({
+          teamMemberId,
+          conversationId,
+          kind: "inbox_unassigned",
+          customerName,
+        })
       ),
       sendPush({
         teamMemberIds: team,
