@@ -56,6 +56,12 @@ export function OrderServiceChanges({ orderId }: { orderId: string }) {
       }
     },
   });
+  if (
+    query.error instanceof ApiError &&
+    (query.error.status === 404 || query.error.status === 503)
+  ) {
+    return null;
+  }
   const text = { ...type.callout, color: colors.text, ...rtlText };
   const list = query.data;
   return (
@@ -105,7 +111,8 @@ export function OrderServiceChanges({ orderId }: { orderId: string }) {
           </Text>
           {!list.canAdd ? (
             <Text style={text}>
-              الإضافة متاحة بعد إرسال الطلب للأخصائية والسائق وقبل إنهاء الزيارة.
+              الإضافة متاحة بعد إرسال الطلب للأخصائية والسائق وقبل إنهاء
+              الزيارة.
             </Text>
           ) : null}
           {list.canAdd && !preview ? (

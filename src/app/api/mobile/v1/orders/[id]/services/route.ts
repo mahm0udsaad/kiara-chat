@@ -41,7 +41,16 @@ async function handle(request: Request, params: Promise<{ id: string }>) {
   } catch (error) {
     const raw = error instanceof Error ? error.message : "تعذّر تعديل الخدمات";
     const conflict = /CONFLICT|REKAZ_CHANGED|duplicate key/.test(raw);
-    const status = raw === "ORDER_NOT_FOUND" ? 404 : conflict ? 409 : 400;
+    const unavailable =
+      /order_visit_services|order_service_|schema cache/i.test(raw);
+    const status =
+      raw === "ORDER_NOT_FOUND"
+        ? 404
+        : conflict
+          ? 409
+          : unavailable
+            ? 503
+            : 400;
     const message = conflict
       ? "تغيّر الطلب أو حجز ركاز. حدّثي البيانات وراجعي التأكيد من جديد."
       : raw;

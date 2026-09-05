@@ -36,11 +36,16 @@ export function OrderServiceChanges({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [unavailable, setUnavailable] = useState(false);
   const endpoint = `/api/orders/${orderId}/services`;
   const load = useCallback(
     async (signal?: AbortSignal) => {
       const response = await fetch(endpoint, { signal, cache: "no-store" });
       const data = await response.json();
+      if (response.status === 404 || response.status === 503) {
+        setUnavailable(true);
+        return;
+      }
       if (!response.ok) throw new Error(data.error);
       setList(data);
     },
@@ -51,15 +56,22 @@ export function OrderServiceChanges({
     fetch(endpoint, { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
+        if (response.status === 404 || response.status === 503) {
+          setUnavailable(true);
+          return null;
+        }
         if (!response.ok) throw new Error(data.error);
         return data;
       })
-      .then(setList)
+      .then((data) => {
+        if (data) setList(data);
+      })
       .catch((e) => {
         if (!controller.signal.aborted) setError(e.message);
       });
     return () => controller.abort();
   }, [endpoint]);
+  if (unavailable) return null;
   async function act(body: Record<string, unknown>) {
     setBusy(true);
     setError("");
@@ -144,7 +156,10 @@ export function OrderServiceChanges({
             تحديث الخدمات وحالة الإشعارات
           </Button>
           {!list.canAdd ? (
-            <p>الإضافة متاحة بعد إرسال الطلب للأخصائية والسائق وقبل إنهاء الزيارة.</p>
+            <p>
+              الإضافة متاحة بعد إرسال الطلب للأخصائية والسائق وقبل إنهاء
+              الزيارة.
+            </p>
           ) : null}
           {list.canAdd && !preview ? (
             <>
