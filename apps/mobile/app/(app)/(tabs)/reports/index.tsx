@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, T
 
 import { PrimaryButton } from "@/components/primary-button";
 import { CustomerServiceTeam } from "@/components/reports/customer-service-team";
+import { OrdersSummary } from "@/components/reports/orders-summary";
 import { ErrorState } from "@/components/screen-state";
 import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
@@ -18,18 +19,19 @@ import {
   reportRange,
   type ReportPeriod,
 } from "@/lib/operations-report";
-import { useBootstrap, useCustomerServiceReport, useOperationsReport } from "@/lib/queries";
+import { useBootstrap, useCustomerServiceReport, useOperationsReport, useOrdersReport } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { OperationsPerson, OperationsRole } from "@/types/api";
 
-type ReportTeam = OperationsRole | "customer-service";
+type ReportTeam = OperationsRole | "customer-service" | "orders";
 
 const roleOptions: SegmentOption<ReportTeam>[] = [
+  { value: "orders", label: "الطلبات" },
   { value: "customer-service", label: "خدمة العملاء" },
   { value: "specialist", label: "الأخصائيات" },
   { value: "driver", label: "السائقون" },
 ];
-const customerServicePeriods: SegmentOption<ReportPeriod>[] = [
+const summaryPeriods: SegmentOption<ReportPeriod>[] = [
   { value: "today", label: "اليوم" },
   { value: "week", label: "هذا الأسبوع" },
   { value: "month", label: "هذا الشهر" },
@@ -94,11 +96,11 @@ export default function ReportsScreen() {
   const bootstrap = useBootstrap();
   const today = dayKeyFromToday(0);
   const [role, setRole] = useState<ReportTeam>("customer-service");
-  const [customerServicePeriod, setCustomerServicePeriod] = useState<ReportPeriod>("today");
+  const [summaryPeriod, setSummaryPeriod] = useState<ReportPeriod>("today");
   const [draft, setDraft] = useState({ from: today, to: addDays(today, 6), startTime: "08:00", endTime: "22:00" });
   const [applied, setApplied] = useState(draft);
   const [picker, setPicker] = useState<PickerField | null>(null);
-  const customerServiceRange = reportRange(customerServicePeriod, today);
+  const summaryRange = reportRange(summaryPeriod, today);
   const canViewReports = bootstrap.data?.capabilities.canViewReports === true;
   const operationsReport = useOperationsReport(
     applied.from,
@@ -108,13 +110,22 @@ export default function ReportsScreen() {
     canViewReports && role !== "customer-service",
   );
   const customerServiceReport = useCustomerServiceReport(
-    customerServiceRange.from,
-    customerServiceRange.to,
+    summaryRange.from,
+    summaryRange.to,
     "00:00",
     "23:59",
     canViewReports && role === "customer-service",
   );
-  const activeReport = role === "customer-service" ? customerServiceReport : operationsReport;
+  const ordersReport = useOrdersReport(
+    summaryRange.from,
+    summaryRange.to,
+    canViewReports && role === "orders",
+  );
+  const activeReport = role === "customer-service"
+    ? customerServiceReport
+    : role === "orders"
+      ? ordersReport
+      : operationsReport;
 
   if (bootstrap.isSuccess && !bootstrap.data.capabilities.canViewReports) return <Redirect href="/inbox" />;
   if (activeReport.isError) {
@@ -160,23 +171,27 @@ export default function ReportsScreen() {
         layout="scroll"
       />
 
-      {role === "customer-service" ? (
+      {role === "customer-service" || role === "orders" ? (
         <Card>
           <View style={{ gap: spacing.xs }}>
-            <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>المحادثات التي تم التعامل معها</Text>
+            <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>
+              {role === "orders" ? "ملخص الطلبات" : "المحادثات التي تم التعامل معها"}
+            </Text>
             <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
-              يعتمد التقرير على الرد أو الاستلام أو أي إجراء داخل المحادثة، بغض النظر عمّن استلمها أولاً.
+              {role === "orders"
+                ? "الطلبات مجمعة حسب موعد الزيارة، وتشمل طلبات ركاز والطلبات المنشأة من واتساب."
+                : "يعتمد التقرير على الرد أو الاستلام أو أي إجراء داخل المحادثة، بغض النظر عمّن استلمها أولاً."}
             </Text>
           </View>
           <Segmented
-            options={customerServicePeriods}
-            value={customerServicePeriod}
-            onChange={setCustomerServicePeriod}
-            accessibilityLabel="فترة تقرير خدمة العملاء"
-            testIDPrefix="customer-service-period"
+            options={summaryPeriods}
+            value={summaryPeriod}
+            onChange={setSummaryPeriod}
+            accessibilityLabel={role === "orders" ? "فترة تقرير الطلبات" : "فترة تقرير خدمة العملاء"}
+            testIDPrefix={`${role}-period`}
           />
           <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
-            {dateLabel.format(dayToDate(customerServiceRange.from))} – {dateLabel.format(dayToDate(customerServiceRange.to))} · توقيت الرياض
+            {dateLabel.format(dayToDate(summaryRange.from))} – {dateLabel.format(dayToDate(summaryRange.to))} · توقيت الرياض
           </Text>
         </Card>
       ) : (
@@ -201,7 +216,7 @@ export default function ReportsScreen() {
       </Card>
       )}
 
-      {role !== "customer-service" && picker ? (
+      {role !== "customer-service" && role !== "orders" && picker ? (
         <DateTimePicker
           testID="reports-date-time-picker"
           value={pickerValue(picker, values)}
@@ -216,7 +231,9 @@ export default function ReportsScreen() {
 
       {role === "customer-service" && customerServiceReport.data ? (
         <CustomerServiceTeam report={customerServiceReport.data} />
-      ) : operationsReport.data && role !== "customer-service" ? (
+      ) : role === "orders" && ordersReport.data ? (
+        <OrdersSummary report={ordersReport.data} />
+      ) : operationsReport.data && (role === "specialist" || role === "driver") ? (
         <>
           <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
             <Metric icon="person.2" label="مسند" value={reportInteger.format(totals.assigned)} />

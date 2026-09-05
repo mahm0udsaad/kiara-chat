@@ -57,6 +57,7 @@ import type {
   OrdersResponse,
   OrdersCalendarResponse,
   OperationsReport,
+  OrdersReport,
   RekazCheckResponse,
   RekazPullResponse,
   SavedReply,
@@ -89,6 +90,7 @@ export const queryKeys = {
   ordersCalendar: (from: string, to: string) => ["orders-calendar", from, to] as const,
   operationsReport: (from: string, to: string, startTime: string, endTime: string) =>
     ["operations-report", from, to, startTime, endTime] as const,
+  ordersReport: (from: string, to: string) => ["orders-report", from, to] as const,
   customerServiceReport: (from: string, to: string, startTime: string, endTime: string) =>
     ["customer-service-report", from, to, startTime, endTime] as const,
   customerServiceEmployeeActivities: (
@@ -508,6 +510,15 @@ export function useOperationsReport(
       return apiRequest<OperationsReport>(`/reports/operations?${params.toString()}`);
     },
     enabled: enabled && Boolean(from && to && startTime && endTime),
+    staleTime: 30_000,
+  });
+}
+
+export function useOrdersReport(from: string, to: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.ordersReport(from, to),
+    queryFn: () => apiRequest<OrdersReport>(`/reports/orders?from=${from}&to=${to}`),
+    enabled: enabled && Boolean(from && to),
     staleTime: 30_000,
   });
 }

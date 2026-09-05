@@ -480,6 +480,39 @@ export type OperationsReport = {
   events: Record<OperationsRole, OperationsEvent[]>;
 };
 
+export type OrdersReportDay = {
+  day: string;
+  total: number;
+  completed: number;
+  active: number;
+  cancelled: number;
+  edited: number;
+  revenue: number;
+};
+
+export type OrdersReport = {
+  from: string;
+  to: string;
+  timeZone: "Asia/Riyadh";
+  generatedAt: string;
+  totals: {
+    total: number;
+    completed: number;
+    rekazDone: number;
+    fieldCompleted: number;
+    active: number;
+    cancelled: number;
+    edited: number;
+    dispatched: number;
+    completionRate: number;
+    serviceRevenue: number;
+    transportRevenue: number;
+    refunded: number;
+    totalRevenue: number;
+  };
+  daily: OrdersReportDay[];
+};
+
 export type CustomerServiceActionKind =
   | "reply"
   | "claim"
