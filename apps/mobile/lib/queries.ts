@@ -23,6 +23,8 @@ import type {
   ConversationDetail,
   ConversationMessagesPage,
   ConversationSummary,
+  ConversationLabel,
+  LabelColor,
   ConversationSection,
   ConversationFilters,
   ConversationsResponse,
@@ -1212,6 +1214,46 @@ export function useSetCampaignStatus() {
       }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["campaigns"] });
+    },
+  });
+}
+
+/**
+ * Rename the customer on a thread (empty clears it). Restored: the caller
+ * shipped without this hook, which crashed the customer screen.
+ */
+export function useRenameCustomer(conversationId: string, phone: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiRequest<{ ok: boolean; name: string | null }>(
+        `/conversations/${conversationId}/name`,
+        { method: "POST", body: JSON.stringify({ name }) },
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.customerTimeline(phone) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(conversationId) }),
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+      ]);
+    },
+  });
+}
+
+/**
+ * Create a shared label from the conversation sheet. Restored: the caller
+ * shipped without this hook, which crashed the conversation screen.
+ */
+export function useCreateConversationLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; color: LabelColor }) =>
+      apiRequest<{ label: ConversationLabel; created: boolean }>("/labels", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap });
     },
   });
 }

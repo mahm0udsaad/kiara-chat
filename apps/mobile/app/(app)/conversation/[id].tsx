@@ -403,7 +403,7 @@ export default function ConversationScreen() {
   const sharedLocations = useMemo(() => {
     const combined = [
       ...findSharedLocations(messages ?? []),
-      ...(conversation.data?.sharedLocations ?? []),
+      ...(conversation.data?.sharedLocation ? [conversation.data.sharedLocation] : []),
     ].sort((left, right) => right.at.localeCompare(left.at));
     const seen = new Set<string>();
     return combined.filter((location) => {
@@ -412,7 +412,7 @@ export default function ConversationScreen() {
       seen.add(key);
       return true;
     });
-  }, [conversation.data?.sharedLocations, messages]);
+  }, [conversation.data?.sharedLocation, messages]);
 
   useEffect(() => {
     if (canMarkRead && (currentConversation?.unread_count ?? 0) > 0) markRead();
