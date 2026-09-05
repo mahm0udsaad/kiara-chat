@@ -68,6 +68,7 @@ export type SavedReply = {
 };
 
 export type InboxView =
+  | "today"
   | "new"
   | "mine"
   | "unassigned"
@@ -541,10 +542,32 @@ export type CustomerServiceEmployee = {
 };
 
 export type CustomerServiceEmployeeActivitiesResponse = {
+  chats: CustomerServiceHandledChat[];
   activities: CustomerServiceActivity[];
   total: number;
   hasMore: boolean;
   nextOffset: number | null;
+};
+
+export type CustomerServiceHandledChat = {
+  conversationId: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  firstHandledAt: string;
+  lastHandledAt: string;
+  replies: number;
+  actions: number;
+};
+
+export type CustomerServiceAgentAnalysis = {
+  score: number;
+  summary: string;
+  strengths: string[];
+  improvements: string[];
+  repeatedPatterns: string[];
+  risks: string[];
+  recommendations: string[];
+  basis: { conversations: number; messages: number; agentReplies: number };
 };
 
 export type CustomerServiceReport = {

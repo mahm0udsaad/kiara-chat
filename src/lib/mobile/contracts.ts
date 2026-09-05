@@ -10,6 +10,7 @@ import type { FieldStaffSession } from "@/lib/field-staff";
 export const MOBILE_API_VERSION = 1 as const;
 export const MOBILE_DANGER_AFTER_SECONDS = 6 * 60;
 export const MOBILE_CONVERSATION_VIEWS = [
+  "today",
   "new",
   "mine",
   "unassigned",

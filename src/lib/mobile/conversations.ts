@@ -27,6 +27,12 @@ import type {
 
 const EMPTY_PHONE_SET: ReadonlySet<string> = new Set();
 const EMPTY_CONVERSATION_ID_SET: ReadonlySet<string> = new Set();
+const RIYADH_DAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Riyadh",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 
 export function conversationCsStatus(
   conversation: Pick<Conversation, "metadata" | "status">
@@ -186,6 +192,10 @@ function matchesView(
   const isDriver = driverPhoneSet.has(normalizePhone(conversation.customer_phone));
   if (view === "drivers") return isDriver;
   if (isDriver) return false;
+  if (view === "today") {
+    return RIYADH_DAY.format(new Date(conversation.last_message_at)) ===
+      RIYADH_DAY.format(new Date(now));
+  }
   if (view === "new") return (conversation.unread_count ?? 0) > 0;
   if (view === "mine") {
     return Boolean(
@@ -449,6 +459,7 @@ export async function listMobileConversations(options: {
     );
 
   const counts = {
+    today: inView("today").length,
     new: inView("new").length,
     mine: inView("mine").length,
     unassigned: inView("unassigned").length,

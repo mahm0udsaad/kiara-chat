@@ -11,7 +11,13 @@ import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { addDays, dayKeyFromToday } from "@/lib/calendar";
-import { REPORT_LOCALE, reportDecimal, reportInteger } from "@/lib/operations-report";
+import {
+  REPORT_LOCALE,
+  reportDecimal,
+  reportInteger,
+  reportRange,
+  type ReportPeriod,
+} from "@/lib/operations-report";
 import { useBootstrap, useCustomerServiceReport, useOperationsReport } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { OperationsPerson, OperationsRole } from "@/types/api";
@@ -22,6 +28,11 @@ const roleOptions: SegmentOption<ReportTeam>[] = [
   { value: "customer-service", label: "خدمة العملاء" },
   { value: "specialist", label: "الأخصائيات" },
   { value: "driver", label: "السائقون" },
+];
+const customerServicePeriods: SegmentOption<ReportPeriod>[] = [
+  { value: "today", label: "اليوم" },
+  { value: "week", label: "هذا الأسبوع" },
+  { value: "month", label: "هذا الشهر" },
 ];
 
 type PickerField = "from" | "to" | "startTime" | "endTime";
@@ -83,9 +94,11 @@ export default function ReportsScreen() {
   const bootstrap = useBootstrap();
   const today = dayKeyFromToday(0);
   const [role, setRole] = useState<ReportTeam>("customer-service");
+  const [customerServicePeriod, setCustomerServicePeriod] = useState<ReportPeriod>("today");
   const [draft, setDraft] = useState({ from: today, to: addDays(today, 6), startTime: "08:00", endTime: "22:00" });
   const [applied, setApplied] = useState(draft);
   const [picker, setPicker] = useState<PickerField | null>(null);
+  const customerServiceRange = reportRange(customerServicePeriod, today);
   const canViewReports = bootstrap.data?.capabilities.canViewReports === true;
   const operationsReport = useOperationsReport(
     applied.from,
@@ -95,10 +108,10 @@ export default function ReportsScreen() {
     canViewReports && role !== "customer-service",
   );
   const customerServiceReport = useCustomerServiceReport(
-    applied.from,
-    applied.to,
-    applied.startTime,
-    applied.endTime,
+    customerServiceRange.from,
+    customerServiceRange.to,
+    "00:00",
+    "23:59",
     canViewReports && role === "customer-service",
   );
   const activeReport = role === "customer-service" ? customerServiceReport : operationsReport;
@@ -147,6 +160,26 @@ export default function ReportsScreen() {
         layout="scroll"
       />
 
+      {role === "customer-service" ? (
+        <Card>
+          <View style={{ gap: spacing.xs }}>
+            <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>المحادثات التي تم التعامل معها</Text>
+            <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
+              يعتمد التقرير على الرد أو الاستلام أو أي إجراء داخل المحادثة، بغض النظر عمّن استلمها أولاً.
+            </Text>
+          </View>
+          <Segmented
+            options={customerServicePeriods}
+            value={customerServicePeriod}
+            onChange={setCustomerServicePeriod}
+            accessibilityLabel="فترة تقرير خدمة العملاء"
+            testIDPrefix="customer-service-period"
+          />
+          <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
+            {dateLabel.format(dayToDate(customerServiceRange.from))} – {dateLabel.format(dayToDate(customerServiceRange.to))} · توقيت الرياض
+          </Text>
+        </Card>
+      ) : (
       <Card>
         <View style={{ gap: spacing.xs }}>
           <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>نطاق التقرير</Text>
@@ -166,8 +199,9 @@ export default function ReportsScreen() {
           onPress={() => setApplied(draft)}
         />
       </Card>
+      )}
 
-      {picker ? (
+      {role !== "customer-service" && picker ? (
         <DateTimePicker
           testID="reports-date-time-picker"
           value={pickerValue(picker, values)}

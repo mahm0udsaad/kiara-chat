@@ -1,7 +1,7 @@
 import { addDays, dayKeyFromToday, dayKeyOf } from "@/lib/calendar";
 import type { OperationsEvent, OperationsRole } from "@/types/api";
 
-export type ReportPeriod = "month" | "week";
+export type ReportPeriod = "today" | "month" | "week";
 
 /** Reports keep Arabic labels but use Gregorian dates and Latin digits. */
 export const REPORT_LOCALE = "en-US-u-ca-gregory-nu-latn";
@@ -34,6 +34,7 @@ export type OperationsVisit = {
 
 /** Current Saudi working week (Sunday–Saturday) or current calendar month. */
 export function reportRange(period: ReportPeriod, today = dayKeyFromToday(0)) {
+  if (period === "today") return { from: today, to: today };
   if (period === "week") {
     const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
     const from = addDays(today, -weekday);

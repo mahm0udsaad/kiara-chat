@@ -31,6 +31,7 @@ import type {
   CreateOrderInput,
   CustomerAnalysisResult,
   CustomerServiceReport,
+  CustomerServiceAgentAnalysis,
   CustomerServiceEmployeeActivitiesResponse,
   ConversationAuditReport,
   CustomerTimeline,
@@ -559,6 +560,26 @@ export function useCustomerServiceEmployeeActivities(
     },
     getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
     enabled: enabled && Boolean(personId && from && to && startTime && endTime),
+  });
+}
+
+export function useAnalyzeCustomerServiceAgent(
+  personId: string,
+  from: string,
+  to: string,
+  startTime: string,
+  endTime: string,
+) {
+  return useMutation({
+    mutationFn: () =>
+      apiRequest<{ analysis: CustomerServiceAgentAnalysis }>(
+        "/reports/customer-service/analysis",
+        {
+          method: "POST",
+          body: JSON.stringify({ personId, from, to, startTime, endTime }),
+          timeoutMs: AI_TIMEOUT_MS,
+        },
+      ),
   });
 }
 

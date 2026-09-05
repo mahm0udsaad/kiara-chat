@@ -18,6 +18,7 @@ import { listSavedReplies } from "@/lib/saved-replies";
 export const dynamic = "force-dynamic";
 
 const VIEW_LABELS = {
+  today: "محادثات اليوم",
   new: "جديد",
   mine: "محادثاتي",
   unassigned: "غير مستلمة",

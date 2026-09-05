@@ -51,6 +51,7 @@ import type {
 } from "@/types/api";
 
 const views: SegmentOption<InboxView>[] = [
+  { value: "today", label: "محادثات اليوم" },
   { value: "new", label: "جديد" },
   { value: "mine", label: "محادثاتي" },
   { value: "unassigned", label: "غير مستلمة" },
@@ -443,7 +444,7 @@ export default function InboxScreen() {
   const { colors } = useTheme();
   const router = useRouter();
   const android = process.env.EXPO_OS === "android";
-  const [view, setView] = useState<InboxView>("new");
+  const [view, setView] = useState<InboxView>("today");
   const [search, setSearch] = useState("");
   // The web inbox's status/section/label dropdowns, folded into one sheet.
   const [filters, setFilters] = useState<ConversationFilters>(

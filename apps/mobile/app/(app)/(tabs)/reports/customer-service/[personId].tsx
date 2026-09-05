@@ -3,6 +3,8 @@ import { Link, Redirect, Stack, useLocalSearchParams } from "expo-router";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
 import { ErrorState } from "@/components/screen-state";
+import { PrimaryButton } from "@/components/primary-button";
+import { BulletList, Score } from "@/components/customer-analysis-view";
 import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
@@ -10,30 +12,17 @@ import { relativeTimeLabel } from "@/lib/format";
 import { REPORT_LOCALE, reportDecimal, reportInteger } from "@/lib/operations-report";
 import {
   useBootstrap,
+  useAnalyzeCustomerServiceAgent,
   useCustomerServiceEmployeeActivities,
   useCustomerServiceReport,
 } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
-import type { CustomerServiceActionKind } from "@/types/api";
 
 const dateLabel = new Intl.DateTimeFormat(REPORT_LOCALE, {
   day: "numeric",
   month: "short",
   year: "numeric",
 });
-
-const actionIcon: Record<CustomerServiceActionKind, IconName> = {
-  reply: "paperplane.fill",
-  claim: "checkmark.circle",
-  release: "tray",
-  transfer: "arrow.triangle.2.circlepath",
-  takeover: "person.2",
-  status: "slider.horizontal.3",
-  booking: "calendar",
-  note: "doc.text",
-  order: "car",
-  other: "pencil",
-};
 
 function one(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
@@ -97,6 +86,13 @@ export default function CustomerServiceEmployeeReportScreen() {
     endTime,
     hasRequestedActivities && Boolean(personId),
   );
+  const agentAnalysis = useAnalyzeCustomerServiceAgent(
+    personId,
+    from,
+    to,
+    startTime,
+    endTime,
+  );
 
   if (bootstrap.isSuccess && !bootstrap.data.capabilities.canViewReports) {
     return <Redirect href="/inbox" />;
@@ -126,7 +122,7 @@ export default function CustomerServiceEmployeeReportScreen() {
       ] as const
     : [];
 
-  const activities = activitiesQuery.data?.pages.flatMap((page) => page.activities) ?? [];
+  const handledChats = activitiesQuery.data?.pages.flatMap((page) => page.chats) ?? [];
 
   return (
     <>
@@ -198,6 +194,65 @@ export default function CustomerServiceEmployeeReportScreen() {
               <Metric icon="checkmark.circle" label="منتهية الآن" value={employee.currentResolved} />
             </View>
 
+            <Card variant="raised">
+              <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.md }}>
+                <View style={{ flex: 1, gap: spacing.xs }}>
+                  <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>تحليل سلوك الموظفة بالذكاء الاصطناعي</Text>
+                  <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
+                    يراجع أسلوب الرد وحل الطلبات والمتابعة في محادثات الفترة المختارة فقط.
+                  </Text>
+                </View>
+                <IconSymbol name="sparkles" size={24} color={colors.brand} />
+              </View>
+              {agentAnalysis.data ? (
+                <View style={{ gap: spacing.lg }}>
+                  <Score value={agentAnalysis.data.analysis.score} label="تقييم جودة التعامل" />
+                  <Text selectable style={{ ...type.body, ...rtlText, color: colors.textSecondary }}>
+                    {agentAnalysis.data.analysis.summary}
+                  </Text>
+                  {agentAnalysis.data.analysis.strengths.length ? (
+                    <View style={{ gap: spacing.sm }}>
+                      <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.success }}>نقاط القوة</Text>
+                      <BulletList items={agentAnalysis.data.analysis.strengths} color={colors.text} />
+                    </View>
+                  ) : null}
+                  {agentAnalysis.data.analysis.improvements.length ? (
+                    <View style={{ gap: spacing.sm }}>
+                      <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.warning }}>فرص التحسين</Text>
+                      <BulletList items={agentAnalysis.data.analysis.improvements} color={colors.text} />
+                    </View>
+                  ) : null}
+                  {agentAnalysis.data.analysis.repeatedPatterns.length ? (
+                    <View style={{ gap: spacing.sm }}>
+                      <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.text }}>أنماط متكررة</Text>
+                      <BulletList items={agentAnalysis.data.analysis.repeatedPatterns} color={colors.textSecondary} />
+                    </View>
+                  ) : null}
+                  {agentAnalysis.data.analysis.risks.length ? (
+                    <View style={{ gap: spacing.sm }}>
+                      <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.danger }}>مخاطر تحتاج متابعة</Text>
+                      <BulletList items={agentAnalysis.data.analysis.risks} color={colors.danger} />
+                    </View>
+                  ) : null}
+                  <View style={{ gap: spacing.sm }}>
+                    <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.brand }}>خطوات مقترحة</Text>
+                    <BulletList items={agentAnalysis.data.analysis.recommendations} color={colors.text} />
+                  </View>
+                  <Text style={{ ...type.caption, ...rtlText, color: colors.textTertiary }}>
+                    بُني على {reportInteger.format(agentAnalysis.data.analysis.basis.conversations)} محادثة و{reportInteger.format(agentAnalysis.data.analysis.basis.agentReplies)} رد للموظفة.
+                  </Text>
+                </View>
+              ) : agentAnalysis.isError ? (
+                <Text style={{ ...type.body, ...rtlText, color: colors.danger }}>{agentAnalysis.error.message}</Text>
+              ) : null}
+              <PrimaryButton
+                label={agentAnalysis.data ? "إعادة التحليل" : "تحليل المحادثات"}
+                icon={agentAnalysis.data ? "arrow.clockwise" : "sparkles"}
+                loading={agentAnalysis.isPending}
+                onPress={() => agentAnalysis.mutate()}
+              />
+            </Card>
+
             <Card>
               <View style={{ gap: spacing.xs }}>
                 <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>تفصيل الإجراءات</Text>
@@ -257,16 +312,16 @@ export default function CustomerServiceEmployeeReportScreen() {
 
             <View style={{ gap: spacing.md }}>
               <View style={{ gap: spacing.xs }}>
-                <Text style={{ ...type.title3, ...rtlText, color: colors.text }}>آخر الأنشطة</Text>
+                <Text style={{ ...type.title3, ...rtlText, color: colors.text }}>المحادثات التي تعاملت معها</Text>
                 <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
-                  اضغطي على أي نشاط لفتح المحادثة المرتبطة به.
+                  كل محادثة تظهر مرة واحدة مع عدد الردود والإجراءات خلال الفترة المختارة.
                 </Text>
               </View>
 
               {!hasRequestedActivities ? (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="عرض الأنشطة"
+                  accessibilityLabel="عرض المحادثات التي تم التعامل معها"
                   onPress={() => setHasRequestedActivities(true)}
                   style={({ pressed }) => ({
                     padding: spacing.md,
@@ -277,7 +332,7 @@ export default function CustomerServiceEmployeeReportScreen() {
                     opacity: pressed ? 0.7 : 1,
                   })}
                 >
-                  <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.brand }}>عرض الأنشطة</Text>
+                  <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.brand }}>عرض المحادثات</Text>
                 </Pressable>
               ) : activitiesQuery.isLoading ? (
                 <ActivityIndicator size="small" color={colors.brand} />
@@ -285,7 +340,7 @@ export default function CustomerServiceEmployeeReportScreen() {
                 <Card variant="raised">
                   <View style={{ gap: spacing.sm, alignItems: "center" }}>
                     <Text style={{ ...type.body, ...rtlText, color: colors.danger }}>
-                      {activitiesQuery.error.message || "تعذّر تحميل الأنشطة"}
+                      {activitiesQuery.error.message || "تعذّر تحميل المحادثات"}
                     </Text>
                     <Pressable
                       accessibilityRole="button"
@@ -305,27 +360,27 @@ export default function CustomerServiceEmployeeReportScreen() {
                 </Card>
               ) : (
                 <>
-                  {activities.length ? (
-                    activities.map((activity) => (
+                  {handledChats.length ? (
+                    handledChats.map((chat) => (
                       <Link
-                        key={activity.id}
-                        href={{ pathname: "/conversation/[id]", params: { id: activity.conversationId } }}
+                        key={chat.conversationId}
+                        href={{ pathname: "/conversation/[id]", params: { id: chat.conversationId } }}
                         asChild
                       >
                         <Pressable
                           accessibilityRole="button"
-                          accessibilityLabel={`${activity.title}، ${activity.customerName ?? activity.customerPhone ?? "محادثة"}`}
+                          accessibilityLabel={`محادثة ${chat.customerName ?? chat.customerPhone ?? "عميلة"}، ${chat.replies} ردود و${chat.actions} إجراءات`}
                           style={({ pressed }) => ({ opacity: pressed ? 0.65 : 1 })}
                         >
                           <Card>
                             <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.md }}>
-                              <IconSymbol name={actionIcon[activity.kind]} size={20} color={colors.brand} />
+                              <IconSymbol name="message" size={20} color={colors.brand} />
                               <View style={{ flex: 1, gap: spacing.xs }}>
                                 <Text selectable style={{ ...type.bodyStrong, ...rtlText, color: colors.text }}>
-                                  {activity.title}
+                                  {chat.customerName || chat.customerPhone || "محادثة"}
                                 </Text>
                                 <Text selectable style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
-                                  {activity.customerName || activity.customerPhone || "محادثة"} · {relativeTimeLabel(activity.at)}
+                                  {reportInteger.format(chat.replies)} رد · {reportInteger.format(chat.actions)} إجراء · آخر تعامل {relativeTimeLabel(chat.lastHandledAt)}
                                 </Text>
                               </View>
                               <IconSymbol name="chevron.left" size={18} color={colors.textTertiary} />
@@ -336,14 +391,14 @@ export default function CustomerServiceEmployeeReportScreen() {
                     ))
                   ) : (
                     <Text style={{ ...type.body, ...rtlText, color: colors.textSecondary }}>
-                      لا توجد أنشطة خلال الفترة المختارة.
+                      لم تتعامل الموظفة مع محادثات خلال الفترة المختارة.
                     </Text>
                   )}
 
                   {activitiesQuery.hasNextPage ? (
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel="تحميل المزيد من الأنشطة"
+                      accessibilityLabel="تحميل المزيد من المحادثات"
                       onPress={() => void activitiesQuery.fetchNextPage()}
                       disabled={activitiesQuery.isFetchingNextPage}
                       style={({ pressed }) => ({
@@ -371,4 +426,3 @@ export default function CustomerServiceEmployeeReportScreen() {
     </>
   );
 }
-

@@ -98,10 +98,22 @@ export type CustomerServiceEmployeeActivitiesInput = OperationsReportInput & {
 };
 
 export type CustomerServiceEmployeeActivitiesResponse = {
+  chats: CustomerServiceHandledChat[];
+  /** Kept for mobile builds published before handled chats replaced the activity feed. */
   activities: CustomerServiceActivity[];
   total: number;
   hasMore: boolean;
   nextOffset: number | null;
+};
+
+export type CustomerServiceHandledChat = {
+  conversationId: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  firstHandledAt: string;
+  lastHandledAt: string;
+  replies: number;
+  actions: number;
 };
 
 type MemberRow = {
@@ -342,6 +354,8 @@ export async function getCustomerServiceReport(
           .from("conversation_internal_notes")
           .select("id, conversation_id, author_user_id, created_at")
           .eq("restaurant_id", KIARA_RESTAURANT_ID)
+          .gte("created_at", rangeStart)
+          .lte("created_at", rangeEnd)
           .order("created_at", { ascending: true })
           .range(from, to),
       ),
@@ -359,7 +373,6 @@ export async function getCustomerServiceReport(
 
   const presenceByMember = new Map(presence.map((row) => [row.team_member_id, row]));
   const memberByUser = new Map(members.map((row) => [row.user_id, row.id]));
-  const conversationById = new Map(conversations.map((row) => [row.id, row]));
   const orderById = new Map(orders.map((row) => [row.id, row]));
   const now = Date.now();
   const employees = new Map<string, MutableEmployee>();
@@ -432,7 +445,6 @@ export async function getCustomerServiceReport(
     if (!inputActivity.memberId || !insideWindow(inputActivity.at, startMinute, endMinute)) return;
     const employee = employees.get(inputActivity.memberId);
     if (!employee) return;
-    const conversation = conversationById.get(inputActivity.conversationId);
     employee.handledIds.add(inputActivity.conversationId);
     if (!employee.lastActionAt || inputActivity.at > employee.lastActionAt) {
       employee.lastActionAt = inputActivity.at;
@@ -589,14 +601,15 @@ export async function getCustomerServiceReport(
         b.messagesSent + b.actions - (a.messagesSent + a.actions) ||
         a.name.localeCompare(b.name, "ar"),
     )
-    .map(({
-      handledIds: _handledIds,
-      resolvedIds: _resolvedIds,
-      responseMinutesTotal: _responseMinutesTotal,
-      responseSamples: _responseSamples,
-      dailyMap: _dailyMap,
-      ...employee
-    }) => employee);
+    .map((employee) => {
+      const result = { ...employee } as Partial<MutableEmployee>;
+      delete result.handledIds;
+      delete result.resolvedIds;
+      delete result.responseMinutesTotal;
+      delete result.responseSamples;
+      delete result.dailyMap;
+      return result as CustomerServiceEmployee;
+    });
   // recentActivity is capped per employee, so use the uncapped sets for totals.
   const allHandled = new Set<string>();
   for (const employee of employees.values()) {
@@ -629,7 +642,7 @@ export async function getCustomerServiceEmployeeActivities(
   const offset = Math.max(0, raw.offset ?? 0);
 
   if (!personId) {
-    return { activities: [], total: 0, hasMore: false, nextOffset: null };
+    return { chats: [], activities: [], total: 0, hasMore: false, nextOffset: null };
   }
 
   const rangeStart = boundary(input.from, "00:00");
@@ -646,7 +659,7 @@ export async function getCustomerServiceEmployeeActivities(
     .maybeSingle();
 
   if (memberResult.error || !memberResult.data) {
-    return { activities: [], total: 0, hasMore: false, nextOffset: null };
+    return { chats: [], activities: [], total: 0, hasMore: false, nextOffset: null };
   }
 
   const member = memberResult.data;
@@ -810,12 +823,37 @@ export async function getCustomerServiceEmployeeActivities(
     }
   }
 
-  rawActivities.sort((a, b) => b.at.localeCompare(a.at));
+  const grouped = new Map<string, {
+    conversationId: string;
+    firstHandledAt: string;
+    lastHandledAt: string;
+    replies: number;
+    actions: number;
+  }>();
+  for (const activity of rawActivities) {
+    const current = grouped.get(activity.conversationId);
+    if (!current) {
+      grouped.set(activity.conversationId, {
+        conversationId: activity.conversationId,
+        firstHandledAt: activity.at,
+        lastHandledAt: activity.at,
+        replies: activity.kind === "reply" ? 1 : 0,
+        actions: activity.kind === "reply" ? 0 : 1,
+      });
+      continue;
+    }
+    if (activity.at < current.firstHandledAt) current.firstHandledAt = activity.at;
+    if (activity.at > current.lastHandledAt) current.lastHandledAt = activity.at;
+    if (activity.kind === "reply") current.replies += 1;
+    else current.actions += 1;
+  }
+  const handled = [...grouped.values()].sort((a, b) =>
+    b.lastHandledAt.localeCompare(a.lastHandledAt),
+  );
+  const total = handled.length;
+  const pageSlice = handled.slice(offset, offset + limit);
 
-  const total = rawActivities.length;
-  const pageSlice = rawActivities.slice(offset, offset + limit);
-
-  const conversationIds = Array.from(new Set(pageSlice.map((a) => a.conversationId)));
+  const conversationIds = pageSlice.map((item) => item.conversationId);
   const conversationMap = new Map<string, { customer_name: string | null; customer_phone: string }>();
 
   if (conversationIds.length > 0) {
@@ -830,23 +868,32 @@ export async function getCustomerServiceEmployeeActivities(
     }
   }
 
-  const activities: CustomerServiceActivity[] = pageSlice.map((item) => {
+  const chats: CustomerServiceHandledChat[] = pageSlice.map((item) => {
     const conv = conversationMap.get(item.conversationId);
     return {
-      id: item.id,
-      at: item.at,
-      kind: item.kind,
-      title: item.title,
-      conversationId: item.conversationId,
+      ...item,
       customerName: conv?.customer_name ?? null,
       customerPhone: conv?.customer_phone ?? null,
     };
   });
+  const pageConversationIds = new Set(conversationIds);
+  const activities: CustomerServiceActivity[] = rawActivities
+    .filter((item) => pageConversationIds.has(item.conversationId))
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .map((item) => {
+      const conv = conversationMap.get(item.conversationId);
+      return {
+        ...item,
+        customerName: conv?.customer_name ?? null,
+        customerPhone: conv?.customer_phone ?? null,
+      };
+    });
 
   const hasMore = offset + limit < total;
   const nextOffset = hasMore ? offset + limit : null;
 
   return {
+    chats,
     activities,
     total,
     hasMore,
