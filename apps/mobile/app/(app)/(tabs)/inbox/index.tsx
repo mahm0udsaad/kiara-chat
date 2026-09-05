@@ -221,10 +221,13 @@ function DeliveryTicks({ status }: { status: string | null }) {
 const ConversationRow = memo(function ConversationRow({
   conversation,
   staff,
+  assigneeName,
 }: {
   conversation: ConversationSummary;
   /** Which roster tab this row is being listed under, if any. */
   staff: "specialist" | "driver" | null;
+  /** Human-readable owner resolved from the bootstrap team directory. */
+  assigneeName: string | null;
 }) {
   const { colors } = useTheme();
   // Subscribed here rather than passed down, so a keystroke in one chat wakes
@@ -268,7 +271,7 @@ const ConversationRow = memo(function ConversationRow({
       <Pressable
         testID={`conversation-row-${conversation.id}`}
         accessibilityRole="button"
-        accessibilityLabel={`محادثة ${displayName}${unread ? `، ${unread} رسائل غير مقروءة` : ""}${
+        accessibilityLabel={`محادثة ${displayName}${assigneeName ? `، الموظفة ${assigneeName}` : ""}${unread ? `، ${unread} رسائل غير مقروءة` : ""}${
           overdue ? "، تنتظر ردًا" : ""
         }`}
       >
@@ -375,6 +378,13 @@ const ConversationRow = memo(function ConversationRow({
                   paddingTop: spacing.xs,
                 }}
               >
+                {!isGroup && conversation.assigned_to ? (
+                  <Badge
+                    tone="info"
+                    icon="person.crop.circle"
+                    label={`الموظفة: ${assigneeName ?? "غير معروفة"}`}
+                  />
+                ) : null}
                 {/* Only once somebody owns it. "جاري المحادثة" on a thread no
                     employee has claimed says a conversation is underway when
                     nobody is having it — the "غير مستلمة" badge below is the
@@ -455,8 +465,19 @@ export default function InboxScreen() {
   const deferredSearch = useDeferredValue(search);
   const conversations = useConversations(view, deferredSearch.trim(), { filters });
   const startChat = useClaimedConversationForPhone();
-  const bootstrapLabels = useBootstrap().data?.labels;
+  const bootstrap = useBootstrap();
+  const bootstrapLabels = bootstrap.data?.labels;
   const labels = useMemo(() => bootstrapLabels ?? [], [bootstrapLabels]);
+  const assignees = useMemo(
+    () =>
+      new Map(
+        (bootstrap.data?.agents ?? []).map((agent) => [
+          agent.id,
+          agent.fullName?.trim() || agent.email?.trim() || "موظفة",
+        ]),
+      ),
+    [bootstrap.data?.agents],
+  );
   const activeFilters = activeFilterCount(filters);
 
   // Chips for what is currently on, each one its own way back out.
@@ -569,10 +590,14 @@ export default function InboxScreen() {
         entering={FadeIn.delay(Math.min(index, 8) * 24).duration(200)}
         exiting={FadeOut.duration(140)}
       >
-        <ConversationRow conversation={item} staff={staffView} />
+        <ConversationRow
+          conversation={item}
+          staff={staffView}
+          assigneeName={item.assigned_to ? assignees.get(item.assigned_to) ?? null : null}
+        />
       </Animated.View>
     ),
-    [staffView],
+    [assignees, staffView],
   );
 
   return (
