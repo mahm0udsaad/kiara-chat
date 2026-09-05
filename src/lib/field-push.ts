@@ -421,3 +421,71 @@ export async function revokeFieldPushTokenByIdentity(input: {
     .eq("device_id", input.deviceId);
   if (error) throw new Error(error.message);
 }
+
+export async function notifyFieldOrderUpdated(input: {
+  orderId: string;
+  customerName: string | null;
+  specialistId: string | null;
+  driverId: string | null;
+  changesSummary?: string;
+}): Promise<FieldPushDeliverySummary> {
+  const specialistIds = input.specialistId ? [input.specialistId] : [];
+  const driverIds = input.driverId ? [input.driverId] : [];
+  const [specialistTokens, driverTokens] = await Promise.all([
+    specialistIds.length ? activeTokensForRoster("specialist", specialistIds) : Promise.resolve(new Map<string, string[]>()),
+    driverIds.length ? activeTokensForRoster("driver", driverIds) : Promise.resolve(new Map<string, string[]>()),
+  ]);
+  const name = input.customerName || "العميلة";
+  const bodyText = input.changesSummary || `تم تعديل تفاصيل طلب ${name}. يرجى المراجعة.`;
+  const data = { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` };
+  const messages: PushMessage[] = [
+    ...(input.specialistId ? (specialistTokens.get(input.specialistId) ?? []) : []).map((to) =>
+      fieldMessage(to, {
+        title: "تعديل في طلبكِ",
+        body: bodyText,
+        data,
+      }),
+    ),
+    ...(input.driverId ? (driverTokens.get(input.driverId) ?? []) : []).map((to) =>
+      fieldMessage(to, {
+        title: "تعديل في رحلتك",
+        body: bodyText,
+        data,
+      }),
+    ),
+  ];
+  return sendExpoMessages(messages);
+}
+
+export async function notifyFieldOrderCancelled(input: {
+  orderId: string;
+  customerName: string | null;
+  specialistId: string | null;
+  driverId: string | null;
+}): Promise<FieldPushDeliverySummary> {
+  const specialistIds = input.specialistId ? [input.specialistId] : [];
+  const driverIds = input.driverId ? [input.driverId] : [];
+  const [specialistTokens, driverTokens] = await Promise.all([
+    specialistIds.length ? activeTokensForRoster("specialist", specialistIds) : Promise.resolve(new Map<string, string[]>()),
+    driverIds.length ? activeTokensForRoster("driver", driverIds) : Promise.resolve(new Map<string, string[]>()),
+  ]);
+  const name = input.customerName || "العميلة";
+  const data = { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` };
+  const messages: PushMessage[] = [
+    ...(input.specialistId ? (specialistTokens.get(input.specialistId) ?? []) : []).map((to) =>
+      fieldMessage(to, {
+        title: "إلغاء الطلب",
+        body: `تم إلغاء طلب ${name}.`,
+        data,
+      }),
+    ),
+    ...(input.driverId ? (driverTokens.get(input.driverId) ?? []) : []).map((to) =>
+      fieldMessage(to, {
+        title: "إلغاء الرحلة",
+        body: `تم إلغاء رحلة ${name}.`,
+        data,
+      }),
+    ),
+  ];
+  return sendExpoMessages(messages);
+}

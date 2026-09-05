@@ -1,4 +1,5 @@
 import {
+  cancelDriverOrder,
   listDrivers,
   listSpecialists,
   orderExists,
@@ -231,6 +232,39 @@ export async function PATCH(
       error,
       "ORDER_UPDATE_FAILED",
       "Unable to update the order"
+    );
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const auth = await authorizeMobileRequest(request);
+  if (auth.response) return auth.response;
+
+  const { id } = await params;
+  try {
+    if (!(await orderExists(id))) {
+      return mobileError(404, "ORDER_NOT_FOUND", "Order not found");
+    }
+
+    const order = await cancelDriverOrder(id, {
+      actor: {
+        userId: auth.session.userId,
+        teamMemberId: auth.session.teamMemberId,
+        role: auth.session.role,
+      },
+    });
+
+    return mobileData({
+      order: orderForMobileSession(order, auth.session),
+    });
+  } catch (error) {
+    return mobileServerError(
+      error,
+      "ORDER_CANCEL_FAILED",
+      "Unable to cancel the order"
     );
   }
 }

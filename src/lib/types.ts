@@ -129,7 +129,7 @@ export interface BookingRequest {
   at: string; // ISO — when the bot captured it
 }
 
-export type DriverOrderStatus = "pending" | "sent" | "failed";
+export type DriverOrderStatus = "pending" | "sent" | "failed" | "cancelled";
 
 export interface FieldSessionState {
   started_at: string | null;

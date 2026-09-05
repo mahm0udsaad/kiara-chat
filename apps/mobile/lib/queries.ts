@@ -31,6 +31,7 @@ import type {
   CreateOrderInput,
   CustomerAnalysisResult,
   CustomerServiceReport,
+  CustomerServiceEmployeeActivitiesResponse,
   ConversationAuditReport,
   CustomerTimeline,
   InboxView,
@@ -89,6 +90,13 @@ export const queryKeys = {
     ["operations-report", from, to, startTime, endTime] as const,
   customerServiceReport: (from: string, to: string, startTime: string, endTime: string) =>
     ["customer-service-report", from, to, startTime, endTime] as const,
+  customerServiceEmployeeActivities: (
+    personId: string,
+    from: string,
+    to: string,
+    startTime: string,
+    endTime: string,
+  ) => ["customer-service-activities", personId, from, to, startTime, endTime] as const,
   rekazCheck: ["rekaz-check"] as const,
   order: (id: string) => ["order", id] as const,
   orderReminder: (id: string) => ["order-reminder", id] as const,
@@ -524,6 +532,36 @@ export function useCustomerServiceReport(
   });
 }
 
+export function useCustomerServiceEmployeeActivities(
+  personId: string,
+  from: string,
+  to: string,
+  startTime: string,
+  endTime: string,
+  enabled = true,
+) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.customerServiceEmployeeActivities(personId, from, to, startTime, endTime),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({
+        personId,
+        from,
+        to,
+        startTime,
+        endTime,
+        offset: String(pageParam),
+        limit: "20",
+      });
+      return apiRequest<CustomerServiceEmployeeActivitiesResponse>(
+        `/reports/customer-service/activities?${params.toString()}`,
+      );
+    },
+    getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
+    enabled: enabled && Boolean(personId && from && to && startTime && endTime),
+  });
+}
+
 /**
  * What a Rekaz pull would change. The server caches the upstream read for a
  * minute, so polling here costs the calendar nothing extra.
@@ -767,6 +805,21 @@ export function useUpdateOrder(id: string) {
       // key arrays element by element, so "orders" never prefixes
       // "orders-calendar". Leaving it out is what let a card keep offering
       // "طلب سائق" for a minute after a driver had been assigned.
+      void queryClient.invalidateQueries({ queryKey: ["orders-calendar"] });
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.order(id) });
+    },
+  });
+}
+
+export function useCancelOrder(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiRequest<{ order: OrderDetailResponse["order"] }>(`/orders/${id}`, {
+        method: "DELETE",
+      }),
+    onSuccess: async () => {
       void queryClient.invalidateQueries({ queryKey: ["orders-calendar"] });
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
       await queryClient.invalidateQueries({ queryKey: queryKeys.order(id) });

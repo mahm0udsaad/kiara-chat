@@ -12,7 +12,11 @@ import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { formatDuration, LOCATION_UNSET, TRIP_TYPE_LABEL } from "@/lib/format";
 import { fieldSessionStateOf } from "@/lib/field-session";
 import { ensureFieldOrderProgress } from "@/lib/field-staff";
-import { notifyFieldOrderAssigned } from "@/lib/field-push";
+import {
+  notifyFieldOrderAssigned,
+  notifyFieldOrderCancelled,
+  notifyFieldOrderUpdated,
+} from "@/lib/field-push";
 import { findSharedLocationInConversation } from "@/lib/location";
 import { specialistDispatchLanguageOf } from "@/lib/specialist-languages";
 import { normalizePhone } from "@/lib/phone";
@@ -1282,6 +1286,167 @@ export async function updateDriverOrder(
   }
 
   const [row] = await withNames(supabase, [data as unknown as DriverOrder]);
+
+  const customerName = row.customer_name;
+  const specialistId = row.specialist_id;
+  const driverId = row.driver_id;
+
+  notifyFieldOrderUpdated({
+    orderId: id,
+    customerName,
+    specialistId,
+    driverId,
+  }).catch(() => null);
+
+  if (isOpenWaConfigured()) {
+    const admin = getAdminSupabaseClient();
+    const nameStr = customerName ? `العميلة ${customerName}` : "العميلة";
+    const arrival = ARRIVAL_FMT.format(new Date(row.arrival_at));
+    const location = row.customer_location;
+
+    void (async () => {
+      try {
+        if (driverId) {
+          const res = await admin
+            .from("drivers")
+            .select("phone")
+            .eq("id", driverId)
+            .eq("restaurant_id", KIARA_RESTAURANT_ID)
+            .maybeSingle();
+          if (res.data?.phone) {
+            await openWaTransport.sendText(
+              res.data.phone,
+              `🚗 *تحديث في الطلب*\n\nتم تعديل تفاصيل الطلب لـ ${nameStr}.\n🕒 موعد الوصول: ${arrival}\n📍 الموقع: ${location}`,
+            );
+          }
+        }
+
+        if (specialistId) {
+          const res = await admin
+            .from("specialists")
+            .select("phone")
+            .eq("id", specialistId)
+            .eq("restaurant_id", KIARA_RESTAURANT_ID)
+            .maybeSingle();
+          if (res.data?.phone) {
+            await openWaTransport.sendText(
+              res.data.phone,
+              `🌸 *تحديث في الموعد*\n\nتم تعديل تفاصيل موعدكِ مع ${nameStr}.\n🕒 موعد الوصول: ${arrival}`,
+            );
+          }
+        }
+      } catch {
+        // WhatsApp errors are non-fatal
+      }
+    })();
+  }
+
+  return row;
+}
+
+export async function cancelDriverOrder(
+  id: string,
+  command: {
+    actor: OperationsActor;
+  },
+): Promise<DriverOrderRow> {
+  const admin = getAdminSupabaseClient();
+  const supabase = await createServerSupabaseClient();
+
+  const { data: order, error } = await admin
+    .from("driver_orders")
+    .select(ORDER_COLS)
+    .eq("id", id)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+
+  if (error || !order) throw new Error("الطلب غير موجود");
+
+  const { data: updated, error: updateError } = await admin
+    .from("driver_orders")
+    .update({
+      status: "cancelled",
+      dispatch_state: "cancelled",
+      updated_at: new Date().toISOString(),
+      updated_by: command.actor.teamMemberId,
+      version: (Number(order.version) || 1) + 1,
+    })
+    .eq("id", id)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .select(ORDER_COLS)
+    .single();
+
+  if (updateError || !updated) {
+    throw new Error(updateError?.message || "تعذّر إلغاء الطلب");
+  }
+
+  try {
+    await admin.from("operation_events").insert({
+      restaurant_id: KIARA_RESTAURANT_ID,
+      aggregate_type: "driver_order",
+      aggregate_id: id,
+      event_type: "driver_order.cancelled",
+      actor_user_id: command.actor.userId,
+      actor_team_member_id: command.actor.teamMemberId,
+      actor_role: command.actor.role,
+      payload: { cancelled_at: new Date().toISOString() },
+    });
+  } catch {
+    // Ignore event log failure
+  }
+
+  const [row] = await withNames(supabase, [updated as unknown as DriverOrder]);
+
+  const customerName = row.customer_name;
+  const specialistId = row.specialist_id;
+  const driverId = row.driver_id;
+
+  notifyFieldOrderCancelled({
+    orderId: id,
+    customerName,
+    specialistId,
+    driverId,
+  }).catch(() => null);
+
+  if (isOpenWaConfigured()) {
+    const nameStr = customerName ? `العميلة ${customerName}` : "العميلة";
+    void (async () => {
+      try {
+        if (driverId) {
+          const res = await admin
+            .from("drivers")
+            .select("phone")
+            .eq("id", driverId)
+            .eq("restaurant_id", KIARA_RESTAURANT_ID)
+            .maybeSingle();
+          if (res.data?.phone) {
+            await openWaTransport.sendText(
+              res.data.phone,
+              `❌ *إلغاء رحلة*\n\nتم إلغاء الرحلة المخصصة لك لـ ${nameStr}.`,
+            );
+          }
+        }
+
+        if (specialistId) {
+          const res = await admin
+            .from("specialists")
+            .select("phone")
+            .eq("id", specialistId)
+            .eq("restaurant_id", KIARA_RESTAURANT_ID)
+            .maybeSingle();
+          if (res.data?.phone) {
+            await openWaTransport.sendText(
+              res.data.phone,
+              `❌ *إلغاء موعد*\n\nتم إلغاء الموعد المخصص لكِ لـ ${nameStr}.`,
+            );
+          }
+        }
+      } catch {
+        // WhatsApp errors are non-fatal
+      }
+    })();
+  }
+
   return row;
 }
 

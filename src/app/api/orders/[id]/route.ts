@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  cancelDriverOrder,
   orderExists,
   updateDriverOrder,
   type OrderPatch,
@@ -127,6 +128,41 @@ export async function PATCH(
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "تعذّر حفظ التعديل" },
       { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getKiaraSession();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  try {
+    if (!(await orderExists(id))) {
+      return NextResponse.json({ error: "الطلب غير موجود" }, { status: 404 });
+    }
+
+    const order = await cancelDriverOrder(id, {
+      actor: {
+        userId: session.userId,
+        teamMemberId: session.teamMemberId,
+        role: session.role,
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      order: session.role === "admin" ? order : { ...order, price: null },
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "تعذّر إلغاء الطلب" },
+      { status: 500 },
     );
   }
 }

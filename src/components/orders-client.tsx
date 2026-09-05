@@ -137,6 +137,7 @@ const STATUS_FILTERS: [StatusFilter, string][] = [
   ["sent", "تم التأكيد"],
   ["failed", "تحتاج مراجعة"],
   ["late", "السائق متأخر"],
+  ["cancelled", "ملغى"],
 ];
 
 function isDriverLate(order: DriverOrderRow, now = Date.now()): boolean {
@@ -150,6 +151,9 @@ function statusMeta(order: DriverOrderRow): {
   label: string;
   variant: "default" | "secondary" | "destructive" | "outline";
 } {
+  if (order.status === "cancelled") {
+    return { label: "ملغى", variant: "destructive" };
+  }
   if (!order.driver_id) {
     return { label: "انتظار تأكيد الحجز", variant: "secondary" };
   }
@@ -792,8 +796,32 @@ function OrderDetailsSheet({
   const [specialists, setSpecialists] = useState<Specialist[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [saving, setSaving] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+
+  const handleCancel = async () => {
+    if (!window.confirm("هل أنتِ متأكدة من إلغاء هذا الطلب؟ سيتم إرسال إشعار بذلك إلى السائق والأخصائية.")) {
+      return;
+    }
+    setCancelling(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/orders/${order.id}`, { method: "DELETE" });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload?.error || "تعذّر إلغاء الطلب");
+      }
+      if (payload.order) {
+        onUpdated(payload.order);
+        onOpenChange(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "تعذّر إلغاء الطلب");
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const seed = useCallback(() => {
     const next = new Date(order.arrival_at);
@@ -1117,10 +1145,22 @@ function OrderDetailsSheet({
             </Alert>
           ) : null}
 
-          <Button onClick={save} disabled={saving || !dirty}>
-            {saving ? <Spinner data-icon="inline-start" /> : null}
-            {saving ? "جارٍ الحفظ…" : "حفظ التعديل"}
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={save} disabled={saving || cancelling || !dirty} className="flex-1">
+              {saving ? <Spinner data-icon="inline-start" /> : null}
+              {saving ? "جارٍ الحفظ…" : "حفظ التعديل"}
+            </Button>
+            {order.status !== "cancelled" ? (
+              <Button
+                variant="destructive"
+                onClick={handleCancel}
+                disabled={saving || cancelling}
+              >
+                {cancelling ? <Spinner data-icon="inline-start" /> : null}
+                {cancelling ? "جارٍ الإلغاء…" : "إلغاء الطلب"}
+              </Button>
+            ) : null}
+          </div>
 
           <Separator />
           <p className="text-xs text-muted-foreground">

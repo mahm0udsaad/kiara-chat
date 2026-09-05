@@ -1,6 +1,6 @@
 export type StaffRole = "admin" | "agent" | "specialist" | "driver";
 
-export type OrderStatus = "pending" | "sent" | "failed";
+export type OrderStatus = "pending" | "sent" | "failed" | "cancelled";
 
 export type TripType = "one_way" | "round_trip";
 
@@ -537,7 +537,14 @@ export type CustomerServiceEmployee = {
   notesAdded: number;
   ordersCreated: number;
   daily: CustomerServiceDailyActivity[];
-  recentActivity: CustomerServiceActivity[];
+  recentActivity?: CustomerServiceActivity[];
+};
+
+export type CustomerServiceEmployeeActivitiesResponse = {
+  activities: CustomerServiceActivity[];
+  total: number;
+  hasMore: boolean;
+  nextOffset: number | null;
 };
 
 export type CustomerServiceReport = {

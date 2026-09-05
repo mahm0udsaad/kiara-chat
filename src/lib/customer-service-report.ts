@@ -91,6 +91,19 @@ export type CustomerServiceReport = {
   employees: CustomerServiceEmployee[];
 };
 
+export type CustomerServiceEmployeeActivitiesInput = OperationsReportInput & {
+  personId: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type CustomerServiceEmployeeActivitiesResponse = {
+  activities: CustomerServiceActivity[];
+  total: number;
+  hasMore: boolean;
+  nextOffset: number | null;
+};
+
 type MemberRow = {
   id: string;
   user_id: string;
@@ -436,15 +449,6 @@ export async function getCustomerServiceReport(
     if (inputActivity.isMessage) daily.messages += 1;
     else daily.actions += 1;
     employee.dailyMap.set(day, daily);
-    employee.recentActivity.push({
-      id: inputActivity.id,
-      at: inputActivity.at,
-      kind: inputActivity.kind,
-      title: inputActivity.title,
-      conversationId: inputActivity.conversationId,
-      customerName: conversation?.customer_name ?? null,
-      customerPhone: conversation?.customer_phone ?? null,
-    });
   };
 
   for (const row of messages) {
@@ -575,8 +579,6 @@ export async function getCustomerServiceReport(
         actions: value.actions,
       }))
       .sort((a, b) => b.day.localeCompare(a.day));
-    employee.recentActivity.sort((a, b) => b.at.localeCompare(a.at));
-    employee.recentActivity = employee.recentActivity.slice(0, 100);
   }
 
   const output = [...employees.values()]
@@ -615,5 +617,239 @@ export async function getCustomerServiceReport(
       actions: output.reduce((sum, employee) => sum + employee.actions, 0),
     },
     employees: output,
+  };
+}
+
+export async function getCustomerServiceEmployeeActivities(
+  raw: CustomerServiceEmployeeActivitiesInput,
+): Promise<CustomerServiceEmployeeActivitiesResponse> {
+  const input = validateOperationsReportInput(raw);
+  const personId = raw.personId;
+  const limit = Math.max(1, Math.min(100, raw.limit ?? 20));
+  const offset = Math.max(0, raw.offset ?? 0);
+
+  if (!personId) {
+    return { activities: [], total: 0, hasMore: false, nextOffset: null };
+  }
+
+  const rangeStart = boundary(input.from, "00:00");
+  const rangeEnd = boundary(input.to, "23:59");
+  const startMinute = timeToMinutes(input.startTime);
+  const endMinute = timeToMinutes(input.endTime);
+  const admin = getAdminSupabaseClient();
+
+  const memberResult = await admin
+    .from("team_members")
+    .select("id, user_id")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("id", personId)
+    .maybeSingle();
+
+  if (memberResult.error || !memberResult.data) {
+    return { activities: [], total: 0, hasMore: false, nextOffset: null };
+  }
+
+  const member = memberResult.data;
+
+  const [messages, claims, events, notes, orders] = await Promise.all([
+    pageRows<MessageRow>((from, to) =>
+      admin
+        .from("messages")
+        .select("id, conversation_id, role, sender_team_member_id, created_at, conversations!inner(restaurant_id)")
+        .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
+        .eq("sender_team_member_id", personId)
+        .eq("role", "agent")
+        .gte("created_at", rangeStart)
+        .lte("created_at", rangeEnd)
+        .order("created_at", { ascending: false })
+        .range(from, to),
+    ),
+    pageRows<ClaimRow>((from, to) =>
+      admin
+        .from("conversation_claim_events")
+        .select("id, conversation_id, team_member_id, claimed_at")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .eq("event_type", "claim")
+        .eq("team_member_id", personId)
+        .gte("claimed_at", rangeStart)
+        .lte("claimed_at", rangeEnd)
+        .order("claimed_at", { ascending: false })
+        .range(from, to),
+    ),
+    pageRows<EventRow>((from, to) =>
+      admin
+        .from("operation_events")
+        .select("id, aggregate_type, aggregate_id, event_type, occurred_at, actor_team_member_id, actor_user_id, payload")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .or(`actor_team_member_id.eq.${personId}${member.user_id ? `,actor_user_id.eq.${member.user_id}` : ""}`)
+        .gte("occurred_at", rangeStart)
+        .lte("occurred_at", rangeEnd)
+        .order("occurred_at", { ascending: false })
+        .range(from, to),
+    ),
+    member.user_id
+      ? pageRows<NoteRow>((from, to) =>
+          admin
+            .from("conversation_internal_notes")
+            .select("id, conversation_id, author_user_id, created_at")
+            .eq("restaurant_id", KIARA_RESTAURANT_ID)
+            .eq("author_user_id", member.user_id)
+            .gte("created_at", rangeStart)
+            .lte("created_at", rangeEnd)
+            .order("created_at", { ascending: false })
+            .range(from, to),
+        )
+      : Promise.resolve([]),
+    member.user_id
+      ? pageRows<OrderRow>((from, to) =>
+          admin
+            .from("driver_orders")
+            .select("id, conversation_id, created_by, created_at")
+            .eq("restaurant_id", KIARA_RESTAURANT_ID)
+            .eq("created_by", member.user_id)
+            .gte("created_at", rangeStart)
+            .lte("created_at", rangeEnd)
+            .order("created_at", { ascending: false })
+            .range(from, to),
+        )
+      : Promise.resolve([]),
+  ]);
+
+  const driverOrderIds = events
+    .filter((e) => e.aggregate_type === "driver_order")
+    .map((e) => e.aggregate_id);
+  const driverOrdersMap = new Map<string, string>();
+  if (driverOrderIds.length > 0) {
+    const driverOrdersRes = await admin
+      .from("driver_orders")
+      .select("id, conversation_id")
+      .in("id", driverOrderIds);
+    if (driverOrdersRes.data) {
+      for (const row of driverOrdersRes.data as { id: string; conversation_id: string }[]) {
+        driverOrdersMap.set(row.id, row.conversation_id);
+      }
+    }
+  }
+
+  type RawActivityItem = {
+    id: string;
+    at: string;
+    kind: CustomerServiceActionKind;
+    title: string;
+    conversationId: string;
+  };
+
+  const rawActivities: RawActivityItem[] = [];
+
+  for (const row of messages) {
+    if (insideWindow(row.created_at, startMinute, endMinute)) {
+      rawActivities.push({
+        id: `message:${row.id}`,
+        at: row.created_at,
+        kind: "reply",
+        title: "أرسلت رداً للعميلة",
+        conversationId: row.conversation_id,
+      });
+    }
+  }
+
+  for (const row of claims) {
+    if (insideWindow(row.claimed_at, startMinute, endMinute)) {
+      rawActivities.push({
+        id: `claim:${row.id}`,
+        at: row.claimed_at,
+        kind: "claim",
+        title: "استلمت المحادثة",
+        conversationId: row.conversation_id,
+      });
+    }
+  }
+
+  for (const row of events) {
+    const relatedConversationId =
+      row.aggregate_type === "conversation"
+        ? row.aggregate_id
+        : row.aggregate_type === "driver_order"
+          ? driverOrdersMap.get(row.aggregate_id)
+          : null;
+    if (!relatedConversationId || !insideWindow(row.occurred_at, startMinute, endMinute)) continue;
+    const kind = eventKind(row.event_type);
+    rawActivities.push({
+      id: `event:${row.id}`,
+      at: row.occurred_at,
+      kind: row.aggregate_type === "driver_order" ? "order" : kind,
+      title:
+        row.aggregate_type === "driver_order"
+          ? "نفّذت إجراءً على الطلب"
+          : EVENT_LABELS[row.event_type] ?? "نفّذت إجراءً على المحادثة",
+      conversationId: relatedConversationId,
+    });
+  }
+
+  for (const row of notes) {
+    if (insideWindow(row.created_at, startMinute, endMinute)) {
+      rawActivities.push({
+        id: `note:${row.id}`,
+        at: row.created_at,
+        kind: "note",
+        title: "أضافت ملاحظة داخلية",
+        conversationId: row.conversation_id,
+      });
+    }
+  }
+
+  for (const row of orders) {
+    if (insideWindow(row.created_at, startMinute, endMinute)) {
+      rawActivities.push({
+        id: `order:${row.id}`,
+        at: row.created_at,
+        kind: "order",
+        title: "أنشأت طلب خدمة",
+        conversationId: row.conversation_id,
+      });
+    }
+  }
+
+  rawActivities.sort((a, b) => b.at.localeCompare(a.at));
+
+  const total = rawActivities.length;
+  const pageSlice = rawActivities.slice(offset, offset + limit);
+
+  const conversationIds = Array.from(new Set(pageSlice.map((a) => a.conversationId)));
+  const conversationMap = new Map<string, { customer_name: string | null; customer_phone: string }>();
+
+  if (conversationIds.length > 0) {
+    const convRes = await admin
+      .from("conversations")
+      .select("id, customer_name, customer_phone")
+      .in("id", conversationIds);
+    if (convRes.data) {
+      for (const conv of convRes.data as { id: string; customer_name: string | null; customer_phone: string }[]) {
+        conversationMap.set(conv.id, conv);
+      }
+    }
+  }
+
+  const activities: CustomerServiceActivity[] = pageSlice.map((item) => {
+    const conv = conversationMap.get(item.conversationId);
+    return {
+      id: item.id,
+      at: item.at,
+      kind: item.kind,
+      title: item.title,
+      conversationId: item.conversationId,
+      customerName: conv?.customer_name ?? null,
+      customerPhone: conv?.customer_phone ?? null,
+    };
+  });
+
+  const hasMore = offset + limit < total;
+  const nextOffset = hasMore ? offset + limit : null;
+
+  return {
+    activities,
+    total,
+    hasMore,
+    nextOffset,
   };
 }

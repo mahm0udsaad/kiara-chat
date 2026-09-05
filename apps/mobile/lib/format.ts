@@ -121,18 +121,21 @@ export const orderStatusLabel: Record<OrderStatus, string> = {
   pending: "بانتظار الإرسال",
   sent: "تم الإرسال",
   failed: "فشل الإرسال",
+  cancelled: "ملغى",
 };
 
 export const orderStatusTone: Record<OrderStatus, "warning" | "success" | "danger"> = {
   pending: "warning",
   sent: "success",
   failed: "danger",
+  cancelled: "danger",
 };
 
 export const orderStatusIcon: Record<OrderStatus, string> = {
   pending: "clock",
   sent: "checkmark.circle",
   failed: "exclamationmark.triangle",
+  cancelled: "xmark.circle",
 };
 
 export const tripTypeLabel: Record<TripType, string> = {

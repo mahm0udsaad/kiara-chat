@@ -3,7 +3,7 @@ import DateTimePicker, {
 } from "@react-native-community/datetimepicker";
 import { router, useLocalSearchParams } from "expo-router";
 import { useMemo, useState } from "react";
-import { KeyboardAvoidingView, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
@@ -15,7 +15,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { durationLabel, formatters, relativeDayLabel, tripTypeLabel } from "@/lib/format";
 import { tapFeedback, successFeedback } from "@/lib/haptics";
-import { useDispatchOptions, useOrder, useUpdateOrder } from "@/lib/queries";
+import { useCancelOrder, useDispatchOptions, useOrder, useUpdateOrder } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type {
   DispatchOptionsResponse,
@@ -93,6 +93,29 @@ function EditForm({
   const insets = useSafeAreaInsets();
   const order = data.order;
   const update = useUpdateOrder(order.id);
+  const cancelOrder = useCancelOrder(order.id);
+
+  const confirmCancel = () => {
+    Alert.alert(
+      "إلغاء الطلب",
+      "هل أنتِ متأكدة من إلغاء هذا الطلب؟ سيتم إرسال إشعار بذلك إلى السائق والأخصائية.",
+      [
+        { text: "تراجع", style: "cancel" },
+        {
+          text: "تأكيد الإلغاء",
+          style: "destructive",
+          onPress: () => {
+            cancelOrder.mutate(undefined, {
+              onSuccess: () => {
+                successFeedback();
+                router.back();
+              },
+            });
+          },
+        },
+      ],
+    );
+  };
 
   const [arrival, setArrival] = useState(() => new Date(order.arrival_at));
   const [location, setLocation] = useState(order.customer_location);
@@ -323,8 +346,32 @@ function EditForm({
           label="حفظ التعديل"
           icon="checkmark"
           loading={update.isPending}
+          disabled={cancelOrder.isPending}
           onPress={save}
         />
+        {order.status !== "cancelled" ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="إلغاء الطلب"
+            onPress={confirmCancel}
+            disabled={update.isPending || cancelOrder.isPending}
+            style={({ pressed }) => ({
+              minHeight: hitSize.control,
+              flexDirection: "row-reverse",
+              alignItems: "center",
+              justifyContent: "center",
+              paddingHorizontal: spacing.md,
+              borderRadius: radius.lg,
+              borderCurve: "continuous",
+              backgroundColor: colors.dangerSoft,
+              opacity: pressed || update.isPending || cancelOrder.isPending ? 0.6 : 1,
+            })}
+          >
+            <Text style={{ ...type.bodyStrong, color: colors.onDangerSoft, ...rtlText }}>
+              {cancelOrder.isPending ? "جارٍ الإلغاء…" : "إلغاء الطلب"}
+            </Text>
+          </Pressable>
+        ) : null}
       </ActionBar>
     </KeyboardAvoidingView>
   );

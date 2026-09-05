@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, Redirect, Stack, useLocalSearchParams } from "expo-router";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
@@ -7,7 +8,11 @@ import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { relativeTimeLabel } from "@/lib/format";
 import { REPORT_LOCALE, reportDecimal, reportInteger } from "@/lib/operations-report";
-import { useBootstrap, useCustomerServiceReport } from "@/lib/queries";
+import {
+  useBootstrap,
+  useCustomerServiceEmployeeActivities,
+  useCustomerServiceReport,
+} from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { CustomerServiceActionKind } from "@/types/api";
 
@@ -73,12 +78,24 @@ export default function CustomerServiceEmployeeReportScreen() {
   const endTime = one(params.endTime) || "22:00";
   const bootstrap = useBootstrap();
   const { colors } = useTheme();
+
+  const [hasRequestedActivities, setHasRequestedActivities] = useState(false);
+
   const report = useCustomerServiceReport(
     from,
     to,
     startTime,
     endTime,
     bootstrap.data?.capabilities.canViewReports === true && Boolean(personId),
+  );
+
+  const activitiesQuery = useCustomerServiceEmployeeActivities(
+    personId,
+    from,
+    to,
+    startTime,
+    endTime,
+    hasRequestedActivities && Boolean(personId),
   );
 
   if (bootstrap.isSuccess && !bootstrap.data.capabilities.canViewReports) {
@@ -108,6 +125,8 @@ export default function CustomerServiceEmployeeReportScreen() {
         ["الطلبات المنشأة", employee.ordersCreated],
       ] as const
     : [];
+
+  const activities = activitiesQuery.data?.pages.flatMap((page) => page.activities) ?? [];
 
   return (
     <>
@@ -243,36 +262,108 @@ export default function CustomerServiceEmployeeReportScreen() {
                   اضغطي على أي نشاط لفتح المحادثة المرتبطة به.
                 </Text>
               </View>
-              {employee.recentActivity.length ? (
-                employee.recentActivity.map((activity) => (
-                  <Link
-                    key={activity.id}
-                    href={{ pathname: "/conversation/[id]", params: { id: activity.conversationId } }}
-                    asChild
-                  >
+
+              {!hasRequestedActivities ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="عرض الأنشطة"
+                  onPress={() => setHasRequestedActivities(true)}
+                  style={({ pressed }) => ({
+                    padding: spacing.md,
+                    borderRadius: radius.lg,
+                    backgroundColor: colors.surfaceSunken,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    opacity: pressed ? 0.7 : 1,
+                  })}
+                >
+                  <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.brand }}>عرض الأنشطة</Text>
+                </Pressable>
+              ) : activitiesQuery.isLoading ? (
+                <ActivityIndicator size="small" color={colors.brand} />
+              ) : activitiesQuery.isError ? (
+                <Card variant="raised">
+                  <View style={{ gap: spacing.sm, alignItems: "center" }}>
+                    <Text style={{ ...type.body, ...rtlText, color: colors.danger }}>
+                      {activitiesQuery.error.message || "تعذّر تحميل الأنشطة"}
+                    </Text>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel={`${activity.title}، ${activity.customerName ?? activity.customerPhone ?? "محادثة"}`}
-                      style={({ pressed }) => ({ opacity: pressed ? 0.65 : 1 })}
+                      accessibilityLabel="إعادة المحاولة"
+                      onPress={() => void activitiesQuery.refetch()}
+                      style={({ pressed }) => ({
+                        paddingHorizontal: spacing.md,
+                        paddingVertical: spacing.xs,
+                        borderRadius: radius.md,
+                        backgroundColor: colors.surfaceSunken,
+                        opacity: pressed ? 0.7 : 1,
+                      })}
                     >
-                      <Card>
-                        <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.md }}>
-                          <IconSymbol name={actionIcon[activity.kind]} size={20} color={colors.brand} />
-                          <View style={{ flex: 1, gap: spacing.xs }}>
-                            <Text selectable style={{ ...type.bodyStrong, ...rtlText, color: colors.text }}>
-                              {activity.title}
-                            </Text>
-                            <Text selectable style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
-                              {activity.customerName || activity.customerPhone || "محادثة"} · {relativeTimeLabel(activity.at)}
-                            </Text>
-                          </View>
-                          <IconSymbol name="chevron.left" size={18} color={colors.textTertiary} />
-                        </View>
-                      </Card>
+                      <Text style={{ ...type.caption, ...rtlText, color: colors.brand }}>إعادة المحاولة</Text>
                     </Pressable>
-                  </Link>
-                ))
-              ) : null}
+                  </View>
+                </Card>
+              ) : (
+                <>
+                  {activities.length ? (
+                    activities.map((activity) => (
+                      <Link
+                        key={activity.id}
+                        href={{ pathname: "/conversation/[id]", params: { id: activity.conversationId } }}
+                        asChild
+                      >
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`${activity.title}، ${activity.customerName ?? activity.customerPhone ?? "محادثة"}`}
+                          style={({ pressed }) => ({ opacity: pressed ? 0.65 : 1 })}
+                        >
+                          <Card>
+                            <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.md }}>
+                              <IconSymbol name={actionIcon[activity.kind]} size={20} color={colors.brand} />
+                              <View style={{ flex: 1, gap: spacing.xs }}>
+                                <Text selectable style={{ ...type.bodyStrong, ...rtlText, color: colors.text }}>
+                                  {activity.title}
+                                </Text>
+                                <Text selectable style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
+                                  {activity.customerName || activity.customerPhone || "محادثة"} · {relativeTimeLabel(activity.at)}
+                                </Text>
+                              </View>
+                              <IconSymbol name="chevron.left" size={18} color={colors.textTertiary} />
+                            </View>
+                          </Card>
+                        </Pressable>
+                      </Link>
+                    ))
+                  ) : (
+                    <Text style={{ ...type.body, ...rtlText, color: colors.textSecondary }}>
+                      لا توجد أنشطة خلال الفترة المختارة.
+                    </Text>
+                  )}
+
+                  {activitiesQuery.hasNextPage ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="تحميل المزيد من الأنشطة"
+                      onPress={() => void activitiesQuery.fetchNextPage()}
+                      disabled={activitiesQuery.isFetchingNextPage}
+                      style={({ pressed }) => ({
+                        padding: spacing.md,
+                        borderRadius: radius.lg,
+                        backgroundColor: colors.surfaceSunken,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        opacity: pressed || activitiesQuery.isFetchingNextPage ? 0.7 : 1,
+                      })}
+                    >
+                      {activitiesQuery.isFetchingNextPage ? (
+                        <ActivityIndicator size="small" color={colors.brand} />
+                      ) : (
+                        <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.brand }}>تحميل المزيد</Text>
+                      )}
+                    </Pressable>
+                  ) : null}
+                </>
+              )}
             </View>
           </>
         ) : null}
@@ -280,3 +371,4 @@ export default function CustomerServiceEmployeeReportScreen() {
     </>
   );
 }
+
