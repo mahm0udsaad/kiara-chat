@@ -44,7 +44,7 @@ export function isSegment(v: string): v is Segment {
   return SEGMENTS.some((s) => s.key === v);
 }
 
-interface CustomerRow {
+export interface CustomerRow {
   id: string;
   phone_number: string | null;
   full_name: string | null;
@@ -52,7 +52,7 @@ interface CustomerRow {
   metadata: Record<string, unknown> | null;
 }
 
-interface BroadcastMark {
+export interface BroadcastMark {
   status: "sent" | "failed";
   sid?: string | null;
   error?: string | null;
@@ -60,6 +60,23 @@ interface BroadcastMark {
 }
 
 const digits = (p: string | null | undefined) => (p || "").replace(/\D/g, "");
+
+/** Sends across every campaign/broadcast in the last 24h — the number's cap. */
+export function globalSentLast24h(rows: CustomerRow[]): number {
+  const since = Date.now() - DAY_MS;
+  let n = 0;
+  for (const row of rows) {
+    const all = (row.metadata?.broadcasts as Record<string, BroadcastMark>) ?? {};
+    for (const key of Object.keys(all)) {
+      const m = all[key];
+      if (m?.status === "sent" && new Date(m.at).getTime() >= since) {
+        n += 1;
+        break; // one number-send per customer per day is the unit that counts
+      }
+    }
+  }
+  return n;
+}
 const marks = (row: CustomerRow) =>
   (row.metadata?.broadcasts as Record<string, BroadcastMark>) ?? {};
 const lastBooking = (row: CustomerRow) =>
@@ -67,7 +84,7 @@ const lastBooking = (row: CustomerRow) =>
 const nextBooking = (row: CustomerRow) =>
   (row.metadata?.next_booking_at as string | undefined) ?? null;
 
-function inSegment(row: CustomerRow, segment: Segment): boolean {
+export function inSegment(row: CustomerRow, segment: Segment): boolean {
   if (segment === "all") return true;
   const now = Date.now();
   const lp = lastBooking(row) ? new Date(lastBooking(row)!).getTime() : null;
@@ -84,7 +101,7 @@ function inSegment(row: CustomerRow, segment: Segment): boolean {
   }
 }
 
-async function loadAllCustomers(): Promise<CustomerRow[]> {
+export async function loadAllCustomers(): Promise<CustomerRow[]> {
   const admin = getAdminSupabaseClient();
   const rows: CustomerRow[] = [];
   const pageSize = 1000;
