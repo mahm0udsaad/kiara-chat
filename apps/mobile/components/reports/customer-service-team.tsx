@@ -4,12 +4,21 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
-import { relativeTimeLabel } from "@/lib/format";
+import { durationLabel, relativeTimeLabel } from "@/lib/format";
 import { reportInteger } from "@/lib/operations-report";
 import { useTheme } from "@/providers/theme-provider";
 import type { CustomerServiceEmployee, CustomerServiceReport } from "@/types/api";
 
-function Metric({ icon, label, value }: { icon: IconName; label: string; value: number }) {
+function Metric({
+  icon,
+  label,
+  value,
+}: {
+  icon: IconName;
+  label: string;
+  /** A pre-formatted string passes through — durations are not plain counts. */
+  value: number | string;
+}) {
   const { colors } = useTheme();
   return (
     <View
@@ -25,7 +34,7 @@ function Metric({ icon, label, value }: { icon: IconName; label: string; value: 
       <IconSymbol name={icon} size={18} color={colors.brand} />
       <Text style={{ ...type.caption, ...rtlText, color: colors.textTertiary }}>{label}</Text>
       <Text selectable style={{ ...type.title3, ...numeric, ...rtlText, color: colors.text }}>
-        {reportInteger.format(value)}
+        {typeof value === "number" ? reportInteger.format(value) : value}
       </Text>
     </View>
   );
@@ -108,6 +117,7 @@ function EmployeeRow({
               {reportInteger.format(employee.handledConversations)} محادثة · {reportInteger.format(employee.messagesSent)} رد · {reportInteger.format(employee.actions)} إجراء
             </Text>
             <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
+              {employee.activeMinutes ? `${durationLabel(employee.activeMinutes)} داخل التطبيق · ` : ""}
               {reportInteger.format(employee.currentAssigned)} مسندة الآن
               {lastActivity ? ` · آخر نشاط ${relativeTimeLabel(lastActivity)}` : " · لا يوجد نشاط مسجل"}
             </Text>
@@ -130,6 +140,11 @@ export function CustomerServiceTeam({ report }: { report: CustomerServiceReport 
         <Metric icon="paperplane.fill" label="ردود" value={report.totals.messagesSent} />
         <Metric icon="pencil" label="إجراءات" value={report.totals.actions} />
         <Metric icon="tray" label="مسند الآن" value={report.totals.currentAssigned} />
+        <Metric
+          icon="clock"
+          label="وقت الفريق بالتطبيق"
+          value={report.totals.activeMinutes ? durationLabel(report.totals.activeMinutes) : "—"}
+        />
       </View>
 
       <Card padded={false}>

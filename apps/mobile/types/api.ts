@@ -540,6 +540,8 @@ export type CustomerServiceDailyActivity = {
   handledConversations: number;
   messagesSent: number;
   actions: number;
+  /** Foreground app time that day. Absent on reports served before it existed. */
+  activeMinutes?: number;
 };
 
 export type CustomerServiceEmployee = {
@@ -570,6 +572,9 @@ export type CustomerServiceEmployee = {
   bookingActions: number;
   notesAdded: number;
   ordersCreated: number;
+  /** Foreground app time across the period. Absent on older report responses. */
+  activeMinutes?: number;
+  sessions?: number;
   daily: CustomerServiceDailyActivity[];
   recentActivity?: CustomerServiceActivity[];
 };
@@ -618,6 +623,8 @@ export type CustomerServiceReport = {
     currentAssigned: number;
     messagesSent: number;
     actions: number;
+    /** Team app time across the period. Absent on older report responses. */
+    activeMinutes?: number;
   };
   employees: CustomerServiceEmployee[];
 };

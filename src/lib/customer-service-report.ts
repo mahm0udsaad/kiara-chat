@@ -38,6 +38,11 @@ export type CustomerServiceDailyActivity = {
   handledConversations: number;
   messagesSent: number;
   actions: number;
+  /**
+   * Foreground time in the app that day, accumulated from heartbeats rather
+   * than inferred from actions — a quiet day still shows the hours worked.
+   */
+  activeMinutes: number;
 };
 
 export type CustomerServiceEmployee = {
@@ -68,6 +73,10 @@ export type CustomerServiceEmployee = {
   bookingActions: number;
   notesAdded: number;
   ordersCreated: number;
+  /** Foreground app time across the whole selected period. */
+  activeMinutes: number;
+  /** Distinct stretches of use across the period — a rough shift count. */
+  sessions: number;
   daily: CustomerServiceDailyActivity[];
   recentActivity: CustomerServiceActivity[];
 };
@@ -87,6 +96,7 @@ export type CustomerServiceReport = {
     currentAssigned: number;
     messagesSent: number;
     actions: number;
+    activeMinutes: number;
   };
   employees: CustomerServiceEmployee[];
 };
@@ -137,6 +147,12 @@ type PresenceRow = {
   platform: "ios" | "android" | "web";
   last_seen_at: string;
 };
+type DailyPresenceRow = {
+  team_member_id: string;
+  day: string;
+  active_seconds: number;
+  sessions: number;
+};
 type MessageRow = {
   id: string;
   conversation_id: string;
@@ -178,7 +194,15 @@ type MutableEmployee = CustomerServiceEmployee & {
   resolvedIds: Set<string>;
   responseMinutesTotal: number;
   responseSamples: number;
-  dailyMap: Map<string, { conversations: Set<string>; messages: number; actions: number }>;
+  dailyMap: Map<
+    string,
+    {
+      conversations: Set<string>;
+      messages: number;
+      actions: number;
+      activeSeconds: number;
+    }
+  >;
 };
 
 function boundary(day: string, time: string): string {
@@ -291,8 +315,17 @@ export async function getCustomerServiceReport(
   const members = (membersResult.data ?? []) as MemberRow[];
   const memberIds = members.map((member) => member.id);
 
-  const [emails, conversations, presence, messages, events, claims, notes, orders] =
-    await Promise.all([
+  const [
+    emails,
+    conversations,
+    presence,
+    dailyPresence,
+    messages,
+    events,
+    claims,
+    notes,
+    orders,
+  ] = await Promise.all([
       memberEmails(members),
       pageRows<ConversationRow>((from, to) =>
         admin
@@ -310,6 +343,22 @@ export async function getCustomerServiceReport(
               .eq("restaurant_id", KIARA_RESTAURANT_ID)
               .in("team_member_id", memberIds)
               .order("team_member_id", { ascending: true })
+              .range(from, to),
+          )
+        : Promise.resolve([]),
+      // Per-day app time, accumulated from heartbeats at write time. The rollup
+      // is daily, so unlike every other figure here it cannot honour the
+      // start/end time-of-day filter — it always covers the whole day.
+      memberIds.length
+        ? pageRows<DailyPresenceRow>((from, to) =>
+            admin
+              .from("team_member_app_daily_presence")
+              .select("team_member_id, day, active_seconds, sessions")
+              .eq("restaurant_id", KIARA_RESTAURANT_ID)
+              .in("team_member_id", memberIds)
+              .gte("day", input.from)
+              .lte("day", input.to)
+              .order("day", { ascending: true })
               .range(from, to),
           )
         : Promise.resolve([]),
@@ -412,6 +461,8 @@ export async function getCustomerServiceReport(
       bookingActions: 0,
       notesAdded: 0,
       ordersCreated: 0,
+      activeMinutes: 0,
+      sessions: 0,
       daily: [],
       recentActivity: [],
       handledIds: new Set(),
@@ -456,6 +507,7 @@ export async function getCustomerServiceReport(
       conversations: new Set<string>(),
       messages: 0,
       actions: 0,
+      activeSeconds: 0,
     };
     daily.conversations.add(inputActivity.conversationId);
     if (inputActivity.isMessage) daily.messages += 1;
@@ -577,7 +629,27 @@ export async function getCustomerServiceReport(
     });
   }
 
+  // Fold app time in before the daily list is built, creating days that have
+  // presence but no activity — being in the app all afternoon having done
+  // nothing is exactly what the owner opens this report to see.
+  for (const row of dailyPresence) {
+    const employee = employees.get(row.team_member_id);
+    if (!employee) continue;
+    const seconds = Number(row.active_seconds) || 0;
+    const daily = employee.dailyMap.get(row.day) ?? {
+      conversations: new Set<string>(),
+      messages: 0,
+      actions: 0,
+      activeSeconds: 0,
+    };
+    daily.activeSeconds += seconds;
+    employee.dailyMap.set(row.day, daily);
+    employee.activeMinutes += seconds / 60;
+    employee.sessions += Number(row.sessions) || 0;
+  }
+
   for (const employee of employees.values()) {
+    employee.activeMinutes = Math.round(employee.activeMinutes);
     employee.handledConversations = employee.handledIds.size;
     employee.resolvedConversations = employee.resolvedIds.size;
     employee.averageFirstResponseMinutes = employee.responseSamples
@@ -589,6 +661,7 @@ export async function getCustomerServiceReport(
         handledConversations: value.conversations.size,
         messagesSent: value.messages,
         actions: value.actions,
+        activeMinutes: Math.round(value.activeSeconds / 60),
       }))
       .sort((a, b) => b.day.localeCompare(a.day));
   }
@@ -628,6 +701,7 @@ export async function getCustomerServiceReport(
       currentAssigned: output.reduce((sum, employee) => sum + employee.currentAssigned, 0),
       messagesSent: output.reduce((sum, employee) => sum + employee.messagesSent, 0),
       actions: output.reduce((sum, employee) => sum + employee.actions, 0),
+      activeMinutes: output.reduce((sum, employee) => sum + employee.activeMinutes, 0),
     },
     employees: output,
   };

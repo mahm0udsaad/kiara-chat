@@ -8,7 +8,7 @@ import { BulletList, Score } from "@/components/customer-analysis-view";
 import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
-import { relativeTimeLabel } from "@/lib/format";
+import { durationLabel, relativeTimeLabel } from "@/lib/format";
 import { REPORT_LOCALE, reportDecimal, reportInteger } from "@/lib/operations-report";
 import {
   useBootstrap,
@@ -176,6 +176,11 @@ export default function CustomerServiceEmployeeReportScreen() {
             </Card>
 
             <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
+              <Metric
+                icon="clock"
+                label="وقتها داخل التطبيق"
+                value={employee.activeMinutes ? durationLabel(employee.activeMinutes) : "—"}
+              />
               <Metric icon="message" label="محادثات تعاملت معها" value={employee.handledConversations} />
               <Metric icon="paperplane.fill" label="ردود أرسلتها" value={employee.messagesSent} />
               <Metric icon="pencil" label="إجراءات نفّذتها" value={employee.actions} />
@@ -282,7 +287,7 @@ export default function CustomerServiceEmployeeReportScreen() {
             </Card>
 
             <Card>
-              <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>النشاط حسب اليوم</Text>
+              <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>الوقت والنشاط حسب اليوم</Text>
               {employee.daily.length ? (
                 employee.daily.map((day) => (
                   <View
@@ -295,11 +300,24 @@ export default function CustomerServiceEmployeeReportScreen() {
                       gap: spacing.md,
                     }}
                   >
-                    <Text selectable style={{ ...type.subheadStrong, ...numeric, ...rtlText, color: colors.text }}>
-                      {dateLabel.format(new Date(`${day.day}T12:00:00+03:00`))}
-                    </Text>
-                    <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textSecondary }}>
-                      {reportInteger.format(day.handledConversations)} محادثة · {reportInteger.format(day.messagesSent)} رد · {reportInteger.format(day.actions)} إجراء
+                    <View style={{ gap: 2 }}>
+                      <Text selectable style={{ ...type.subheadStrong, ...numeric, ...rtlText, color: colors.text }}>
+                        {dateLabel.format(new Date(`${day.day}T12:00:00+03:00`))}
+                      </Text>
+                      <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textSecondary }}>
+                        {reportInteger.format(day.handledConversations)} محادثة · {reportInteger.format(day.messagesSent)} رد · {reportInteger.format(day.actions)} إجراء
+                      </Text>
+                    </View>
+                    <Text
+                      selectable
+                      style={{
+                        ...type.subheadStrong,
+                        ...numeric,
+                        ...rtlText,
+                        color: day.activeMinutes ? colors.brand : colors.textTertiary,
+                      }}
+                    >
+                      {day.activeMinutes ? durationLabel(day.activeMinutes) : "—"}
                     </Text>
                   </View>
                 ))
