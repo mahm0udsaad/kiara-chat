@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as ImagePicker from "expo-image-picker";
 import {
   AccessibilityInfo,
+  Alert,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -60,6 +61,17 @@ const noteTemplates = [
   "العميلة تفضّل الهدوء أثناء الجلسة.",
   "يرجى إحضار الأدوات الإضافية.",
 ];
+
+function normalizedRosterName(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+    .toLocaleLowerCase("ar");
+}
 
 /** How the send ended. Both states are terminal: the order is already out. */
 type Outcome = "sent" | "already";
@@ -165,7 +177,13 @@ function OutcomeScreen({ kind, sentAt }: { kind: Outcome; sentAt: string | null 
   );
 }
 
-function DispatchForm({ id }: { id: string }) {
+function DispatchForm({
+  id,
+  preferredSpecialistName,
+}: {
+  id: string;
+  preferredSpecialistName: string | null;
+}) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const order = useOrder(id);
@@ -183,6 +201,7 @@ function DispatchForm({ id }: { id: string }) {
   >(null);
   const [doorPhotoError, setDoorPhotoError] = useState<string | null>(null);
   const [specialistId, setSpecialistId] = useState<string | null>(null);
+  const [editingSpecialist, setEditingSpecialist] = useState(false);
   const [driverId, setDriverId] = useState<string | null>(null);
   const [note, setNote] = useState("");
   /**
@@ -217,12 +236,19 @@ function DispatchForm({ id }: { id: string }) {
   >({});
 
   useEffect(() => {
-    if (!initializedAssignments.current && order.data) {
-      setSpecialistId(order.data.order.specialist_id);
+    if (!initializedAssignments.current && order.data && options.data) {
+      const preferred = preferredSpecialistName
+        ? options.data.specialists.find(
+            (person) =>
+              normalizedRosterName(person.full_name) ===
+              normalizedRosterName(preferredSpecialistName),
+          )
+        : null;
+      setSpecialistId(order.data.order.specialist_id ?? preferred?.id ?? null);
       setDriverId(order.data.order.driver_id);
       initializedAssignments.current = true;
     }
-  }, [order.data]);
+  }, [options.data, order.data, preferredSpecialistName]);
 
   if (order.isLoading || options.isLoading) return <LoadingScreen label="جارٍ تجهيز التأكيد…" />;
   if (order.isError || options.isError || !order.data || !options.data) {
@@ -252,6 +278,14 @@ function DispatchForm({ id }: { id: string }) {
   const locationMissing = isLocationMissing(location);
   const specialistName =
     options.data.specialists.find((person) => person.id === specialistId)?.full_name ?? null;
+  const selectedSpecialist =
+    options.data.specialists.find((person) => person.id === specialistId) ?? null;
+  const specialistMatchesRekaz = Boolean(
+    preferredSpecialistName &&
+      selectedSpecialist &&
+      normalizedRosterName(selectedSpecialist.full_name) ===
+        normalizedRosterName(preferredSpecialistName),
+  );
   const driverName =
     options.data.drivers.find((person) => person.id === driverId)?.full_name ?? null;
 
@@ -268,6 +302,34 @@ function DispatchForm({ id }: { id: string }) {
   const clearFieldError = (field: ValidationField) => {
     setValidation((currentError) =>
       currentError?.field === field ? null : currentError,
+    );
+  };
+
+  const applySpecialist = (value: string | null) => {
+    setSpecialistId(value);
+    setEditingSpecialist(false);
+    clearFieldError("specialist");
+  };
+
+  const changeSpecialist = (value: string | null) => {
+    if (value === specialistId) {
+      setEditingSpecialist(false);
+      return;
+    }
+    const nextName =
+      options.data.specialists.find((person) => person.id === value)?.full_name ??
+      "بدون أخصائية";
+    if (!selectedSpecialist) {
+      applySpecialist(value);
+      return;
+    }
+    Alert.alert(
+      "تغيير الأخصائية؟",
+      `سيتم تغيير الأخصائية من «${selectedSpecialist.full_name}» إلى «${nextName}». تأكدي أن التغيير مطابق لحجز ركاز.`,
+      [
+        { text: `إبقاء ${selectedSpecialist.full_name}`, style: "cancel" },
+        { text: `تغيير إلى ${nextName}`, onPress: () => applySpecialist(value) },
+      ],
     );
   };
 
@@ -554,20 +616,77 @@ function DispatchForm({ id }: { id: string }) {
             {locationMissing ? null : (
               <>
                 <View onLayout={rememberFieldPosition("specialist")}>
-                  <RosterPicker
-                    label="الأخصائية"
-                    options={options.data.specialists}
-                    value={specialistId}
-                    onChange={(value) => {
-                      setSpecialistId(value);
-                      clearFieldError("specialist");
-                    }}
-                    error={
-                      validation?.field === "specialist"
-                        ? validation.message
-                        : null
-                    }
-                  />
+                  {selectedSpecialist && !editingSpecialist ? (
+                    <View style={{ gap: spacing.sm }}>
+                      <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>
+                        الأخصائية
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`الأخصائية ${selectedSpecialist.full_name}، تغيير`}
+                        onPress={() => {
+                          tapFeedback();
+                          setEditingSpecialist(true);
+                        }}
+                        style={({ pressed }) => ({
+                          minHeight: hitSize.comfortable + 8,
+                          flexDirection: "row-reverse",
+                          alignItems: "center",
+                          gap: spacing.md,
+                          padding: spacing.md,
+                          borderRadius: radius.lg,
+                          borderCurve: "continuous",
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                          backgroundColor: pressed ? colors.surfaceSunken : colors.surface,
+                        })}
+                      >
+                        <View
+                          style={{
+                            width: 38,
+                            height: 38,
+                            alignItems: "center",
+                            justifyContent: "center",
+                            borderRadius: radius.full,
+                            backgroundColor: colors.brandSoft,
+                          }}
+                        >
+                          <IconSymbol name="sparkles" size={19} color={colors.brand} />
+                        </View>
+                        <View style={{ flex: 1, gap: 2 }}>
+                          <Text style={{ ...type.calloutStrong, color: colors.text, ...rtlText }}>
+                            {selectedSpecialist.full_name}
+                          </Text>
+                          <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
+                            {specialistMatchesRekaz
+                              ? "مختارة تلقائيًا من حجز ركاز"
+                              : selectedSpecialist.phone ?? "بدون رقم"}
+                          </Text>
+                        </View>
+                        <Text style={{ ...type.calloutStrong, color: colors.brand, ...rtlText }}>
+                          تغيير
+                        </Text>
+                      </Pressable>
+                      {preferredSpecialistName && !specialistMatchesRekaz ? (
+                        <InlineAlert
+                          tone="warning"
+                          message={`ركاز مسجل عليه «${preferredSpecialistName}»، والمختارة الآن «${selectedSpecialist.full_name}».`}
+                        />
+                      ) : null}
+                    </View>
+                  ) : (
+                    <RosterPicker
+                      label="الأخصائية"
+                      options={options.data.specialists}
+                      value={specialistId}
+                      onChange={changeSpecialist}
+                      error={
+                        validation?.field === "specialist"
+                          ? validation.message
+                          : null
+                      }
+                    />
+                  )}
                 </View>
                 <View onLayout={rememberFieldPosition("driver")}>
                   <RosterPicker
@@ -801,10 +920,19 @@ function DispatchForm({ id }: { id: string }) {
 }
 
 export default function DispatchOrderScreen() {
-  const params = useLocalSearchParams<{ id: string | string[] }>();
+  const params = useLocalSearchParams<{
+    id: string | string[];
+    specialistName?: string | string[];
+  }>();
   const id = useMemo(
     () => (Array.isArray(params.id) ? (params.id[0] ?? "") : (params.id ?? "")),
     [params.id],
   );
-  return <DispatchForm id={id} />;
+  const preferredSpecialistName = useMemo(() => {
+    const value = Array.isArray(params.specialistName)
+      ? params.specialistName[0]
+      : params.specialistName;
+    return value?.trim() || null;
+  }, [params.specialistName]);
+  return <DispatchForm id={id} preferredSpecialistName={preferredSpecialistName} />;
 }

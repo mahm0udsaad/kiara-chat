@@ -100,7 +100,10 @@ const SlotCard = memo(function SlotCard({
       onSuccess: (result) =>
         router.push({
           pathname: "/orders/[id]/dispatch",
-          params: { id: result.order.id },
+          params: {
+            id: result.order.id,
+            specialistName: reservation.providers[0] ?? "",
+          },
         }),
       onError: (error) => Alert.alert("تعذّر إنشاء الطلب", error.message),
     });

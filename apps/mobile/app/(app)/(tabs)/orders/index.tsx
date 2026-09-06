@@ -360,7 +360,10 @@ const VisitCard = memo(function VisitCard({
     // same Rekaz visit (ORDER_ALREADY_LINKED), and the only way forward is
     // the dispatch screen the employee backed out of.
     if (order) {
-      router.push({ pathname: "/orders/[id]/dispatch", params: { id: order.id } });
+      router.push({
+        pathname: "/orders/[id]/dispatch",
+        params: { id: order.id, specialistName: visit.providers[0] ?? "" },
+      });
       return;
     }
     if (!visit.reservation) return;
@@ -371,12 +374,15 @@ const VisitCard = memo(function VisitCard({
       onSuccess: (result) =>
         router.push({
           pathname: "/orders/[id]/dispatch",
-          params: { id: result.order.id },
+          params: {
+            id: result.order.id,
+            specialistName: visit.providers[0] ?? "",
+          },
         }),
       onError: (error) =>
         Alert.alert("تعذّر إنشاء الطلب", error.message),
     });
-  }, [createOrder, order, router, visit.reservation]);
+  }, [createOrder, order, router, visit.providers, visit.reservation]);
 
   const body = (
     <View

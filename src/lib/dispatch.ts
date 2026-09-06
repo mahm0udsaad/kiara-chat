@@ -596,6 +596,7 @@ export async function createBookingFromReservation(
     durationMinutes?: number;
     location?: { label?: string; lat?: number; lng?: number } | null;
     service?: string;
+    providers?: string[];
     order?: { id?: string } | null;
   };
   const phone = String(reservation.customer_phone ?? "");
@@ -665,12 +666,32 @@ export async function createBookingFromReservation(
     LOCATION_UNSET;
   const durationMinutes = Math.min(Math.max(visit.minutes, 5), 480);
 
+  // Rekaz already records who performs the service. Carry that assignment
+  // into the driver order so the confirmation screen opens with the correct
+  // specialist instead of asking the employee to remember her a second time.
+  // Only an exact normalized roster match is safe to assign automatically.
+  const rekazProviderName = payload.providers?.find((name) => name.trim())?.trim();
+  let rekazSpecialistId: string | null = null;
+  if (rekazProviderName) {
+    const { data: roster } = await admin
+      .from("specialists")
+      .select("id, full_name")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .eq("is_active", true);
+    const normalizedProvider = normalizeRosterName(rekazProviderName);
+    rekazSpecialistId =
+      roster?.find(
+        (specialist) =>
+          normalizeRosterName(String(specialist.full_name)) === normalizedProvider,
+      )?.id ?? null;
+  }
+
   const { data: created, error: insErr } = await admin
     .from("driver_orders")
     .insert({
       restaurant_id: KIARA_RESTAURANT_ID,
       conversation_id: conversation.id,
-      specialist_id: null,
+      specialist_id: rekazSpecialistId,
       driver_id: null,
       arrival_at: visit.startsAt,
       customer_location: location,
@@ -695,6 +716,17 @@ export async function createBookingFromReservation(
 
   await clearBookingRequest(conversation.id).catch(() => {});
   return created as unknown as DriverOrder;
+}
+
+function normalizeRosterName(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+    .toLocaleLowerCase("ar");
 }
 
 /**
