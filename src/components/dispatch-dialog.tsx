@@ -13,6 +13,16 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -125,6 +135,7 @@ export function DispatchDialog({
   const [specialists, setSpecialists] = useState<Specialist[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [specialistId, setSpecialistId] = useState("");
+  const [pendingSpecialistId, setPendingSpecialistId] = useState<string | null>(null);
   const [driverId, setDriverId] = useState("");
   const [tripType, setTripType] = useState<TripType>(order.trip_type);
   // The address is the first thing this form settles. An order raised from
@@ -213,8 +224,39 @@ export function DispatchDialog({
       normalizedRosterName(preferredSpecialistName) ===
         normalizedRosterName(selectedSpecialist.full_name)
   );
+  const pendingSpecialist = specialists.find(
+    (item) => item.id === pendingSpecialistId
+  );
+  const applySpecialist = useCallback(
+    (value: string) => {
+      const specialist = specialists.find((item) => item.id === value);
+      setSpecialistId(value);
+      setDriverMessage(
+        initialDriverMessage(
+          order,
+          specialist?.full_name ?? null,
+          tripType,
+          customerLocation
+        )
+      );
+      setConfirmed(false);
+      setReviewing(false);
+    },
+    [customerLocation, order, specialists, tripType]
+  );
+  const requestSpecialistChange = useCallback(
+    (value: string) => {
+      if (!specialistId || value === specialistId) {
+        applySpecialist(value);
+        return;
+      }
+      setPendingSpecialistId(value);
+    },
+    [applySpecialist, specialistId]
+  );
   const reset = useCallback(() => {
     setSpecialistId("");
+    setPendingSpecialistId(null);
     setDriverId("");
     setTripType(order.trip_type);
     setCustomerLocation(
@@ -385,8 +427,9 @@ export function DispatchDialog({
   ]);
 
   return (
-    <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-xl">
+    <>
+      <Dialog open={open} onOpenChange={changeOpen}>
+        <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>تأكيد الحجز وإسناد السائق</DialogTitle>
           <DialogDescription>
@@ -528,20 +571,7 @@ export function DispatchDialog({
                 </FieldLabel>
                 <Select
                   value={specialistId}
-                  onValueChange={(value) => {
-                    const specialist = specialists.find((item) => item.id === value);
-                    setSpecialistId(value);
-                    setDriverMessage(
-                      initialDriverMessage(
-                        order,
-                        specialist?.full_name ?? null,
-                        tripType,
-                        customerLocation
-                      )
-                    );
-                    setConfirmed(false);
-                    setReviewing(false);
-                  }}
+                  onValueChange={requestSpecialistChange}
                 >
                   <SelectTrigger
                     id={`dispatch-specialist-${order.id}`}
@@ -582,6 +612,17 @@ export function DispatchDialog({
                   )}
                 </FieldDescription>
               </Field>
+
+              {preferredSpecialistName && selectedSpecialist && !specialistMatchesRekaz ? (
+                <Alert variant="destructive">
+                  <AlertTriangle />
+                  <AlertTitle>الأخصائية مختلفة عن حجز ركاز</AlertTitle>
+                  <AlertDescription>
+                    ركاز مسجل عليه «{preferredSpecialistName}»، والمختارة الآن «
+                    {selectedSpecialist.full_name}». راجعي الحجز قبل الإرسال.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
               <Field>
                 <FieldLabel>ملاحظة إضافية للأخصائية (اختياري)</FieldLabel>
@@ -832,7 +873,38 @@ export function DispatchDialog({
             </DialogFooter>
           </>
         )}
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={Boolean(pendingSpecialistId)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setPendingSpecialistId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>تغيير الأخصائية؟</AlertDialogTitle>
+            <AlertDialogDescription>
+              سيتم تغيير الأخصائية من «{selectedSpecialist?.full_name ?? "—"}» إلى «
+              {pendingSpecialist?.full_name ?? "—"}». تأكدي أن هذا التغيير مطابق لحجز ركاز.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingSpecialistId(null)}>
+              إبقاء {selectedSpecialist?.full_name ?? "الأخصائية الحالية"}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingSpecialistId) applySpecialist(pendingSpecialistId);
+                setPendingSpecialistId(null);
+              }}
+            >
+              تغيير إلى {pendingSpecialist?.full_name ?? "الأخصائية الجديدة"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

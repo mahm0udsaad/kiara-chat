@@ -534,7 +534,7 @@ export function RekazReservations({
             customer_name: visit.customerName,
             updated_by_name: null,
           },
-          specialistName: visit.services[0]?.providers[0] ?? null,
+          specialistName: visitProviders(visit)[0] ?? null,
         });
         router.refresh();
       } catch (e) {
@@ -976,7 +976,7 @@ export function RekazReservations({
                         if (order) {
                           setDispatchOrder({
                             order,
-                            specialistName: visit.services[0]?.providers[0] ?? null,
+                            specialistName: visitProviders(visit)[0] ?? null,
                           });
                         }
                       }}
