@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Pressable,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/format";
 import { MAX_UPLOAD_BYTES, formatMegabytes } from "@/lib/api";
 import { tapFeedback } from "@/lib/haptics";
+import { useKeyboardPadding } from "@/lib/keyboard";
 import {
   useAddConversationNote,
   useConversationNotes,
@@ -163,8 +165,10 @@ export function ConversationActionsButton({
 }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const keyboard = useKeyboardPadding();
   const labelIds = labelIdsProp ?? EMPTY_LABEL_IDS;
   const [open, setOpen] = useState(false);
+  const [labelManagerOpen, setLabelManagerOpen] = useState(false);
   const [draftCsStatus, setDraftCsStatus] = useState(csStatus);
   const [draftBookingStage, setDraftBookingStage] =
     useState<BookingStage | null>(bookingStage);
@@ -266,6 +270,25 @@ export function ConversationActionsButton({
 
   function closeSheet() {
     if (!saving) setOpen(false);
+  }
+
+  function openLabelManager() {
+    setEditingLabelId(null);
+    setEditingLabelName("");
+    setNewLabelError(null);
+    setLabelManagementError(null);
+    tapFeedback();
+    setLabelManagerOpen(true);
+  }
+
+  function closeLabelManager() {
+    if (saving) return;
+    setEditingLabelId(null);
+    setEditingLabelName("");
+    setNewLabelName("");
+    setNewLabelError(null);
+    setLabelManagementError(null);
+    setLabelManagerOpen(false);
   }
 
   function toggleLabel(labelId: string) {
@@ -639,22 +662,137 @@ export function ConversationActionsButton({
             ) : null}
 
             <ActionSection title="التصنيفات">
+              <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
+                <ChoiceChip
+                  testID="conversation-actions-label-none"
+                  label="بدون تصنيفات"
+                  selected={draftLabelIds.length === 0}
+                  disabled={!canEdit || saving}
+                  onPress={() => {
+                    tapFeedback();
+                    setDraftLabelIds([]);
+                  }}
+                />
+                {labels.map((label) => {
+                  const selected = draftLabelIds.includes(label.id);
+                  return (
+                    <Pressable
+                      key={label.id}
+                      testID={`conversation-actions-label-${label.id}`}
+                      accessibilityRole="checkbox"
+                      accessibilityLabel={label.name}
+                      accessibilityState={{ checked: selected, disabled: !canEdit || saving }}
+                      disabled={!canEdit || saving}
+                      onPress={() => toggleLabel(label.id)}
+                      style={({ pressed }) => ({
+                        minHeight: hitSize.min,
+                        flexDirection: "row-reverse",
+                        alignItems: "center",
+                        gap: spacing.sm,
+                        paddingHorizontal: spacing.md,
+                        borderRadius: radius.full,
+                        borderWidth: selected ? 1.5 : 1,
+                        borderColor: selected ? colors.brand : colors.border,
+                        backgroundColor: selected ? colors.brandSoft : colors.surface,
+                        opacity: !canEdit ? 0.5 : pressed ? 0.72 : 1,
+                      })}
+                    >
+                      <View style={{ width: 10, height: 10, borderRadius: radius.full, backgroundColor: labelColor(label.color, colors) }} />
+                      <Text style={{ ...type.subheadStrong, color: selected ? colors.onBrandSoft : colors.text, ...rtlText }}>
+                        {label.name}
+                      </Text>
+                      {selected ? <IconSymbol name="checkmark" color={colors.onBrandSoft} size={14} /> : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="فتح إدارة التصنيفات"
+                disabled={!canEdit || saving}
+                onPress={openLabelManager}
+                style={({ pressed }) => ({
+                  alignSelf: "flex-end",
+                  minHeight: hitSize.min,
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  gap: spacing.xs,
+                  paddingHorizontal: spacing.md,
+                  borderRadius: radius.full,
+                  backgroundColor: colors.surfaceSunken,
+                  opacity: !canEdit ? 0.5 : pressed ? 0.65 : 1,
+                })}
+              >
+                <IconSymbol name="pencil" color={colors.textSecondary} size={16} />
+                <Text style={{ ...type.subheadStrong, color: colors.textSecondary, ...rtlText }}>
+                  إدارة التصنيفات
+                </Text>
+              </Pressable>
+            </ActionSection>
+
+            <Modal
+              visible={labelManagerOpen}
+              animationType="slide"
+              presentationStyle="pageSheet"
+              onRequestClose={closeLabelManager}
+            >
+              <KeyboardAvoidingView
+                behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
+                onLayout={keyboard.onLayout}
+                style={{ flex: 1, backgroundColor: colors.background, paddingBottom: keyboard.paddingBottom }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row-reverse",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: spacing.md,
+                    paddingHorizontal: spacing.lg,
+                    paddingVertical: spacing.md,
+                    borderBottomWidth: 1,
+                    borderBottomColor: colors.border,
+                    backgroundColor: colors.surface,
+                  }}
+                >
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={{ ...type.title3, color: colors.text, ...rtlText }}>إدارة التصنيفات</Text>
+                    <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
+                      تعديل الأسماء أو إضافة وحذف التصنيفات
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="إغلاق إدارة التصنيفات"
+                    disabled={saving}
+                    onPress={closeLabelManager}
+                    style={({ pressed }) => ({
+                      width: hitSize.min,
+                      height: hitSize.min,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: radius.full,
+                      backgroundColor: colors.surfaceSunken,
+                      opacity: saving ? 0.45 : pressed ? 0.6 : 1,
+                    })}
+                  >
+                    <IconSymbol name="xmark" color={colors.textSecondary} size={18} />
+                  </Pressable>
+                </View>
+                <ScrollView
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={{ padding: spacing.lg, gap: spacing.xl, paddingBottom: spacing["3xl"] }}
+                >
+            <ActionSection title="إنشاء وتعديل التصنيفات">
               {labels.length ? (
                 <View style={{ gap: spacing.sm }}>
                   {labels.map((label) => {
-                    const selected = draftLabelIds.includes(label.id);
                     const editing = editingLabelId === label.id;
                     return (
                       <View key={label.id} style={{ gap: spacing.xs }}>
                         <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
-                          <Pressable
-                            testID={`conversation-actions-label-${label.id}`}
-                            accessibilityRole="checkbox"
-                            accessibilityLabel={label.name}
-                            accessibilityState={{ checked: selected, disabled: !canEdit || saving }}
-                            disabled={!canEdit || saving}
-                            onPress={() => toggleLabel(label.id)}
-                            style={({ pressed }) => ({
+                          <View
+                            accessibilityLabel={`تصنيف ${label.name}`}
+                            style={{
                               flex: 1,
                               minHeight: hitSize.min,
                               flexDirection: "row-reverse",
@@ -662,18 +800,16 @@ export function ConversationActionsButton({
                               gap: spacing.sm,
                               paddingHorizontal: spacing.md,
                               borderRadius: radius.md,
-                              borderWidth: selected ? 1.5 : 1,
-                              borderColor: selected ? colors.brand : colors.border,
-                              backgroundColor: selected ? colors.brandSoft : colors.surface,
-                              opacity: !canEdit ? 0.5 : pressed ? 0.72 : 1,
-                            })}
+                              borderWidth: 1,
+                              borderColor: colors.border,
+                              backgroundColor: colors.surface,
+                            }}
                           >
                             <View style={{ width: 10, height: 10, borderRadius: radius.full, backgroundColor: labelColor(label.color, colors) }} />
                             <Text numberOfLines={1} style={{ flex: 1, ...type.subheadStrong, color: colors.text, ...rtlText }}>
                               {label.name}
                             </Text>
-                            {selected ? <IconSymbol name="checkmark" color={colors.onBrandSoft} size={14} /> : null}
-                          </Pressable>
+                          </View>
                           <Pressable
                             accessibilityRole="button"
                             accessibilityLabel={`تعديل تصنيف ${label.name}`}
@@ -871,6 +1007,9 @@ export function ConversationActionsButton({
                 {newLabelError ? <InlineAlert message={newLabelError} /> : null}
               </View>
             </ActionSection>
+                </ScrollView>
+              </KeyboardAvoidingView>
+            </Modal>
 
             <View
               style={{
