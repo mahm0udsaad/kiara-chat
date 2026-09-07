@@ -560,14 +560,37 @@ async function rekazVisitSpan(
 export async function servicesForOrder(
   order: Pick<DriverOrder, "id" | "rekaz_source_id" | "arrival_at">,
 ): Promise<VisitService[]> {
-  // Read approved services, never the unreviewed latest Rekaz payload.
+  // Read the approved snapshot first. It freezes the agreed visit even if
+  // Rekaz changes after dispatch.
   const admin = getAdminSupabaseClient();
   const { data, error } = await admin.from("order_visit_services")
     .select("name, starts_at, minutes")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .eq("order_id", order.id).order("starts_at");
   if (error) throw new Error(error.message);
-  return (data ?? []).map(row => ({name:row.name,startsAt:row.starts_at,minutes:row.minutes}));
+  const approved = (data ?? []).map((row) => ({
+    name: row.name,
+    startsAt: row.starts_at,
+    minutes: row.minutes,
+  }));
+  if (approved.length || !order.rekaz_source_id) return approved;
+
+  // Orders created before the snapshot trigger was deployed can still have a
+  // Rekaz link but no captured rows. Use the linked booking only for this
+  // preview fallback, so the specialist sees the service plan rather than an
+  // empty message; newly created orders continue to use their frozen snapshot.
+  const { data: anchor, error: anchorError } = await admin
+    .from("rekaz_reservations")
+    .select("payload")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("source_id", order.rekaz_source_id)
+    .is("removed_at", null)
+    .maybeSingle();
+  if (anchorError) throw new Error(anchorError.message);
+  const orderId = (
+    anchor?.payload as { order?: { id?: string } } | null
+  )?.order?.id?.trim();
+  return orderId ? rekazVisitServices(admin, orderId, order.arrival_at) : [];
 }
 
 export async function createBookingFromReservation(
