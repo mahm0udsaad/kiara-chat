@@ -474,6 +474,7 @@ export async function notifyFieldOrderCancelled(input: {
    * always Arabic.
    */
   specialistCopy?: { title: string; body: string };
+  driverCopy?: { title: string; body: string };
 }): Promise<FieldPushDeliverySummary> {
   const specialistIds = input.specialistId ? [input.specialistId] : [];
   const driverIds = input.driverId ? [input.driverId] : [];
@@ -493,8 +494,8 @@ export async function notifyFieldOrderCancelled(input: {
     ),
     ...(input.driverId ? (driverTokens.get(input.driverId) ?? []) : []).map((to) =>
       fieldMessage(to, {
-        title: "إلغاء الرحلة",
-        body: `تم إلغاء رحلة ${name}.`,
+        title: input.driverCopy?.title ?? "إلغاء الرحلة",
+        body: input.driverCopy?.body ?? `تم إلغاء رحلة ${name}.`,
         data,
       }),
     ),

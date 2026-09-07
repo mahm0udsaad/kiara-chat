@@ -69,6 +69,9 @@ export interface Label {
 
 export type CsStatus = "open" | "waiting" | "resolved";
 
+/** The final result of the latest customer-service contact attempt. */
+export type ContactOutcome = "booked" | "not_booked" | "no_reply";
+
 /** The operational booking stage tracked on a customer conversation. */
 export type BookingStage =
   | "collecting_details"

@@ -6,6 +6,8 @@ export type TripType = "one_way" | "round_trip";
 
 export type CsStatus = "open" | "waiting" | "resolved";
 
+export type ContactOutcome = "booked" | "not_booked" | "no_reply";
+
 export type BookingStage =
   | "collecting_details"
   | "awaiting_confirmation"
@@ -99,6 +101,7 @@ export type ConversationSummary = {
    */
   isGroup?: boolean;
   bookingStage: BookingStage | null;
+  contactOutcome: ContactOutcome | null;
   dangerMinutes: number | null;
   /** Every label currently assigned to the conversation. */
   labels?: ConversationLabel[];
@@ -166,6 +169,7 @@ export type CatalogItem = {
 /** The refinements that narrow whichever inbox view is open. */
 export type ConversationFilters = {
   status: CsStatus | null;
+  contactOutcome: ContactOutcome | null;
   section: ConversationSection | null;
   labelId: string | null;
   /** Where the booking stands — مرحلة متابعة الحجز, as filed on the thread. */
@@ -262,6 +266,7 @@ export type ReminderConfirmation = {
 export type ConversationActionsInput = {
   csStatus: CsStatus;
   bookingStage: BookingStage | null;
+  contactOutcome: ContactOutcome | null;
   labelIds: string[];
   reminderConfirmation: {
     dayKey: string;
@@ -626,6 +631,14 @@ export type CustomerServiceReport = {
     /** Team app time across the period. Absent on older report responses. */
     activeMinutes?: number;
   };
+  last24Hours?: {
+    inboundMessages: number;
+    inboundConversations: number;
+    booked: number;
+    notBooked: number;
+    noReply: number;
+    awaitingOutcome: number;
+  };
   employees: CustomerServiceEmployee[];
 };
 
@@ -855,6 +868,7 @@ export type OrderReminderDelivery = {
 
 export type FieldOrder = {
   id: string;
+  status: OrderStatus;
   specialistId: string | null;
   driverId: string | null;
   arrivalAt: string;
@@ -871,6 +885,8 @@ export type FieldOrder = {
   canAct: boolean;
   /** The driver's non-blocking "I've arrived at the specialist" ping is offered. */
   canPingArrival: boolean;
+  /** Driver may cancel after accepting, until the specialist confirms pickup. */
+  canCancel: boolean;
   /**
    * The dispatch note written for whoever is reading — the driver's copy for a
    * driver, the specialist's (in her own language) for a specialist. Null on

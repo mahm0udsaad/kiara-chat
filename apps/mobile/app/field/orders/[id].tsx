@@ -1,7 +1,18 @@
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo } from "react";
-import { Alert, Image, Linking, Pressable, ScrollView, Text, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Linking,
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
@@ -10,7 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, Divider } from "@/components/ui/card";
 import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { hitSize, radius, spacing, type } from "@/constants/theme";
+import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   formatPhone,
   locationLabel,
@@ -18,7 +29,8 @@ import {
 } from "@/lib/format";
 import { useFieldI18n } from "@/lib/field-i18n";
 import { successFeedback } from "@/lib/haptics";
-import { useFieldOrder, useFieldOrderAction } from "@/lib/queries";
+import { useKeyboardPadding } from "@/lib/keyboard";
+import { useCancelAcceptedFieldOrder, useFieldOrder, useFieldOrderAction } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { FieldOrder } from "@/types/api";
 
@@ -194,15 +206,20 @@ export default function FieldOrderDetailScreen() {
     tripType,
   } = useFieldI18n();
   const insets = useSafeAreaInsets();
+  const keyboard = useKeyboardPadding();
   const params = useLocalSearchParams<{ id: string | string[] }>();
   const id = useMemo(() => (Array.isArray(params.id) ? params.id[0] ?? "" : params.id ?? ""), [params.id]);
   const detail = useFieldOrder(id);
   const action = useFieldOrderAction(id);
+  const cancelAction = useCancelAcceptedFieldOrder(id);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
   if (detail.isLoading) return <LoadingScreen label={t("loadingOrder")} />;
   if (detail.isError || !detail.data) {
     return <ErrorState title={t("orderLoadError")} message={detail.error ? t("orderLoadError") : t("orderNotFound")} onRetry={() => void detail.refetch()} />;
   }
   const order = detail.data.order;
+  const cancelled = order.status === "cancelled";
   const next = order.nextAction;
   const confirm = () => {
     if (!next) return;
@@ -226,6 +243,28 @@ export default function FieldOrderDetailScreen() {
       { action: "driver_arrived", expectedVersion: order.progress.version },
       { onSuccess: () => successFeedback() },
     );
+  const closeCancel = () => {
+    if (cancelAction.isPending) return;
+    setCancelOpen(false);
+    setCancelReason("");
+    cancelAction.reset();
+  };
+  const customer = order.customerName || "العميلة";
+  const trimmedCancelReason = cancelReason.trim();
+  const cancellationNotification = `ألغى السائق طلب ${customer}. السبب: ${trimmedCancelReason || "سبب الإلغاء"}`;
+  const submitCancellation = () => {
+    if (trimmedCancelReason.length < 3) return;
+    cancelAction.mutate(
+      { reason: trimmedCancelReason, expectedVersion: order.progress.version },
+      {
+        onSuccess: () => {
+          successFeedback();
+          setCancelOpen(false);
+          setCancelReason("");
+        },
+      },
+    );
+  };
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <ScrollView
@@ -243,9 +282,9 @@ export default function FieldOrderDetailScreen() {
               </Text>
             </View>
             <Badge
-              label={order.progress.driverReturnedAt ? t("completed") : order.canAct ? t("waitingForYou") : t("waitingNextStep")}
-              tone={order.progress.driverReturnedAt ? "success" : order.canAct ? "warning" : "neutral"}
-              icon={order.progress.driverReturnedAt ? "checkmark.circle" : "clock"}
+              label={cancelled ? "ملغى" : order.progress.driverReturnedAt ? t("completed") : order.canAct ? t("waitingForYou") : t("waitingNextStep")}
+              tone={cancelled ? "danger" : order.progress.driverReturnedAt ? "success" : order.canAct ? "warning" : "neutral"}
+              icon={cancelled ? "xmark.circle" : order.progress.driverReturnedAt ? "checkmark.circle" : "clock"}
             />
           </View>
           <Divider />
@@ -302,6 +341,16 @@ export default function FieldOrderDetailScreen() {
       </ScrollView>
 
       <ActionBar bottomInset={insets.bottom}>
+        {order.canCancel ? (
+          <PrimaryButton
+            label="إلغاء الطلب"
+            icon="xmark.circle"
+            tone="danger"
+            variant="outline"
+            disabled={action.isPending}
+            onPress={() => setCancelOpen(true)}
+          />
+        ) : null}
         {order.canPingArrival ? (
           <PrimaryButton
             label={t("driverArrived")}
@@ -310,7 +359,9 @@ export default function FieldOrderDetailScreen() {
             onPress={pingArrival}
           />
         ) : null}
-        {next && order.canAct ? (
+        {cancelled ? (
+          <PrimaryButton label="تم إلغاء الطلب" icon="xmark.circle" tone="danger" variant="tinted" disabled onPress={() => undefined} />
+        ) : next && order.canAct ? (
           <PrimaryButton label={actionLabel(next)} icon="checkmark.circle" loading={action.isPending} onPress={confirm} />
         ) : next ? (
           <PrimaryButton label={actionLabel(next)} icon="hourglass" variant="tinted" disabled onPress={() => undefined} />
@@ -318,6 +369,108 @@ export default function FieldOrderDetailScreen() {
           <PrimaryButton label={t("orderFinished")} icon="checkmark.circle" tone="success" variant="tinted" disabled onPress={() => undefined} />
         )}
       </ActionBar>
+
+      <Modal
+        visible={cancelOpen}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closeCancel}
+      >
+        <KeyboardAvoidingView
+          behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
+          onLayout={keyboard.onLayout}
+          style={{ flex: 1, backgroundColor: colors.background, paddingBottom: keyboard.paddingBottom }}
+        >
+          <View
+            style={{
+              flexDirection: "row-reverse",
+              alignItems: "center",
+              justifyContent: "space-between",
+              paddingHorizontal: spacing.lg,
+              paddingVertical: spacing.md,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+              backgroundColor: colors.surface,
+            }}
+          >
+            <Text style={{ ...type.title3, color: colors.text, ...rtlText }}>إلغاء الطلب</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="إغلاق"
+              disabled={cancelAction.isPending}
+              onPress={closeCancel}
+              style={({ pressed }) => ({
+                width: hitSize.min,
+                height: hitSize.min,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: radius.full,
+                backgroundColor: colors.surfaceSunken,
+                opacity: pressed ? 0.6 : 1,
+              })}
+            >
+              <IconSymbol name="xmark" color={colors.textSecondary} size={18} />
+            </Pressable>
+          </View>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: spacing["3xl"] }}
+          >
+            <View style={{ gap: spacing.xs }}>
+              <Text style={{ ...type.title2, color: colors.text, ...rtlText }}>لماذا تريد إلغاء الطلب؟</Text>
+              <Text style={{ ...type.body, color: colors.textSecondary, ...rtlText }}>
+                الإلغاء متاح الآن فقط، قبل أن تؤكد الأخصائية ركوبها معك.
+              </Text>
+            </View>
+            <View style={{ gap: spacing.sm }}>
+              <Text style={{ ...type.calloutStrong, color: colors.text, ...rtlText }}>سبب الإلغاء</Text>
+              <TextInput
+                autoFocus
+                multiline
+                maxLength={500}
+                value={cancelReason}
+                onChangeText={setCancelReason}
+                editable={!cancelAction.isPending}
+                placeholder="مثال: عطل في السيارة"
+                placeholderTextColor={colors.textTertiary}
+                accessibilityLabel="سبب إلغاء الطلب"
+                style={{
+                  minHeight: 120,
+                  padding: spacing.md,
+                  borderRadius: radius.md,
+                  borderWidth: 1,
+                  borderColor: colors.borderStrong,
+                  backgroundColor: colors.surface,
+                  color: colors.text,
+                  ...type.body,
+                  ...rtlText,
+                  textAlignVertical: "top",
+                }}
+              />
+              {cancelReason.length > 0 && trimmedCancelReason.length < 3 ? (
+                <Text style={{ ...type.footnote, color: colors.danger, ...rtlText }}>اكتب 3 أحرف على الأقل.</Text>
+              ) : null}
+            </View>
+            <View style={{ gap: spacing.sm, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.dangerSoft }}>
+              <Text style={{ ...type.calloutStrong, color: colors.onDangerSoft, ...rtlText }}>سيصل للفريق هذا التنبيه:</Text>
+              <Text selectable style={{ ...type.body, color: colors.onDangerSoft, ...rtlText }}>
+                إلغاء الطلب{"\n"}{cancellationNotification}
+              </Text>
+            </View>
+            {cancelAction.error ? <InlineAlert message="تعذر إلغاء الطلب. حدّث الصفحة وتأكد أن الأخصائية لم تبدأ الاستلام." /> : null}
+            <PrimaryButton
+              label="تأكيد إلغاء الطلب"
+              loadingLabel="جارٍ إلغاء الطلب…"
+              icon="xmark.circle"
+              tone="danger"
+              loading={cancelAction.isPending}
+              disabled={trimmedCancelReason.length < 3}
+              onPress={submitCancellation}
+            />
+            <PrimaryButton label="العودة بدون إلغاء" variant="plain" disabled={cancelAction.isPending} onPress={closeCancel} />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }

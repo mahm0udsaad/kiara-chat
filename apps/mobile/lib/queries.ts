@@ -79,6 +79,7 @@ export const queryKeys = {
       view,
       search,
       filters.status ?? "",
+      filters.contactOutcome ?? "",
       filters.section ?? "",
       filters.labelId ?? "",
       filters.bookingStage ?? "",
@@ -130,6 +131,7 @@ export function useBootstrap(enabled = true) {
 /** No refinement beyond the open view — the inbox's resting state. */
 export const EMPTY_CONVERSATION_FILTERS: ConversationFilters = {
   status: null,
+  contactOutcome: null,
   section: null,
   labelId: null,
   bookingStage: null,
@@ -153,6 +155,7 @@ export function useConversations(
       });
       if (search) params.set("q", search);
       if (filters.status) params.set("status", filters.status);
+      if (filters.contactOutcome) params.set("outcome", filters.contactOutcome);
       if (filters.section) params.set("section", filters.section);
       if (filters.labelId) params.set("label", filters.labelId);
       if (filters.bookingStage) params.set("stage", filters.bookingStage);
@@ -170,10 +173,11 @@ export function useConversations(
       const sameViewAndFilters =
         previousKey?.[1] === view &&
         previousKey?.[3] === (filters.status ?? "") &&
-        previousKey?.[4] === (filters.section ?? "") &&
-        previousKey?.[5] === (filters.labelId ?? "") &&
-        previousKey?.[6] === (filters.bookingStage ?? "") &&
-        previousKey?.[7] === (filters.handling ?? "");
+        previousKey?.[4] === (filters.contactOutcome ?? "") &&
+        previousKey?.[5] === (filters.section ?? "") &&
+        previousKey?.[6] === (filters.labelId ?? "") &&
+        previousKey?.[7] === (filters.bookingStage ?? "") &&
+        previousKey?.[8] === (filters.handling ?? "");
       return sameViewAndFilters ? previous : undefined;
     },
     refetchInterval: 30_000,
@@ -1065,6 +1069,25 @@ export function useFieldOrderAction(id: string) {
   });
 }
 
+export function useCancelAcceptedFieldOrder(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { reason: string; expectedVersion: number }) =>
+      apiRequest<{ order: FieldOrder }>(`/field/orders/${id}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({
+          reason: input.reason,
+          expectedVersion: input.expectedVersion,
+          idempotencyKey: Crypto.randomUUID(),
+        }),
+      }),
+    onSuccess: async () => {
+      void queryClient.invalidateQueries({ queryKey: ["field-orders"] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.fieldOrder(id) });
+    },
+  });
+}
+
 export type FieldPushDeliverySummary = {
   attempted: number;
   accepted: number;
@@ -1339,6 +1362,37 @@ export function useCreateConversationLabel() {
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap });
+    },
+  });
+}
+
+export function useUpdateConversationLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; name: string; color: LabelColor }) =>
+      apiRequest<{ label: ConversationLabel }>(`/labels/${input.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: input.name, color: input.color }),
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap }),
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+      ]);
+    },
+  });
+}
+
+export function useDeleteConversationLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (labelId: string) =>
+      apiRequest<{ ok: true }>(`/labels/${labelId}`, { method: "DELETE" }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap }),
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+      ]);
     },
   });
 }

@@ -1,5 +1,6 @@
 import type {
   BookingStage,
+  ContactOutcome,
   Conversation,
   CsStatus,
   DriverOrderRow,
@@ -61,6 +62,8 @@ export interface MobileConversation
   /** A WhatsApp group rather than a person — listed in its own tab. */
   isGroup: boolean;
   bookingStage: BookingStage | null;
+  /** Explicit closing result, separate from ownership and booking progress. */
+  contactOutcome: ContactOutcome | null;
   dangerMinutes: number | null;
   /** Every label currently assigned to the conversation, for inbox chips. */
   labels: Label[];

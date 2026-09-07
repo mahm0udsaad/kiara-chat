@@ -77,6 +77,38 @@ export async function createLabel(
   return data as Label;
 }
 
+export async function updateLabel(
+  labelId: string,
+  name: string,
+  color: LabelColor,
+): Promise<Label> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("conversation_labels")
+    .update({
+      name: name.trim().slice(0, 40),
+      color: LABEL_COLORS.includes(color) ? color : "slate",
+    })
+    .eq("id", labelId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .select("id, name, color")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("LABEL_NOT_FOUND");
+  return data as Label;
+}
+
+/** Deleting a label also removes its assignments through the database FK. */
+export async function deleteLabel(labelId: string): Promise<void> {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase
+    .from("conversation_labels")
+    .delete()
+    .eq("id", labelId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID);
+  if (error) throw new Error(error.message);
+}
+
 /** Full-replace the labels on a conversation. */
 export async function setConversationLabels(
   userId: string,

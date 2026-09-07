@@ -49,6 +49,7 @@ export type IconName =
   | "banknote"
   | "plus"
   | "xmark"
+  | "xmark.circle"
   | "mic"
   | "mic.fill"
   | "camera"
@@ -103,6 +104,7 @@ const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcon
   banknote: "payments",
   plus: "add",
   xmark: "close",
+  "xmark.circle": "cancel",
   mic: "mic-none",
   "mic.fill": "mic",
   camera: "photo-camera",

@@ -11,7 +11,8 @@ export type OperationalConflictCode =
   | "ORDER_DISPATCH_IN_PROGRESS"
   | "COMMAND_IN_PROGRESS"
   | "FIELD_VERSION_CONFLICT"
-  | "FIELD_ACTION_OUT_OF_SEQUENCE";
+  | "FIELD_ACTION_OUT_OF_SEQUENCE"
+  | "FIELD_CANCEL_NOT_ALLOWED";
 
 const CONFLICT_CODES = new Set<OperationalConflictCode>([
   "ORDER_VERSION_CONFLICT",
@@ -20,6 +21,7 @@ const CONFLICT_CODES = new Set<OperationalConflictCode>([
   "COMMAND_IN_PROGRESS",
   "FIELD_VERSION_CONFLICT",
   "FIELD_ACTION_OUT_OF_SEQUENCE",
+  "FIELD_CANCEL_NOT_ALLOWED",
 ]);
 
 export class OperationalCommandError extends Error {
@@ -225,5 +227,27 @@ export async function fieldOrderStepCommand(input: {
     p_roster_id: input.rosterId,
     p_action: input.action,
     p_location: input.location,
+  });
+}
+
+export async function cancelAcceptedFieldOrderCommand(input: {
+  restaurantId: string;
+  orderId: string;
+  expectedVersion: number;
+  idempotencyKey: string;
+  actorUserId: string;
+  fieldStaffAccountId: string;
+  driverId: string;
+  reason: string;
+}): Promise<Record<string, unknown>> {
+  return rpc("kiara_command_cancel_accepted_driver_order", {
+    p_restaurant_id: input.restaurantId,
+    p_order_id: input.orderId,
+    p_expected_version: input.expectedVersion,
+    p_idempotency_key: input.idempotencyKey,
+    p_actor_user_id: input.actorUserId,
+    p_field_staff_account_id: input.fieldStaffAccountId,
+    p_driver_id: input.driverId,
+    p_reason: input.reason,
   });
 }

@@ -52,10 +52,13 @@ const MAX_IMAGE_EDGE = 1280;
 export function Composer({
   conversationId,
   templateOnly = false,
+  initialDraft = "",
 }: {
   conversationId: string;
   /** An empty outbound thread must begin with an approved WhatsApp template. */
   templateOnly?: boolean;
+  /** Forwarded copy is staged here and remains editable until Send is tapped. */
+  initialDraft?: string;
 }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -63,7 +66,7 @@ export function Composer({
   const sendMedia = useSendMedia(conversationId);
   const savedReplies = useBootstrap().data?.savedReplies ?? [];
 
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft);
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);

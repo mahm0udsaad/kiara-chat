@@ -1,4 +1,7 @@
 import { createBooking } from "@/lib/dispatch";
+import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
+import { contactOutcomeOf } from "@/lib/contact-outcome";
+import { setContactOutcome } from "@/lib/interactions";
 import { replyDenialFor } from "@/lib/conversation-reply-access";
 import { getConversationById } from "@/lib/inbox";
 import {
@@ -76,6 +79,25 @@ export async function POST(
       durationMinutes,
       tripType,
     });
+    if (contactOutcomeOf(conversation) !== "booked") {
+      try {
+        await setContactOutcome(id, "booked");
+        await recordConversationEvent(
+          id,
+          CONVERSATION_EVENTS.outcomeChanged,
+          {
+            userId: auth.session.userId,
+            teamMemberId: auth.session.teamMemberId,
+            role: auth.session.role,
+          },
+          { from: contactOutcomeOf(conversation), to: "booked", source: "order_created" },
+        );
+      } catch (outcomeError) {
+        // The order already exists. Never turn a secondary classification
+        // failure into a retry that can create a duplicate booking.
+        console.error("Failed to mark created order as a booked outcome", outcomeError);
+      }
+    }
     return mobileData({ order: { ...order, price: null } }, 201);
   } catch (error) {
     return mobileServerError(

@@ -31,6 +31,8 @@ import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   bookingStageLabel,
   conversationListTimeLabel,
+  contactOutcomeLabel,
+  contactOutcomeTone,
   csStatusLabel,
   csStatusTone,
 } from "@/lib/format";
@@ -401,6 +403,12 @@ const ConversationRow = memo(function ConversationRow({
                     tone="neutral"
                   />
                 ) : null}
+                {conversation.contactOutcome ? (
+                  <Badge
+                    label={contactOutcomeLabel[conversation.contactOutcome]}
+                    tone={contactOutcomeTone[conversation.contactOutcome]}
+                  />
+                ) : null}
                 {isGroup ? (
                   // Groups are nobody's ticket, so the unclaimed warning below
                   // would be permanent and meaningless on every one of them.
@@ -488,6 +496,14 @@ export default function InboxScreen() {
         key: "status",
         label: csStatusLabel[filters.status],
         clear: () => setFilters((current) => ({ ...current, status: null })),
+      });
+    }
+    if (filters.contactOutcome) {
+      chips.push({
+        key: "outcome",
+        label: contactOutcomeLabel[filters.contactOutcome],
+        clear: () =>
+          setFilters((current) => ({ ...current, contactOutcome: null })),
       });
     }
     if (filters.section) {

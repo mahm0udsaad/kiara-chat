@@ -7,6 +7,7 @@ import {
   type OperationsReportInput,
   validateOperationsReportInput,
 } from "@/lib/operations-report";
+import { normalizePhone } from "@/lib/phone";
 
 const PAGE_SIZE = 1_000;
 export const EMPLOYEE_ONLINE_WINDOW_SECONDS = 120;
@@ -97,6 +98,14 @@ export type CustomerServiceReport = {
     messagesSent: number;
     actions: number;
     activeMinutes: number;
+  };
+  last24Hours: {
+    inboundMessages: number;
+    inboundConversations: number;
+    booked: number;
+    notBooked: number;
+    noReply: number;
+    awaitingOutcome: number;
   };
   employees: CustomerServiceEmployee[];
 };
@@ -253,7 +262,8 @@ function eventKind(eventType: string): CustomerServiceActionKind {
   if (eventType === "conversation.status_changed") return "status";
   if (
     eventType === "conversation.stage_changed" ||
-    eventType === "conversation.reminder_confirmed"
+    eventType === "conversation.reminder_confirmed" ||
+    eventType === "conversation.outcome_changed"
   ) return "booking";
   return "other";
 }
@@ -264,6 +274,7 @@ const EVENT_LABELS: Record<string, string> = {
   "conversation.taken_over": "استلمت المحادثة من موظفة أخرى",
   "conversation.status_changed": "غيّرت حالة المحادثة",
   "conversation.stage_changed": "غيّرت مرحلة الحجز",
+  "conversation.outcome_changed": "سجّلت نتيجة التواصل",
   "conversation.labels_changed": "عدّلت تصنيفات المحادثة",
   "conversation.section_changed": "غيّرت قسم المحادثة",
   "conversation.reminder_confirmed": "حدّثت متابعة الموعد",
@@ -304,6 +315,7 @@ export async function getCustomerServiceReport(
   const startMinute = timeToMinutes(input.startTime);
   const endMinute = timeToMinutes(input.endTime);
   const admin = getAdminSupabaseClient();
+  const last24Start = new Date(Date.now() - 24 * 3600_000).toISOString();
 
   const membersResult = await admin
     .from("team_members")
@@ -325,6 +337,10 @@ export async function getCustomerServiceReport(
     claims,
     notes,
     orders,
+    last24Messages,
+    last24OutcomeEvents,
+    specialistsResult,
+    driversResult,
   ] = await Promise.all([
       memberEmails(members),
       pageRows<ConversationRow>((from, to) =>
@@ -418,7 +434,67 @@ export async function getCustomerServiceReport(
           .order("created_at", { ascending: true })
           .range(from, to),
       ),
+      pageRows<MessageRow>((from, to) =>
+        admin
+          .from("messages")
+          .select("id, conversation_id, role, sender_team_member_id, created_at, conversations!inner(restaurant_id)")
+          .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
+          .eq("role", "customer")
+          .gte("created_at", last24Start)
+          .order("created_at", { ascending: true })
+          .range(from, to),
+      ),
+      pageRows<EventRow>((from, to) =>
+        admin
+          .from("operation_events")
+          .select("id, aggregate_type, aggregate_id, event_type, occurred_at, actor_team_member_id, actor_user_id, payload")
+          .eq("restaurant_id", KIARA_RESTAURANT_ID)
+          .eq("aggregate_type", "conversation")
+          .eq("event_type", "conversation.outcome_changed")
+          .gte("occurred_at", last24Start)
+          .order("occurred_at", { ascending: true })
+          .range(from, to),
+      ),
+      admin
+        .from("specialists")
+        .select("phone")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID),
+      admin
+        .from("drivers")
+        .select("phone")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID),
     ]);
+
+  if (specialistsResult.error) throw new Error(specialistsResult.error.message);
+  if (driversResult.error) throw new Error(driversResult.error.message);
+  const staffPhones = new Set(
+    [...(specialistsResult.data ?? []), ...(driversResult.data ?? [])]
+      .map((row) => normalizePhone(String(row.phone ?? "")))
+      .filter(Boolean),
+  );
+  const conversationById = new Map(conversations.map((row) => [row.id, row]));
+  const customerLast24Messages = last24Messages.filter((message) => {
+    const conversation = conversationById.get(message.conversation_id);
+    if (!conversation) return false;
+    if (conversation.metadata?.chat_kind === "group") return false;
+    return !staffPhones.has(normalizePhone(conversation.customer_phone));
+  });
+  const inboundConversationIds = new Set(
+    customerLast24Messages.map((message) => message.conversation_id),
+  );
+  const latestOutcomeByConversation = new Map<string, unknown>();
+  for (const event of last24OutcomeEvents) {
+    latestOutcomeByConversation.set(event.aggregate_id, event.payload?.to ?? null);
+  }
+  let booked = 0;
+  let notBooked = 0;
+  let noReply = 0;
+  for (const [conversationId, outcome] of latestOutcomeByConversation) {
+    if (!inboundConversationIds.has(conversationId)) continue;
+    if (outcome === "booked") booked += 1;
+    else if (outcome === "not_booked") notBooked += 1;
+    else if (outcome === "no_reply") noReply += 1;
+  }
 
   const presenceByMember = new Map(presence.map((row) => [row.team_member_id, row]));
   const memberByUser = new Map(members.map((row) => [row.user_id, row.id]));
@@ -702,6 +778,17 @@ export async function getCustomerServiceReport(
       messagesSent: output.reduce((sum, employee) => sum + employee.messagesSent, 0),
       actions: output.reduce((sum, employee) => sum + employee.actions, 0),
       activeMinutes: output.reduce((sum, employee) => sum + employee.activeMinutes, 0),
+    },
+    last24Hours: {
+      inboundMessages: customerLast24Messages.length,
+      inboundConversations: inboundConversationIds.size,
+      booked,
+      notBooked,
+      noReply,
+      awaitingOutcome: Math.max(
+        0,
+        inboundConversationIds.size - booked - notBooked - noReply,
+      ),
     },
     employees: output,
   };

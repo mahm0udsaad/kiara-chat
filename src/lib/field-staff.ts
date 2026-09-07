@@ -5,10 +5,11 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { WHATSAPP_MEDIA_BUCKET } from "@/lib/storage-media";
 import {
+  cancelAcceptedFieldOrderCommand,
   fieldOrderStepCommand,
   type FieldLocationEvidence,
 } from "@/lib/operational-commands";
-import type { FieldOrderProgressState, TripType } from "@/lib/types";
+import type { DriverOrderStatus, FieldOrderProgressState, TripType } from "@/lib/types";
 
 export type FieldStaffRole = "specialist" | "driver";
 export type FieldOrderAction =
@@ -44,6 +45,7 @@ export type FieldOrderProgress = FieldOrderProgressState;
 
 export interface FieldOrder {
   id: string;
+  status: DriverOrderStatus;
   specialistId: string | null;
   driverId: string | null;
   arrivalAt: string;
@@ -64,6 +66,8 @@ export interface FieldOrder {
    * in the car, and only until he taps it once.
    */
   canPingArrival: boolean;
+  /** Available only to the assigned driver after acceptance and before pickup. */
+  canCancel: boolean;
   /**
    * The dispatch note written for THIS reader — the driver's copy for a driver,
    * the specialist's (already translated to her language) for a specialist.
@@ -335,7 +339,7 @@ export function driverArrivalPingAvailable(progress: FieldOrderProgress): boolea
 }
 
 const ORDER_COLS_BASE =
-  "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type";
+  "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type, status";
 const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_BASE}, driver_note, specialist_note, specialist_voice_path, door_photo_path`;
 
 /** Long enough to open the order, play the note and study the photo. */
@@ -449,8 +453,11 @@ async function loadOrdersForSession(
   const mapped = rows.map((row): FieldOrder => {
     const progress = progressOf(progressRows.get(row.id as string));
     const next = nextFieldAction(progress);
+    const status = row.status as DriverOrderStatus;
+    const cancelled = status === "cancelled";
     return {
       id: row.id as string,
+      status,
       specialistId: (row.specialist_id as string | null) ?? null,
       driverId: (row.driver_id as string | null) ?? null,
       arrivalAt: row.arrival_at as string,
@@ -464,11 +471,16 @@ async function loadOrdersForSession(
         : null,
       driverName: row.driver_id ? drivers.get(row.driver_id as string) ?? null : null,
       progress,
-      nextAction: next.action,
-      nextActionLabel: next.label,
-      canAct: next.role === session.role,
+      nextAction: cancelled ? null : next.action,
+      nextActionLabel: cancelled ? null : next.label,
+      canAct: !cancelled && next.role === session.role,
       canPingArrival:
-        session.role === "driver" && driverArrivalPingAvailable(progress),
+        !cancelled && session.role === "driver" && driverArrivalPingAvailable(progress),
+      canCancel:
+        !cancelled &&
+        session.role === "driver" &&
+        Boolean(progress.driverConfirmedAt) &&
+        !progress.specialistPickupAt,
       note:
         ((session.role === "specialist"
           ? row.specialist_note
@@ -562,6 +574,38 @@ export async function updateFieldOrder(
   const updated = await getFieldOrder(session, orderId);
   if (!updated) throw new Error("تعذّر تحميل الطلب بعد التحديث");
   return updated;
+}
+
+export async function cancelAcceptedFieldOrder(
+  session: FieldStaffSession,
+  orderId: string,
+  command: {
+    expectedVersion: number;
+    idempotencyKey: string;
+    reason: string;
+  },
+): Promise<{ order: FieldOrder; replayed: boolean }> {
+  if (session.role !== "driver") {
+    throw new Error("إلغاء الطلب متاح للسائق فقط");
+  }
+  const reason = command.reason.trim();
+  if (reason.length < 3 || reason.length > 500) {
+    throw new Error("اكتب سبب الإلغاء من 3 إلى 500 حرف");
+  }
+  const result = await cancelAcceptedFieldOrderCommand({
+    restaurantId: KIARA_RESTAURANT_ID,
+    orderId,
+    expectedVersion: command.expectedVersion,
+    idempotencyKey: command.idempotencyKey,
+    actorUserId: session.userId,
+    fieldStaffAccountId: session.accountId,
+    driverId: session.rosterId,
+    reason,
+  });
+  await touchFieldStaffActivity(session.accountId);
+  const updated = await getFieldOrder(session, orderId);
+  if (!updated) throw new Error("تعذّر تحميل الطلب بعد الإلغاء");
+  return { order: updated, replayed: result.replayed === true };
 }
 
 async function mirrorFieldProgressToConversation(

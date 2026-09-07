@@ -34,6 +34,7 @@ import {
 import type {
   BookingStage,
   CsStatus,
+  ContactOutcome,
   AgentInfo,
   Conversation,
   ConversationSection,
@@ -288,6 +289,42 @@ export async function setCsStatus(conversationId: string, csStatus: CsStatus) {
   const { error } = await admin
     .from("conversations")
     .update({ metadata, status: dbStatus })
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Close a contact attempt with an explicit result. This is deliberately not a
+ * label or assignment state: reports need one unambiguous outcome and the
+ * timestamp at which the employee finished the attempt.
+ */
+export async function setContactOutcome(
+  conversationId: string,
+  outcome: ContactOutcome | null,
+) {
+  const admin = getAdminSupabaseClient();
+  const { data, error: readError } = await admin
+    .from("conversations")
+    .select("metadata")
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (readError) throw new Error(readError.message);
+
+  const metadata = { ...((data?.metadata as Record<string, unknown>) ?? {}) };
+  if (outcome) {
+    metadata.contact_outcome = outcome;
+    metadata.contact_outcome_at = new Date().toISOString();
+    metadata.cs_status = "resolved";
+  } else {
+    delete metadata.contact_outcome;
+    delete metadata.contact_outcome_at;
+  }
+
+  const { error } = await admin
+    .from("conversations")
+    .update({ metadata, ...(outcome ? { status: "resolved" } : {}) })
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
   if (error) throw new Error(error.message);

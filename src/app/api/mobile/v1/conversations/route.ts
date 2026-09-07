@@ -7,6 +7,7 @@ import {
   type MobileConversationFilters,
 } from "@/lib/mobile/conversations";
 import { isBookingStage } from "@/lib/booking-stage";
+import { isContactOutcome } from "@/lib/contact-outcome";
 import { isConversationSection } from "@/lib/conversation-meta";
 import { isConversationHandling, type CsStatus } from "@/lib/types";
 import {
@@ -34,12 +35,14 @@ function isCsStatus(value: string): value is CsStatus {
  */
 function readFilters(params: URLSearchParams): MobileConversationFilters {
   const status = params.get("status") ?? "";
+  const outcome = params.get("outcome") ?? "";
   const section = params.get("section") ?? "";
   const labelId = (params.get("label") ?? "").trim().slice(0, 64);
   const stage = params.get("stage") ?? "";
   const handling = params.get("handling") ?? "";
   return {
     status: isCsStatus(status) ? status : null,
+    contactOutcome: isContactOutcome(outcome) ? outcome : null,
     section: isConversationSection(section) ? section : null,
     labelId: labelId || null,
     bookingStage: isBookingStage(stage) ? stage : null,

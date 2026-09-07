@@ -9,12 +9,15 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { InlineAlert } from "@/components/screen-state";
 import { PrimaryButton } from "@/components/primary-button";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { successFeedback, tapFeedback } from "@/lib/haptics";
+import { apiUpload, formatMegabytes, MAX_UPLOAD_BYTES, type UploadFile } from "@/lib/api";
 import { useCreateCampaignTemplate } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import { TEMPLATE_TYPE_META, TEMPLATE_TYPES } from "@/components/campaigns/meta";
@@ -40,14 +43,15 @@ export function NewTemplateSheet({ open, onClose }: { open: boolean; onClose: ()
   const [contentType, setContentType] = useState<ContentType>("text");
   const [category, setCategory] = useState("MARKETING");
   const [body, setBody] = useState("");
-  const [mediaUrl, setMediaUrl] = useState("");
+  const [media, setMedia] = useState<{ uri: string; name: string; type: string; url?: string } | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [buttons, setButtons] = useState<string[]>(["", ""]);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
   const reset = () => {
     setName(""); setContentType("text"); setCategory("MARKETING");
-    setBody(""); setMediaUrl(""); setButtons(["", ""]); setError(null); setDone(null);
+    setBody(""); setMedia(null); setUploadingImage(false); setButtons(["", ""]); setError(null); setDone(null);
   };
   const close = () => { reset(); onClose(); };
 
@@ -56,15 +60,62 @@ export function NewTemplateSheet({ open, onClose }: { open: boolean; onClose: ()
     [name],
   );
 
-  const submit = () => {
+  const chooseImage = async () => {
+    setError(null);
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setError("لا يوجد إذن للوصول إلى الصور. فعّليه من إعدادات الجهاز.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      quality: 0.82,
+    });
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    if (!asset) return;
+    if ((asset.fileSize ?? 0) > MAX_UPLOAD_BYTES) {
+      setError(`الصورة أكبر من الحد المسموح (${formatMegabytes(MAX_UPLOAD_BYTES)}).`);
+      return;
+    }
+    setMedia({
+      uri: asset.uri,
+      name: asset.fileName ?? "template-image.jpg",
+      type: asset.mimeType ?? "image/jpeg",
+    });
+  };
+
+  const uploadImage = async (): Promise<string | null> => {
+    if (!media) return null;
+    if (media.url) return media.url;
+    setUploadingImage(true);
+    try {
+      const uploaded = await apiUpload<{ url: string }>("/campaign-template-media", {
+        file: { uri: media.uri, name: media.name, type: media.type } satisfies UploadFile,
+      }, { timeoutMs: 45_000 });
+      setMedia((current) => current ? { ...current, url: uploaded.url } : current);
+      return uploaded.url;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "تعذّر رفع الصورة");
+      return null;
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const submit = async () => {
     setError(null);
     if (!slug) return setError("اكتبي اسمًا بالإنجليزية للقالب.");
     if (!body.trim()) return setError("نص الرسالة مطلوب.");
-    if (contentType === "media" && !mediaUrl.trim())
-      return setError("رابط الصورة/الملف مطلوب لهذا النوع.");
+    if (contentType === "media" && !media)
+      return setError("اختاري صورة للقالب.");
     const btns = buttons.map((b) => b.trim()).filter(Boolean);
     if ((contentType === "quick_reply" || contentType === "call_to_action") && !btns.length)
       return setError("أضيفي زرًّا واحدًا على الأقل.");
+
+    const mediaUrl = contentType === "media" ? await uploadImage() : undefined;
+    if (contentType === "media" && !mediaUrl) return;
 
     create.mutate(
       {
@@ -72,7 +123,7 @@ export function NewTemplateSheet({ open, onClose }: { open: boolean; onClose: ()
         contentType,
         category,
         body: body.trim(),
-        ...(contentType === "media" ? { mediaUrl: mediaUrl.trim() } : {}),
+        ...(mediaUrl ? { mediaUrl } : {}),
         ...(contentType === "quick_reply"
           ? { quickReplies: btns.map((t, i) => ({ title: t, id: `btn_${i + 1}` })) }
           : {}),
@@ -128,6 +179,12 @@ export function NewTemplateSheet({ open, onClose }: { open: boolean; onClose: ()
             ) : (
               <ScrollView keyboardShouldPersistTaps="handled">
                 <View style={{ gap: spacing.md }}>
+                  <WhatsAppPreview
+                    body={body}
+                    mediaUri={contentType === "media" ? media?.uri ?? null : null}
+                    buttons={needsButtons ? buttons : []}
+                  />
+
                   <Field label="اسم القالب (بالإنجليزية)">
                     <Input value={name} onChangeText={setName} placeholder="offer_ramadan" />
                     {slug ? (
@@ -182,8 +239,53 @@ export function NewTemplateSheet({ open, onClose }: { open: boolean; onClose: ()
                   </Field>
 
                   {contentType === "media" ? (
-                    <Field label="رابط الصورة/الملف (https)">
-                      <Input value={mediaUrl} onChangeText={setMediaUrl} placeholder="https://…" />
+                    <Field label="صورة القالب">
+                      {media ? (
+                        <View
+                          style={{
+                            height: 154,
+                            overflow: "hidden",
+                            borderRadius: radius.lg,
+                            backgroundColor: colors.surfaceSunken,
+                          }}
+                        >
+                          <Image
+                            source={media.uri}
+                            accessibilityLabel="الصورة المختارة للقالب"
+                            contentFit="cover"
+                            style={{ width: "100%", height: "100%" }}
+                          />
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="تغيير الصورة"
+                            onPress={chooseImage}
+                            style={({ pressed }) => ({
+                              position: "absolute", right: spacing.sm, bottom: spacing.sm,
+                              minHeight: hitSize.min, paddingHorizontal: spacing.md,
+                              alignItems: "center", justifyContent: "center", borderRadius: radius.full,
+                              backgroundColor: colors.surface, opacity: pressed ? 0.7 : 1,
+                            })}
+                          >
+                            <Text style={{ ...type.caption, color: colors.brand }}>تغيير الصورة</Text>
+                          </Pressable>
+                        </View>
+                      ) : (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="اختيار صورة من الجهاز"
+                          onPress={chooseImage}
+                          style={({ pressed }) => ({
+                            minHeight: 128, alignItems: "center", justifyContent: "center", gap: spacing.sm,
+                            borderWidth: 1, borderStyle: "dashed", borderColor: colors.borderStrong,
+                            borderRadius: radius.lg, backgroundColor: colors.surfaceSunken,
+                            opacity: pressed ? 0.72 : 1,
+                          })}
+                        >
+                          <IconSymbol name="photo" color={colors.brand} size={28} />
+                          <Text style={{ ...type.bodyStrong, color: colors.brand, ...rtlText }}>اختيار صورة</Text>
+                          <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>من ألبوم الصور · حتى 4 ميجابايت</Text>
+                        </Pressable>
+                      )}
                     </Field>
                   ) : null}
 
@@ -200,47 +302,10 @@ export function NewTemplateSheet({ open, onClose }: { open: boolean; onClose: ()
                     </Field>
                   ) : null}
 
-                  {body.trim() ? (
-                    <Field label="معاينة">
-                      <View
-                        style={{
-                          alignSelf: "flex-start",
-                          maxWidth: "85%",
-                          padding: spacing.md,
-                          borderRadius: radius.lg,
-                          backgroundColor: colors.surfaceSunken,
-                          gap: spacing.sm,
-                        }}
-                      >
-                        <Text style={{ ...type.body, color: colors.text, ...rtlText }}>{body.trim()}</Text>
-                        {needsButtons
-                          ? buttons
-                              .map((b) => b.trim())
-                              .filter(Boolean)
-                              .map((b, i) => (
-                                <View
-                                  key={i}
-                                  style={{
-                                    alignItems: "center",
-                                    paddingVertical: spacing.sm,
-                                    borderRadius: radius.md,
-                                    borderWidth: 1,
-                                    borderColor: colors.border,
-                                    backgroundColor: colors.surface,
-                                  }}
-                                >
-                                  <Text style={{ ...type.caption, color: colors.brand }}>{b}</Text>
-                                </View>
-                              ))
-                          : null}
-                      </View>
-                    </Field>
-                  ) : null}
-
                   <PrimaryButton
-                    label={create.isPending ? "جارٍ الإرسال…" : "إرسال للمراجعة"}
+                    label={uploadingImage ? "جارٍ رفع الصورة…" : create.isPending ? "جارٍ الإرسال…" : "إرسال للمراجعة"}
                     onPress={submit}
-                    disabled={create.isPending}
+                    disabled={create.isPending || uploadingImage}
                   />
                   <Pressable onPress={close} style={{ alignItems: "center", paddingVertical: spacing.sm }}>
                     <Text style={{ ...type.caption, color: colors.textSecondary }}>إلغاء</Text>
@@ -299,4 +364,68 @@ export function NewTemplateSheet({ open, onClose }: { open: boolean; onClose: ()
       </Pressable>
     );
   }
+}
+
+/** A faithful, read-only composition preview instead of an abstract grey box. */
+function WhatsAppPreview({
+  body,
+  mediaUri,
+  buttons,
+}: {
+  body: string;
+  mediaUri: string | null;
+  buttons: string[];
+}) {
+  const { colors } = useTheme();
+  const visibleButtons = buttons.map((button) => button.trim()).filter(Boolean);
+  return (
+    <View style={{ gap: spacing.xs }}>
+      <View style={{ flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between" }}>
+        <Text style={{ ...type.caption, color: colors.textSecondary, ...rtlText }}>معاينة في واتساب</Text>
+        <Text style={{ ...type.caption, color: colors.textTertiary }}>تظهر للعميل بهذا الشكل</Text>
+      </View>
+      <View
+        style={{
+          overflow: "hidden",
+          borderRadius: radius.xl,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: "#E9E4D8",
+        }}
+      >
+        <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm, padding: spacing.sm, backgroundColor: "#F7F7F4" }}>
+          <View style={{ width: 30, height: 30, borderRadius: radius.full, alignItems: "center", justifyContent: "center", backgroundColor: "#25D366" }}>
+            <IconSymbol name="message.fill" color="#FFFFFF" size={15} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ ...type.caption, color: "#1F2C34", ...rtlText }}>كيارا</Text>
+            <Text style={{ ...type.footnote, color: "#667781", ...rtlText }}>حساب أعمال</Text>
+          </View>
+        </View>
+        <View style={{ minHeight: 168, padding: spacing.md, justifyContent: "flex-end" }}>
+          <View style={{ alignSelf: "flex-end", width: "88%", overflow: "hidden", borderRadius: radius.md, backgroundColor: "#FFFFFF" }}>
+            {mediaUri ? (
+              <Image
+                source={mediaUri}
+                accessibilityLabel="معاينة صورة قالب واتساب"
+                contentFit="cover"
+                style={{ width: "100%", height: 138 }}
+              />
+            ) : null}
+            <View style={{ padding: spacing.md, gap: spacing.xs }}>
+              <Text style={{ ...type.callout, color: "#1F2C34", ...rtlText }}>
+                {body.trim() || "سيظهر نص رسالتك هنا…"}
+              </Text>
+              <Text style={{ ...type.footnote, color: "#667781", textAlign: "left" }}>١٢:٣٠ ✓✓</Text>
+            </View>
+            {visibleButtons.map((button, index) => (
+              <View key={`${button}-${index}`} style={{ minHeight: hitSize.min, alignItems: "center", justifyContent: "center", borderTopWidth: 1, borderTopColor: "#E9EDEF" }}>
+                <Text style={{ ...type.subheadStrong, color: "#00A884" }}>{button}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      </View>
+    </View>
+  );
 }

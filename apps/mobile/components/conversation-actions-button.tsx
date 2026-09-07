@@ -20,6 +20,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   bookingStageLabel,
+  contactOutcomeLabel,
   csStatusLabel,
   formatters,
 } from "@/lib/format";
@@ -29,9 +30,11 @@ import {
   useAddConversationNote,
   useConversationNotes,
   useCreateConversationLabel,
+  useDeleteConversationLabel,
   useMediaUrl,
   useReleaseConversation,
   useSaveBookingReceipt,
+  useUpdateConversationLabel,
   useSetConversationRouting,
   useSetConversationSection,
   useTransferConversation,
@@ -40,6 +43,7 @@ import { useTheme } from "@/providers/theme-provider";
 import type {
   BookingStage,
   BookingReceipt,
+  ContactOutcome,
   ConversationActionsInput,
   ConversationLabel,
   ConversationSection,
@@ -80,6 +84,11 @@ const LABEL_COLOR_NAME: Record<LabelColor, string> = {
   rose: "وردي",
 };
 const CS_STATUS_OPTIONS: readonly CsStatus[] = ["open", "waiting", "resolved"];
+const CONTACT_OUTCOME_OPTIONS: readonly ContactOutcome[] = [
+  "booked",
+  "not_booked",
+  "no_reply",
+];
 const SECTION_OPTIONS: { value: ConversationSection | null; label: string }[] = [
   { value: "orders", label: "قسم الطلبات" },
   { value: "replies", label: "قسم الردود" },
@@ -113,6 +122,7 @@ export function ConversationActionsButton({
   conversationId,
   csStatus,
   bookingStage,
+  contactOutcome,
   bookingReceipt,
   reminder,
   labelIds: labelIdsProp,
@@ -132,6 +142,7 @@ export function ConversationActionsButton({
   conversationId: string;
   csStatus: CsStatus;
   bookingStage: BookingStage | null;
+  contactOutcome: ContactOutcome | null;
   bookingReceipt: BookingReceipt | null;
   reminder: ReminderConfirmation | null;
   // Older API builds omit this, so treat it as optional and default below.
@@ -157,6 +168,8 @@ export function ConversationActionsButton({
   const [draftCsStatus, setDraftCsStatus] = useState(csStatus);
   const [draftBookingStage, setDraftBookingStage] =
     useState<BookingStage | null>(bookingStage);
+  const [draftContactOutcome, setDraftContactOutcome] =
+    useState<ContactOutcome | null>(contactOutcome);
   const [draftReminderStatus, setDraftReminderStatus] =
     useState<QuickReminderStatus | null>(quickReminderStatus(reminder));
   const [draftLabelIds, setDraftLabelIds] = useState(labelIds);
@@ -170,9 +183,14 @@ export function ConversationActionsButton({
   const [newLabelName, setNewLabelName] = useState("");
   const [newLabelColor, setNewLabelColor] = useState<LabelColor>("blue");
   const [newLabelError, setNewLabelError] = useState<string | null>(null);
+  const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
+  const [editingLabelName, setEditingLabelName] = useState("");
+  const [labelManagementError, setLabelManagementError] = useState<string | null>(null);
 
   const receiptUpload = useSaveBookingReceipt(conversationId);
   const labelCreation = useCreateConversationLabel();
+  const labelUpdate = useUpdateConversationLabel();
+  const labelDelete = useDeleteConversationLabel();
   const uploadedReceiptIsCurrent = Boolean(
     uploadedReceipt &&
       uploadedReceipt.conversationId === conversationId &&
@@ -216,22 +234,32 @@ export function ConversationActionsButton({
   const dirty =
     draftCsStatus !== csStatus ||
     draftBookingStage !== bookingStage ||
+    draftContactOutcome !== contactOutcome ||
     draftReminderStatus !== quickReminderStatus(reminder) ||
     !sameIds(draftLabelIds, labelIds) ||
     Boolean(draftBookingStage === "invoice_required" && draftReceipt);
   const receiptRequired = draftBookingStage === "invoice_required";
   const hasReceipt = Boolean(draftReceipt || savedReceipt);
-  const saving = pending || receiptUpload.isPending || labelCreation.isPending;
+  const saving =
+    pending ||
+    receiptUpload.isPending ||
+    labelCreation.isPending ||
+    labelUpdate.isPending ||
+    labelDelete.isPending;
 
   function openSheet() {
     setDraftCsStatus(csStatus);
     setDraftBookingStage(bookingStage);
+    setDraftContactOutcome(contactOutcome);
     setDraftReminderStatus(quickReminderStatus(reminder));
     setDraftLabelIds(labelIds);
     setDraftReceipt(null);
     setReceiptError(null);
     setNewLabelName("");
     setNewLabelError(null);
+    setEditingLabelId(null);
+    setEditingLabelName("");
+    setLabelManagementError(null);
     tapFeedback();
     setOpen(true);
   }
@@ -269,6 +297,46 @@ export function ConversationActionsButton({
         error instanceof Error ? error.message : "تعذّر إنشاء التصنيف.",
       );
     }
+  }
+
+  async function saveLabel(label: ConversationLabel) {
+    const name = editingLabelName.trim();
+    if (!name || labelUpdate.isPending) return;
+    setLabelManagementError(null);
+    try {
+      await labelUpdate.mutateAsync({ id: label.id, name, color: label.color });
+      setEditingLabelId(null);
+      setEditingLabelName("");
+      tapFeedback();
+    } catch (error) {
+      setLabelManagementError(
+        error instanceof Error ? error.message : "تعذّر تعديل التصنيف.",
+      );
+    }
+  }
+
+  function confirmDeleteLabel(label: ConversationLabel) {
+    Alert.alert(
+      "حذف التصنيف؟",
+      `سيُحذف «${label.name}» من جميع المحادثات. لا يمكن التراجع عن ذلك.`,
+      [
+        { text: "إلغاء", style: "cancel" },
+        {
+          text: "حذف",
+          style: "destructive",
+          onPress: () => {
+            setLabelManagementError(null);
+            labelDelete.mutate(label.id, {
+              onSuccess: () => {
+                setDraftLabelIds((current) => current.filter((id) => id !== label.id));
+                if (editingLabelId === label.id) setEditingLabelId(null);
+              },
+              onError: (error) => setLabelManagementError(error.message),
+            });
+          },
+        },
+      ],
+    );
   }
 
   async function pickReceipt() {
@@ -349,6 +417,7 @@ export function ConversationActionsButton({
       {
         csStatus: draftCsStatus,
         bookingStage: draftBookingStage,
+        contactOutcome: draftContactOutcome,
         labelIds: draftLabelIds,
         reminderConfirmation:
           reminder && draftReminderStatus
@@ -458,6 +527,30 @@ export function ConversationActionsButton({
                     onPress={() => {
                       tapFeedback();
                       setDraftCsStatus(status);
+                      if (status !== "resolved") setDraftContactOutcome(null);
+                    }}
+                  />
+                ))}
+              </View>
+            </ActionSection>
+
+            <ActionSection
+              title="نتيجة التواصل"
+              subtitle="اختاري نتيجة نهائية بعد انتهاء المحادثة"
+            >
+              <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
+                {CONTACT_OUTCOME_OPTIONS.map((outcome) => (
+                  <ChoiceChip
+                    key={outcome}
+                    testID={`conversation-actions-outcome-${outcome}`}
+                    label={contactOutcomeLabel[outcome]}
+                    selected={draftContactOutcome === outcome}
+                    disabled={!canEdit || saving}
+                    onPress={() => {
+                      tapFeedback();
+                      const next = draftContactOutcome === outcome ? null : outcome;
+                      setDraftContactOutcome(next);
+                      if (next) setDraftCsStatus("resolved");
                     }}
                   />
                 ))}
@@ -547,49 +640,86 @@ export function ConversationActionsButton({
 
             <ActionSection title="التصنيفات">
               {labels.length ? (
-                <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
+                <View style={{ gap: spacing.sm }}>
                   {labels.map((label) => {
                     const selected = draftLabelIds.includes(label.id);
+                    const editing = editingLabelId === label.id;
                     return (
-                      <Pressable
-                        key={label.id}
-                        testID={`conversation-actions-label-${label.id}`}
-                        accessibilityRole="checkbox"
-                        accessibilityLabel={label.name}
-                        accessibilityState={{
-                          checked: selected,
-                          disabled: !canEdit || saving,
-                        }}
-                        disabled={!canEdit || saving}
-                        onPress={() => toggleLabel(label.id)}
-                        style={({ pressed }) => ({
-                          minHeight: hitSize.min,
-                          flexDirection: "row-reverse",
-                          alignItems: "center",
-                          gap: spacing.sm,
-                          paddingHorizontal: spacing.md,
-                          borderRadius: radius.full,
-                          borderWidth: selected ? 1.5 : 1,
-                          borderColor: selected ? colors.brand : colors.border,
-                          backgroundColor: selected ? colors.brandSoft : colors.surface,
-                          opacity: !canEdit ? 0.5 : pressed ? 0.72 : 1,
-                        })}
-                      >
-                        <View
-                          style={{
-                            width: 10,
-                            height: 10,
-                            borderRadius: radius.full,
-                            backgroundColor: labelColor(label.color, colors),
-                          }}
-                        />
-                        <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>
-                          {label.name}
-                        </Text>
-                        {selected ? (
-                          <IconSymbol name="checkmark" color={colors.onBrandSoft} size={14} />
+                      <View key={label.id} style={{ gap: spacing.xs }}>
+                        <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+                          <Pressable
+                            testID={`conversation-actions-label-${label.id}`}
+                            accessibilityRole="checkbox"
+                            accessibilityLabel={label.name}
+                            accessibilityState={{ checked: selected, disabled: !canEdit || saving }}
+                            disabled={!canEdit || saving}
+                            onPress={() => toggleLabel(label.id)}
+                            style={({ pressed }) => ({
+                              flex: 1,
+                              minHeight: hitSize.min,
+                              flexDirection: "row-reverse",
+                              alignItems: "center",
+                              gap: spacing.sm,
+                              paddingHorizontal: spacing.md,
+                              borderRadius: radius.md,
+                              borderWidth: selected ? 1.5 : 1,
+                              borderColor: selected ? colors.brand : colors.border,
+                              backgroundColor: selected ? colors.brandSoft : colors.surface,
+                              opacity: !canEdit ? 0.5 : pressed ? 0.72 : 1,
+                            })}
+                          >
+                            <View style={{ width: 10, height: 10, borderRadius: radius.full, backgroundColor: labelColor(label.color, colors) }} />
+                            <Text numberOfLines={1} style={{ flex: 1, ...type.subheadStrong, color: colors.text, ...rtlText }}>
+                              {label.name}
+                            </Text>
+                            {selected ? <IconSymbol name="checkmark" color={colors.onBrandSoft} size={14} /> : null}
+                          </Pressable>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`تعديل تصنيف ${label.name}`}
+                            disabled={!canEdit || saving}
+                            onPress={() => {
+                              tapFeedback();
+                              setEditingLabelId(label.id);
+                              setEditingLabelName(label.name);
+                            }}
+                            style={({ pressed }) => ({ width: hitSize.min, height: hitSize.min, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.surfaceSunken, opacity: pressed ? 0.65 : 1 })}
+                          >
+                            <IconSymbol name="pencil" color={colors.textSecondary} size={17} />
+                          </Pressable>
+                          {isAdmin ? (
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel={`حذف تصنيف ${label.name}`}
+                              disabled={saving}
+                              onPress={() => confirmDeleteLabel(label)}
+                              style={({ pressed }) => ({ width: hitSize.min, height: hitSize.min, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.dangerSoft, opacity: pressed ? 0.65 : 1 })}
+                            >
+                              <IconSymbol name="trash" color={colors.danger} size={17} />
+                            </Pressable>
+                          ) : null}
+                        </View>
+                        {editing ? (
+                          <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+                            <TextInput
+                              autoFocus
+                              accessibilityLabel="الاسم الجديد للتصنيف"
+                              value={editingLabelName}
+                              onChangeText={setEditingLabelName}
+                              maxLength={40}
+                              returnKeyType="done"
+                              onSubmitEditing={() => void saveLabel(label)}
+                              style={{ flex: 1, minHeight: hitSize.min, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md, backgroundColor: colors.surface, color: colors.text, ...type.body, ...rtlText }}
+                            />
+                            <Pressable accessibilityRole="button" accessibilityLabel="حفظ اسم التصنيف" disabled={!editingLabelName.trim() || labelUpdate.isPending} onPress={() => void saveLabel(label)} style={({ pressed }) => ({ width: hitSize.min, height: hitSize.min, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.brand, opacity: !editingLabelName.trim() ? 0.45 : pressed ? 0.7 : 1 })}>
+                              {labelUpdate.isPending ? <ActivityIndicator color={colors.onBrand} size="small" /> : <IconSymbol name="checkmark" color={colors.onBrand} size={17} />}
+                            </Pressable>
+                            <Pressable accessibilityRole="button" accessibilityLabel="إلغاء تعديل التصنيف" onPress={() => setEditingLabelId(null)} style={({ pressed }) => ({ width: hitSize.min, height: hitSize.min, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.6 : 1 })}>
+                              <IconSymbol name="xmark" color={colors.textSecondary} size={17} />
+                            </Pressable>
+                          </View>
                         ) : null}
-                      </Pressable>
+                      </View>
                     );
                   })}
                 </View>
@@ -598,6 +728,8 @@ export function ConversationActionsButton({
                   لا توجد تصنيفات متاحة.
                 </Text>
               )}
+
+              {labelManagementError ? <InlineAlert message={labelManagementError} /> : null}
 
               <View
                 style={{
@@ -753,6 +885,14 @@ export function ConversationActionsButton({
                 القيم التي سيتم حفظها
               </Text>
               <ReviewRow label="حالة التواصل" value={csStatusLabel[draftCsStatus]} />
+              <ReviewRow
+                label="نتيجة التواصل"
+                value={
+                  draftContactOutcome
+                    ? contactOutcomeLabel[draftContactOutcome]
+                    : "غير محددة"
+                }
+              />
               <ReviewRow
                 label="مرحلة الحجز"
                 value={

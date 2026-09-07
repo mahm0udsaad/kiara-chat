@@ -40,6 +40,7 @@ export const CONVERSATION_EVENTS = {
   takenOver: "conversation.taken_over",
   statusChanged: "conversation.status_changed",
   stageChanged: "conversation.stage_changed",
+  outcomeChanged: "conversation.outcome_changed",
   labelsChanged: "conversation.labels_changed",
   sectionChanged: "conversation.section_changed",
   noteAdded: "conversation.note_added",

@@ -14,6 +14,7 @@ import { InlineAlert } from "@/components/screen-state";
 import { PrimaryButton } from "@/components/primary-button";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { useKeyboardPadding } from "@/lib/keyboard";
 import { successFeedback, tapFeedback } from "@/lib/haptics";
 import { useCreateSavedReply } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
@@ -66,6 +67,7 @@ export function SavedRepliesSheet({
 }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const keyboard = useKeyboardPadding();
   const create = useCreateSavedReply();
   const [query, setQuery] = useState("");
   const [composing, setComposing] = useState(false);
@@ -137,9 +139,16 @@ export function SavedRepliesSheet({
       <KeyboardAvoidingView
         // Inside a Modal, Android's windowSoftInputMode=adjustResize can't reach
         // this separate window, so — unlike the full-screen forms — the keyboard
-        // has to be avoided in JS here.
-        behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1, backgroundColor: colors.background }}
+        // has to be avoided in JS here. Android is also edge-to-edge, which
+        // leaves KeyboardAvoidingView nothing to measure, so there we pad by the
+        // measured keyboard height instead.
+        behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
+        onLayout={keyboard.onLayout}
+        style={{
+          flex: 1,
+          backgroundColor: colors.background,
+          paddingBottom: keyboard.paddingBottom,
+        }}
       >
         <View
           style={{
@@ -214,7 +223,7 @@ export function SavedRepliesSheet({
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{
             padding: spacing.lg,
-            paddingBottom: spacing.lg + insets.bottom,
+            paddingBottom: spacing.lg + (keyboard.keyboardVisible ? 0 : insets.bottom),
             gap: spacing.sm,
           }}
           ListHeaderComponent={

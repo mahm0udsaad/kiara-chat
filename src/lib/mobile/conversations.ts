@@ -1,4 +1,5 @@
 import { bookingStageOf } from "@/lib/booking-stage";
+import { contactOutcomeOf } from "@/lib/contact-outcome";
 import { isGroupConversation, sectionOf } from "@/lib/conversation-meta";
 import {
   getConversationLabelIds,
@@ -19,6 +20,7 @@ import { canonicalPhone, normalizePhone, phoneMatches } from "@/lib/phone";
 import { specialistConversationIdsFromLabels } from "@/lib/specialist-conversations";
 import type {
   BookingStage,
+  ContactOutcome,
   Conversation,
   ConversationHandling,
   ConversationSection,
@@ -135,6 +137,7 @@ export function toMobileConversation(
     handledOnWhatsApp: isHandledOnWhatsApp(conversation),
     isGroup: isGroupConversation(conversation),
     bookingStage: bookingStageOf(conversation),
+    contactOutcome: contactOutcomeOf(conversation),
     dangerMinutes: conversationDangerMinutes(
       conversation,
       now,
@@ -335,6 +338,7 @@ export async function toClassifiedMobileConversation(
  */
 export interface MobileConversationFilters {
   status: CsStatus | null;
+  contactOutcome: ContactOutcome | null;
   section: ConversationSection | null;
   labelId: string | null;
   /** Where the booking itself stands — the stage the thread is filed under. */
@@ -345,6 +349,7 @@ export interface MobileConversationFilters {
 
 const NO_FILTERS: MobileConversationFilters = {
   status: null,
+  contactOutcome: null,
   section: null,
   labelId: null,
   bookingStage: null,
@@ -422,6 +427,12 @@ export async function listMobileConversations(options: {
     .filter((conversation) => matchesSearch(conversation, options.search))
     .filter((conversation) => {
       if (filters.status && conversationCsStatus(conversation) !== filters.status) {
+        return false;
+      }
+      if (
+        filters.contactOutcome &&
+        contactOutcomeOf(conversation) !== filters.contactOutcome
+      ) {
         return false;
       }
       if (filters.section && sectionOf(conversation) !== filters.section) {

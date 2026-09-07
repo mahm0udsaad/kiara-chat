@@ -8,6 +8,9 @@
     "scheme": "kiara",
     "userInterfaceStyle": "light",
     "backgroundColor": "#F4F6FB",
+    "androidStatusBar": {
+      "translucent": false
+    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.kiara.operations",
@@ -19,6 +22,7 @@
     },
     "android": {
       "userInterfaceStyle": "light",
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

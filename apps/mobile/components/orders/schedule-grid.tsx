@@ -41,17 +41,19 @@ const MAX_LANE_WIDTH = 172;
  * ruler, where a UTC instant formatted locally printed "٤:٠٠ م" against the
  * 1:00 م row. The zone is pinned here rather than hoped for.
  */
-const riyadhClock = new Intl.DateTimeFormat("ar-EG", {
+const riyadhClock = new Intl.DateTimeFormat("en-US-u-nu-latn", {
   timeZone: RIYADH_TZ,
   hour: "numeric",
   minute: "2-digit",
+  hour12: true,
 });
 
 /** The ruler labels whole hours, which are numbers rather than instants. */
-const hourClock = new Intl.DateTimeFormat("ar-EG", {
+const hourClock = new Intl.DateTimeFormat("en-US-u-nu-latn", {
   timeZone: "UTC",
   hour: "numeric",
   minute: "2-digit",
+  hour12: true,
 });
 
 const hourLabel = (hour: number) =>

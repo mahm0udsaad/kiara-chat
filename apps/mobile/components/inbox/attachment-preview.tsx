@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { InlineAlert } from "@/components/screen-state";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { useKeyboardPadding } from "@/lib/keyboard";
 import { useTheme } from "@/providers/theme-provider";
 
 /** A file chosen but not yet sent. Nothing uploads until send is pressed. */
@@ -56,6 +57,7 @@ export function AttachmentPreview({
 }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const keyboard = useKeyboardPadding();
   const active = attachments[activeIndex];
 
   return (
@@ -68,9 +70,16 @@ export function AttachmentPreview({
       <KeyboardAvoidingView
         // Inside a Modal, Android's windowSoftInputMode=adjustResize can't reach
         // this separate window, so — unlike the full-screen forms — the keyboard
-        // has to be avoided in JS here.
-        behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1, backgroundColor: colors.background }}
+        // has to be avoided in JS here. Android is also edge-to-edge, which
+        // leaves KeyboardAvoidingView nothing to measure, so there we pad by the
+        // measured keyboard height instead.
+        behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
+        onLayout={keyboard.onLayout}
+        style={{
+          flex: 1,
+          backgroundColor: colors.background,
+          paddingBottom: keyboard.paddingBottom,
+        }}
       >
         <View
           style={{
@@ -249,7 +258,7 @@ export function AttachmentPreview({
             </Pressable>
           </View>
 
-          <View style={{ height: insets.bottom }} />
+          <View style={{ height: keyboard.keyboardVisible ? 0 : insets.bottom }} />
         </View>
       </KeyboardAvoidingView>
     </Modal>

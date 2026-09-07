@@ -18,6 +18,7 @@ function OrderCard({ order }: { order: FieldOrder }) {
   const { actionLabel, duration, formatTime, isRtl, relativeDay, rowDirection, t, textStyle } = useFieldI18n();
   // The visit is fully closed only once the driver confirms the return trip.
   const completed = Boolean(order.progress.driverReturnedAt);
+  const cancelled = order.status === "cancelled";
   return (
     <Link href={{ pathname: "/field/orders/[id]", params: { id: order.id } }} asChild>
       <Pressable
@@ -25,7 +26,7 @@ function OrderCard({ order }: { order: FieldOrder }) {
         accessibilityLabel={t("openOrder", { customer: order.customerName ?? order.customerPhone })}
       >
         {({ pressed }) => (
-          <Card style={{ gap: spacing.md, opacity: pressed ? 0.75 : completed ? 0.7 : 1 }}>
+          <Card style={{ gap: spacing.md, opacity: pressed ? 0.75 : completed || cancelled ? 0.7 : 1 }}>
             <View style={{ flexDirection: rowDirection, alignItems: "flex-start", gap: spacing.md }}>
               <View style={{ flex: 1, gap: spacing.xs }}>
                 <Text numberOfLines={1} style={{ ...type.title3, color: colors.text, ...textStyle }}>
@@ -36,9 +37,9 @@ function OrderCard({ order }: { order: FieldOrder }) {
                 </Text>
               </View>
               <Badge
-                label={completed ? t("completed") : order.canAct ? t("waitingForYou") : t("inProgress")}
-                tone={completed ? "success" : order.canAct ? "warning" : "neutral"}
-                icon={completed ? "checkmark.circle" : order.canAct ? "bell" : "clock"}
+                label={cancelled ? "ملغى" : completed ? t("completed") : order.canAct ? t("waitingForYou") : t("inProgress")}
+                tone={cancelled ? "danger" : completed ? "success" : order.canAct ? "warning" : "neutral"}
+                icon={cancelled ? "xmark.circle" : completed ? "checkmark.circle" : order.canAct ? "bell" : "clock"}
               />
             </View>
             <View style={{ flexDirection: rowDirection, alignItems: "center", gap: spacing.sm }}>
@@ -54,24 +55,24 @@ function OrderCard({ order }: { order: FieldOrder }) {
                 gap: spacing.sm,
                 padding: spacing.md,
                 borderRadius: radius.md,
-                backgroundColor: order.canAct ? colors.warningSoft : colors.surfaceSunken,
+                backgroundColor: cancelled ? colors.dangerSoft : order.canAct ? colors.warningSoft : colors.surfaceSunken,
               }}
             >
               <IconSymbol
-                name={order.canAct ? "exclamationmark.circle" : "hourglass"}
+                name={cancelled ? "xmark.circle" : order.canAct ? "exclamationmark.circle" : "hourglass"}
                 size={16}
-                color={order.canAct ? colors.onWarningSoft : colors.textTertiary}
+                color={cancelled ? colors.onDangerSoft : order.canAct ? colors.onWarningSoft : colors.textTertiary}
               />
               <Text
                 numberOfLines={2}
                 style={{
                   flex: 1,
                   ...type.footnote,
-                  color: order.canAct ? colors.onWarningSoft : colors.textSecondary,
+                  color: cancelled ? colors.onDangerSoft : order.canAct ? colors.onWarningSoft : colors.textSecondary,
                   ...textStyle,
                 }}
               >
-                {order.nextAction ? actionLabel(order.nextAction) : t("orderFinished")}
+                {cancelled ? "تم إلغاء الطلب" : order.nextAction ? actionLabel(order.nextAction) : t("orderFinished")}
               </Text>
               <IconSymbol name={isRtl ? "chevron.left" : "chevron.right"} size={15} color={colors.textTertiary} />
             </View>

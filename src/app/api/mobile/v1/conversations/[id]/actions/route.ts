@@ -1,7 +1,13 @@
 import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
 import { isBookingStage, bookingStageOf } from "@/lib/booking-stage";
+import { contactOutcomeOf, isContactOutcome } from "@/lib/contact-outcome";
 import { getConversationById } from "@/lib/inbox";
-import { setBookingStage, setCsStatus, type CsStatus } from "@/lib/interactions";
+import {
+  setBookingStage,
+  setContactOutcome,
+  setCsStatus,
+  type CsStatus,
+} from "@/lib/interactions";
 import {
   getConversationLabelIds,
   listLabels,
@@ -24,6 +30,7 @@ const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
 type Payload = {
   csStatus?: unknown;
   bookingStage?: unknown;
+  contactOutcome?: unknown;
   labelIds?: unknown;
   reminderConfirmation?: unknown;
 };
@@ -43,6 +50,10 @@ export async function PUT(
   const payload = (await request.json().catch(() => null)) as Payload | null;
   const csStatus = payload?.csStatus as CsStatus | undefined;
   const bookingStage = payload?.bookingStage;
+  const contactOutcomeProvided = Boolean(
+    payload && Object.prototype.hasOwnProperty.call(payload, "contactOutcome"),
+  );
+  const contactOutcome = payload?.contactOutcome;
   const labelIds = Array.isArray(payload?.labelIds)
     ? [...new Set(payload.labelIds.filter((id): id is string => typeof id === "string"))]
     : null;
@@ -57,6 +68,13 @@ export async function PUT(
   }
   if (bookingStage !== null && !isBookingStage(bookingStage)) {
     return mobileError(400, "INVALID_BOOKING_STAGE", "Booking stage is invalid");
+  }
+  if (
+    contactOutcomeProvided &&
+    contactOutcome !== null &&
+    !isContactOutcome(contactOutcome)
+  ) {
+    return mobileError(400, "INVALID_CONTACT_OUTCOME", "Contact outcome is invalid");
   }
   if (!labelIds) {
     return mobileError(400, "INVALID_LABELS", "Conversation labels are invalid");
@@ -166,6 +184,16 @@ export async function PUT(
           to: csStatus,
         });
       }
+    }
+
+    const previousOutcome = contactOutcomeOf(conversation);
+    if (contactOutcomeProvided && previousOutcome !== contactOutcome) {
+      const nextOutcome = isContactOutcome(contactOutcome) ? contactOutcome : null;
+      await setContactOutcome(id, nextOutcome);
+      await recordConversationEvent(id, CONVERSATION_EVENTS.outcomeChanged, actor, {
+        from: previousOutcome,
+        to: nextOutcome,
+      });
     }
 
     const labelsChanged =

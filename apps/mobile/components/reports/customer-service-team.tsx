@@ -131,8 +131,30 @@ function EmployeeRow({
 
 export function CustomerServiceTeam({ report }: { report: CustomerServiceReport }) {
   const { colors } = useTheme();
+  const outcomes = report.last24Hours;
   return (
     <View style={{ gap: spacing.lg }}>
+      {outcomes ? (
+        <Card>
+          <View style={{ gap: spacing.xs }}>
+            <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>
+              نتائج آخر ٢٤ ساعة
+            </Text>
+            <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
+              نتيجة منفصلة لكل محادثة واردة، ولا تتأثر بإطلاق المحادثة أو نقلها.
+            </Text>
+          </View>
+          <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
+            <Metric icon="message" label="رسائل واردة" value={outcomes.inboundMessages} />
+            <Metric icon="person.2" label="محادثات واردة" value={outcomes.inboundConversations} />
+            <Metric icon="checkmark.circle" label="حجوزات مؤكدة" value={outcomes.booked} />
+            <Metric icon="exclamationmark.circle" label="لم يتم الحجز" value={outcomes.notBooked} />
+            <Metric icon="phone" label="لم ترد" value={outcomes.noReply} />
+            <Metric icon="clock" label="بانتظار النتيجة" value={outcomes.awaitingOutcome} />
+          </View>
+        </Card>
+      ) : null}
+
       <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
         <Metric icon="person.2" label="الموظفات" value={report.totals.employees} />
         <Metric icon="checkmark.circle" label="نشطات الآن" value={report.totals.activeNow} />

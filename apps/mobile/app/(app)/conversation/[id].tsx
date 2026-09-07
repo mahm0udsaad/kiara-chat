@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { BookingSheet } from "@/components/inbox/booking-sheet";
 import { Composer } from "@/components/inbox/composer";
+import { MessageResendSheet } from "@/components/inbox/message-resend-sheet";
 import { ConversationActionsButton } from "@/components/conversation-actions-button";
 import {
   MEDIA_MESSAGE_TYPES,
@@ -24,6 +25,7 @@ import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-stat
 import { Badge } from "@/components/ui/badge";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { useKeyboardPadding } from "@/lib/keyboard";
 import {
   findSharedLocation,
   findSharedLocations,
@@ -32,6 +34,8 @@ import {
 } from "@/lib/location";
 import {
   bookingStageLabel,
+  contactOutcomeLabel,
+  contactOutcomeTone,
   csStatusLabel,
   csStatusTone,
   formatters,
@@ -102,7 +106,13 @@ function DaySeparator({ label }: { label: string }) {
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ message }: { message: ConversationMessage }) {
+const MessageBubble = memo(function MessageBubble({
+  message,
+  onResend,
+}: {
+  message: ConversationMessage;
+  onResend: (body: string) => void;
+}) {
   const { colors } = useTheme();
 
   // System notes are the app talking about the conversation, not a party in it,
@@ -315,18 +325,17 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Conver
           </Text>
         </View>
       ) : null}
-      <Text
-        style={{
-          ...type.caption,
-          fontWeight: "400",
-          opacity: 0.75,
-          color: outbound ? colors.onBrand : colors.textTertiary,
-          fontVariant: ["tabular-nums"],
-          textAlign: "left",
-        }}
-      >
-        {formatters.time.format(new Date(message.created_at))}
-      </Text>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm }}>
+        <Text style={{ ...type.caption, fontWeight: "400", opacity: 0.75, color: outbound ? colors.onBrand : colors.textTertiary, fontVariant: ["tabular-nums"], textAlign: "left" }}>
+          {formatters.time.format(new Date(message.created_at))}
+        </Text>
+        {message.content ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="إعادة إرسال الرسالة" onPress={() => onResend(message.content)} hitSlop={spacing.sm} style={({ pressed }) => ({ minWidth: hitSize.min, minHeight: hitSize.min - 12, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: 3, opacity: pressed ? 0.55 : 0.78 })}>
+            <IconSymbol name="paperplane.fill" color={outbound ? colors.onBrand : colors.textSecondary} size={12} />
+            <Text style={{ ...type.caption, color: outbound ? colors.onBrand : colors.textSecondary, ...rtlText }}>إعادة</Text>
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 });
@@ -334,27 +343,22 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Conver
 const keyOfChatItem = (item: ChatItem) =>
   item.kind === "day" ? item.id : item.message.id;
 
-/**
- * Module scope on purpose: neither branch reads anything from the screen, so
- * hoisting it out keeps one stable function identity for the list's whole life.
- */
-function renderChatItem({ item }: { item: ChatItem }) {
-  return item.kind === "day" ? (
-    <DaySeparator label={item.label} />
-  ) : (
-    <MessageBubble message={item.message} />
-  );
-}
-
 export default function ConversationScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const keyboard = useKeyboardPadding();
   const router = useRouter();
-  const params = useLocalSearchParams<{ id: string | string[] }>();
+  const params = useLocalSearchParams<{
+    id: string | string[];
+    draft?: string | string[];
+  }>();
   const id = useMemo(
     () => (Array.isArray(params.id) ? (params.id[0] ?? "") : (params.id ?? "")),
     [params.id],
   );
+  const forwardedDraft = Array.isArray(params.draft)
+    ? (params.draft[0] ?? "")
+    : (params.draft ?? "");
 
   // One conversation, one subscription — the thread only cares about its own.
   const typing = useIsTyping(id);
@@ -369,6 +373,7 @@ export default function ConversationScreen() {
   const dismissBooking = useDismissBookingRequest(id);
   const [takeoverReason, setTakeoverReason] = useState("");
   const [bookingOpen, setBookingOpen] = useState(false);
+  const [resendBody, setResendBody] = useState<string | null>(null);
 
   const messages = useMemo(() => {
     const pages = messageHistory.data?.pages;
@@ -459,9 +464,16 @@ export default function ConversationScreen() {
 
   return (
     <KeyboardAvoidingView
-      behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
+      behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={process.env.EXPO_OS === "ios" ? insets.top + 44 : 0}
-      style={{ flex: 1, backgroundColor: colors.background }}
+      onLayout={keyboard.onLayout}
+      style={{
+        flex: 1,
+        backgroundColor: colors.background,
+        // Android's edge-to-edge window never resizes for the keyboard, so the
+        // thread is lifted here instead. See useKeyboardPadding.
+        paddingBottom: keyboard.paddingBottom,
+      }}
     >
       {/* The name in the header is the way into the customer's record: an
           employee mid-chat wants her history, not a trip through the calendar
@@ -564,6 +576,12 @@ export default function ConversationScreen() {
         {current.bookingStage ? (
           <Badge label={bookingStageLabel[current.bookingStage]} tone="neutral" />
         ) : null}
+        {current.contactOutcome ? (
+          <Badge
+            label={contactOutcomeLabel[current.contactOutcome]}
+            tone={contactOutcomeTone[current.contactOutcome]}
+          />
+        ) : null}
         <Text
           selectable
           numberOfLines={1}
@@ -627,6 +645,7 @@ export default function ConversationScreen() {
           conversationId={id}
           csStatus={current.csStatus}
           bookingStage={current.bookingStage}
+          contactOutcome={current.contactOutcome ?? null}
           bookingReceipt={current.bookingReceipt ?? null}
           reminder={current.reminderConfirmation}
           labelIds={current.labelIds}
@@ -733,6 +752,15 @@ export default function ConversationScreen() {
         sharedLocations={sharedLocations}
       />
 
+      {resendBody !== null ? (
+        <MessageResendSheet
+          open
+          conversationId={id}
+          originalBody={resendBody}
+          onClose={() => setResendBody(null)}
+        />
+      ) : null}
+
       <FlatList
         // Inverted so new messages land at the bottom without manual scrolling.
         inverted
@@ -743,7 +771,13 @@ export default function ConversationScreen() {
         contentInsetAdjustmentBehavior="automatic"
         data={chatItems}
         keyExtractor={keyOfChatItem}
-        renderItem={renderChatItem}
+        renderItem={({ item }) =>
+          item.kind === "day" ? (
+            <DaySeparator label={item.label} />
+          ) : (
+            <MessageBubble message={item.message} onResend={setResendBody} />
+          )
+        }
         // A long thread is the one list here that really can reach hundreds of
         // rows, so it gets the tightest window of any list in the app.
         initialNumToRender={12}
@@ -822,7 +856,9 @@ export default function ConversationScreen() {
           gap: spacing.sm,
           paddingHorizontal: spacing.md,
           paddingTop: spacing.md,
-          paddingBottom: spacing.md + insets.bottom,
+          // The gesture bar is behind the keyboard while it is open, so its
+          // inset would only add dead space under the composer.
+          paddingBottom: spacing.md + (keyboard.keyboardVisible ? 0 : insets.bottom),
           borderTopWidth: 1,
           borderTopColor: colors.border,
           backgroundColor: colors.surface,
@@ -896,8 +932,10 @@ export default function ConversationScreen() {
           </>
         ) : (
           <Composer
+            key={`${id}:${forwardedDraft}`}
             conversationId={id}
             templateOnly={!isGroup && (messages?.length ?? 0) === 0}
+            initialDraft={forwardedDraft}
           />
         )}
       </View>

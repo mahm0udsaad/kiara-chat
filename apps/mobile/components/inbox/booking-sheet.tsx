@@ -21,6 +21,7 @@ import { TextAreaField } from "@/components/ui/field";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { Segmented } from "@/components/ui/segmented";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { useKeyboardPadding } from "@/lib/keyboard";
 import {
   durationLabel,
   formatters,
@@ -239,6 +240,7 @@ export function BookingSheet({
 }) {
   const { colors, scheme } = useTheme();
   const insets = useSafeAreaInsets();
+  const keyboard = useKeyboardPadding();
   const create = useCreateConversationOrder(conversationId);
 
   const [arrival, setArrival] = useState(roundedDefault);
@@ -354,9 +356,16 @@ export function BookingSheet({
       <KeyboardAvoidingView
         // Inside a Modal, Android's windowSoftInputMode=adjustResize can't reach
         // this separate window, so — unlike the full-screen forms — the keyboard
-        // has to be avoided in JS here.
-        behavior={process.env.EXPO_OS === "ios" ? "padding" : "height"}
-        style={{ flex: 1, backgroundColor: colors.background }}
+        // has to be avoided in JS here. Android is also edge-to-edge, which
+        // leaves KeyboardAvoidingView nothing to measure, so there we pad by the
+        // measured keyboard height instead.
+        behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
+        onLayout={keyboard.onLayout}
+        style={{
+          flex: 1,
+          backgroundColor: colors.background,
+          paddingBottom: keyboard.paddingBottom,
+        }}
       >
         <SheetHeader
           title={createdOrderId ? "تم إنشاء الحجز" : "تأكيد الحجز"}
@@ -409,7 +418,7 @@ export function BookingSheet({
               </Text>
             </ScrollView>
 
-            <ActionBar bottomInset={insets.bottom}>
+            <ActionBar bottomInset={keyboard.keyboardVisible ? 0 : insets.bottom}>
               <PrimaryButton
                 label="طلب السائق الآن"
                 icon="car"
@@ -759,7 +768,7 @@ export function BookingSheet({
               {create.error ? <InlineAlert message={create.error.message} /> : null}
             </ScrollView>
 
-            <ActionBar bottomInset={insets.bottom}>
+            <ActionBar bottomInset={keyboard.keyboardVisible ? 0 : insets.bottom}>
               <PrimaryButton
                 label="تأكيد الحجز"
                 icon="checkmark.circle"

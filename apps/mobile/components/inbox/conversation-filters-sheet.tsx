@@ -4,11 +4,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
-import { bookingStageLabel, csStatusLabel } from "@/lib/format";
+import { bookingStageLabel, contactOutcomeLabel, csStatusLabel } from "@/lib/format";
 import { tapFeedback } from "@/lib/haptics";
 import { useTheme } from "@/providers/theme-provider";
 import type {
   BookingStage,
+  ContactOutcome,
   ConversationFilters,
   ConversationHandling,
   ConversationLabel,
@@ -17,6 +18,7 @@ import type {
 } from "@/types/api";
 
 const STATUS_ORDER: CsStatus[] = ["open", "waiting", "resolved"];
+const OUTCOME_ORDER: ContactOutcome[] = ["booked", "not_booked", "no_reply"];
 const SECTION_LABEL: Record<ConversationSection, string> = {
   orders: "قسم الطلبات",
   replies: "قسم الردود",
@@ -52,6 +54,7 @@ export const HANDLING_LABEL: Record<ConversationHandling, string> = {
 export function activeFilterCount(filters: ConversationFilters): number {
   return (
     (filters.status ? 1 : 0) +
+    (filters.contactOutcome ? 1 : 0) +
     (filters.section ? 1 : 0) +
     (filters.labelId ? 1 : 0) +
     (filters.bookingStage ? 1 : 0) +
@@ -207,6 +210,22 @@ export function ConversationFiltersSheet({
             ))}
           </Group>
 
+          <Group title="نتيجة التواصل">
+            <Choice
+              label="كل النتائج"
+              selected={!filters.contactOutcome}
+              onPress={() => onChange({ ...filters, contactOutcome: null })}
+            />
+            {OUTCOME_ORDER.map((outcome) => (
+              <Choice
+                key={outcome}
+                label={contactOutcomeLabel[outcome]}
+                selected={filters.contactOutcome === outcome}
+                onPress={() => onChange({ ...filters, contactOutcome: outcome })}
+              />
+            ))}
+          </Group>
+
           <Group title="المتابعة">
             <Choice
               label="كل المحادثات"
@@ -284,6 +303,7 @@ export function ConversationFiltersSheet({
             onPress={() =>
               onChange({
                 status: null,
+                contactOutcome: null,
                 section: null,
                 labelId: null,
                 bookingStage: null,

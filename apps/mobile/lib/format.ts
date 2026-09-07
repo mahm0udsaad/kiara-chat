@@ -1,9 +1,15 @@
-import type { BookingStage, OrderStatus, TripType } from "@/types/api";
+import type { BookingStage, ContactOutcome, OrderStatus, TripType } from "@/types/api";
 
 const locale = "ar-EG";
+/** Clocks stay easy to scan inside RTL copy: `10:00 PM`, never `٢٢:٠٠`. */
+const timeLocale = "en-US-u-nu-latn";
 
 export const formatters = {
-  time: new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" }),
+  time: new Intl.DateTimeFormat(timeLocale, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }),
   weekdayDate: new Intl.DateTimeFormat(locale, {
     weekday: "long",
     day: "numeric",
@@ -153,6 +159,18 @@ export const csStatusTone = {
   open: "info",
   waiting: "warning",
   resolved: "success",
+} as const;
+
+export const contactOutcomeLabel: Record<ContactOutcome, string> = {
+  booked: "تم تأكيد الحجز",
+  not_booked: "لم يتم الحجز",
+  no_reply: "لم ترد العميلة",
+};
+
+export const contactOutcomeTone = {
+  booked: "success",
+  not_booked: "neutral",
+  no_reply: "warning",
 } as const;
 
 export const bookingStageLabel: Record<BookingStage, string> = {

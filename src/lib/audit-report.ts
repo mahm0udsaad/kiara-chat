@@ -14,6 +14,7 @@
  * instead of a timestamp the owner has to reconcile by hand.
  */
 import { BOOKING_STAGE_LABEL } from "@/lib/booking-stage";
+import { CONTACT_OUTCOME_LABEL } from "@/lib/contact-outcome";
 import { getFieldAudit, type FieldAudit } from "@/lib/field-audit";
 import { fieldLegsOf, type FieldLeg } from "@/lib/field-timings";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
@@ -99,6 +100,7 @@ const FIELD_STEP_LABEL: Record<string, string> = {
   start_service: "بدأت الخدمة عند العميلة",
   complete_order: "أُنهيت الخدمة",
   driver_return: "انتهت الرحلة والعودة",
+  cancelled_by_driver: "ألغى السائق الطلب",
   reminder_sent: "أُرسل تذكير",
 };
 
@@ -109,6 +111,7 @@ const EVENT_TITLE: Record<string, string> = {
   "conversation.taken_over": "سحبت المحادثة",
   "conversation.status_changed": "غيّرت حالة المحادثة",
   "conversation.stage_changed": "غيّرت مرحلة متابعة الحجز",
+  "conversation.outcome_changed": "سجّلت نتيجة التواصل",
   "conversation.labels_changed": "عدّلت التصنيفات",
   "conversation.section_changed": "غيّرت القسم",
   "conversation.reminder_confirmed": "حدّثت متابعة الموعد",
@@ -146,6 +149,13 @@ function describe(eventType: string, payload: Payload): string | null {
       const to = text(payload.to);
       return `${from ? BOOKING_STAGE_LABEL[from as keyof typeof BOOKING_STAGE_LABEL] ?? from : "بدون مرحلة"} ← ${
         to ? BOOKING_STAGE_LABEL[to as keyof typeof BOOKING_STAGE_LABEL] ?? to : "بدون مرحلة"
+      }`;
+    }
+    case "conversation.outcome_changed": {
+      const from = text(payload.from);
+      const to = text(payload.to);
+      return `${from ? CONTACT_OUTCOME_LABEL[from as keyof typeof CONTACT_OUTCOME_LABEL] ?? from : "بدون نتيجة"} ← ${
+        to ? CONTACT_OUTCOME_LABEL[to as keyof typeof CONTACT_OUTCOME_LABEL] ?? to : "بدون نتيجة"
       }`;
     }
     case "conversation.labels_changed": {
@@ -209,6 +219,8 @@ function describe(eventType: string, payload: Payload): string | null {
       const who = role === "driver" ? "السائق" : role === "specialist" ? "الأخصائية" : null;
       return [who, channel].filter(Boolean).join(" · ") || null;
     }
+    case "field.cancelled_by_driver":
+      return text(payload.reason);
     default:
       return null;
   }
