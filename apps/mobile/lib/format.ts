@@ -4,6 +4,21 @@ const locale = "ar-EG";
 /** Clocks stay easy to scan inside RTL copy: `10:00 PM`, never `٢٢:٠٠`. */
 const timeLocale = "en-US-u-nu-latn";
 
+/**
+ * Keep the list aligned with the send guard: reserve five minutes so a reply
+ * composed at the Meta boundary does not fail while it is being delivered.
+ */
+export const WHATSAPP_REPLY_WINDOW_MS = 24 * 60 * 60_000 - 5 * 60_000;
+
+export function isWhatsAppReplyWindowOpen(
+  lastInboundAt: string | null | undefined,
+  now = Date.now(),
+): boolean {
+  if (!lastInboundAt) return false;
+  const inboundAt = Date.parse(lastInboundAt);
+  return Number.isFinite(inboundAt) && now - inboundAt < WHATSAPP_REPLY_WINDOW_MS;
+}
+
 export const formatters = {
   time: new Intl.DateTimeFormat(timeLocale, {
     hour: "numeric",

@@ -1,5 +1,12 @@
 import { Link, Stack, useRouter } from "expo-router";
-import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   FlatList,
   ActivityIndicator,
@@ -35,6 +42,8 @@ import {
   contactOutcomeTone,
   csStatusLabel,
   csStatusTone,
+  isWhatsAppReplyWindowOpen,
+  WHATSAPP_REPLY_WINDOW_MS,
 } from "@/lib/format";
 import { canonicalPhone } from "@/lib/phone";
 import {
@@ -64,6 +73,29 @@ const views: SegmentOption<InboxView>[] = [
 ];
 
 const keyOfConversation = (item: ConversationSummary) => item.id;
+
+/** Re-evaluate once at the exact boundary; no once-a-minute list rerenders. */
+function useWhatsAppReplyWindow(lastInboundAt: string | null) {
+  const [expiredInboundAt, setExpiredInboundAt] = useState<string | null>(null);
+  const open =
+    lastInboundAt !== expiredInboundAt &&
+    isWhatsAppReplyWindowOpen(lastInboundAt);
+
+  useEffect(() => {
+    if (!lastInboundAt) return;
+    const inboundAt = Date.parse(lastInboundAt);
+    if (!Number.isFinite(inboundAt)) return;
+    const remaining = inboundAt + WHATSAPP_REPLY_WINDOW_MS - Date.now();
+    if (remaining <= 0) return;
+    const timer = setTimeout(
+      () => setExpiredInboundAt(lastInboundAt),
+      remaining + 250,
+    );
+    return () => clearTimeout(timer);
+  }, [lastInboundAt]);
+
+  return open;
+}
 
 function UnknownPhoneRow({
   phone,
@@ -237,6 +269,7 @@ const ConversationRow = memo(function ConversationRow({
   const typing = useIsTyping(conversation.id);
 
   const isGroup = conversation.isGroup ?? false;
+  const replyWindowOpen = useWhatsAppReplyWindow(conversation.last_inbound_at);
   // Nobody owes a group a reply — chatter in it is not an unanswered customer —
   // so the overdue clock is off here, in the row's spoken label as well as its
   // badge.
@@ -274,6 +307,12 @@ const ConversationRow = memo(function ConversationRow({
         testID={`conversation-row-${conversation.id}`}
         accessibilityRole="button"
         accessibilityLabel={`محادثة ${displayName}${assigneeName ? `، الموظفة ${assigneeName}` : ""}${unread ? `، ${unread} رسائل غير مقروءة` : ""}${
+          isGroup
+            ? ""
+            : replyWindowOpen
+              ? "، داخل نافذة الأربع وعشرين ساعة"
+              : "، خارج نافذة الأربع وعشرين ساعة"
+        }${
           overdue ? "، تنتظر ردًا" : ""
         }`}
       >
@@ -380,6 +419,15 @@ const ConversationRow = memo(function ConversationRow({
                   paddingTop: spacing.xs,
                 }}
               >
+                {!isGroup ? (
+                  <Badge
+                    tone={replyWindowOpen ? "success" : "warning"}
+                    icon={replyWindowOpen ? "clock" : "lock"}
+                    label={
+                      replyWindowOpen ? "داخل 24 ساعة" : "خارج 24 ساعة"
+                    }
+                  />
+                ) : null}
                 {!isGroup && conversation.assigned_to ? (
                   <Badge
                     tone="info"
