@@ -63,6 +63,54 @@ export function addDays(dayKey: string, days: number): string {
 
 const digitsOf = (phone: string) => phone.replace(/\D/g, "");
 
+const isLiveOrder = (order: OrderSummary) =>
+  order.status !== "cancelled" && order.dispatch_state !== "cancelled";
+
+/**
+ * Legacy orders do not always carry a Rekaz id. Pick their best match instead
+ * of trusting database row order: an exact arrival wins, then a dispatched
+ * and assigned order wins over an unfinished duplicate.
+ */
+function matchingOrder(
+  reservation: RekazReservation,
+  orders: OrderSummary[],
+  claimed?: Set<string>,
+): OrderSummary | undefined {
+  const arrival = new Date(reservation.arrivalAt).getTime();
+  const candidates = orders.filter(
+    (candidate) =>
+      isLiveOrder(candidate) &&
+      !claimed?.has(candidate.id) &&
+      digitsOf(candidate.customer_phone) ===
+        digitsOf(reservation.customerPhone) &&
+      dayKeyOf(candidate.arrival_at) === dayKeyOf(reservation.arrivalAt),
+  );
+
+  return candidates.sort((a, b) => {
+    const score = (candidate: OrderSummary) => {
+      const candidateArrival = new Date(candidate.arrival_at).getTime();
+      const exactArrival =
+        Number.isFinite(arrival) &&
+        Number.isFinite(candidateArrival) &&
+        Math.abs(candidateArrival - arrival) < 60_000;
+      return (
+        (exactArrival ? 16 : 0) +
+        (candidate.status === "sent" ? 8 : 0) +
+        (candidate.driver_id ? 4 : 0) +
+        (candidate.specialist_id ? 2 : 0) +
+        (candidate.rekaz_source_id ? 1 : 0)
+      );
+    };
+    return (
+      score(b) - score(a) ||
+      (b.sent_at ?? b.updated_at ?? b.created_at).localeCompare(
+        a.sent_at ?? a.updated_at ?? a.created_at,
+      ) ||
+      a.id.localeCompare(b.id)
+    );
+  })[0];
+}
+
 /**
  * Arrival of the first service to the end of the last, in one pass. The span
  * is what the day is actually planned around: the driver's return and the next
@@ -122,8 +170,9 @@ export function mergeVisits(
   reservations: RekazReservation[],
   orders: OrderSummary[],
 ): CalendarVisit[] {
+  const liveOrders = orders.filter(isLiveOrder);
   const ordersBySource = new Map<string, OrderSummary>();
-  for (const order of orders) {
+  for (const order of liveOrders) {
     if (order.rekaz_source_id) ordersBySource.set(order.rekaz_source_id, order);
     for (const service of order.approved_services ?? []) {
       if (service.sourceId) ordersBySource.set(service.sourceId, order);
@@ -145,9 +194,11 @@ export function mergeVisits(
     // The day is part of the key even for an order id, so a group can never
     // straddle two days and disappear from one of them in the agenda.
     const linkedOrder = ordersBySource.get(reservation.id);
-    const key = linkedOrder ? `visit:${linkedOrder.id}` : orderId
+    const key = orderId
       ? `order:${dayKeyOf(reservation.arrivalAt)}|${orderId}`
-      : `slot:${digitsOf(reservation.customerPhone)}|${reservation.arrivalAt}`;
+      : linkedOrder
+        ? `visit:${linkedOrder.id}`
+        : `slot:${digitsOf(reservation.customerPhone)}|${reservation.arrivalAt}`;
     const bucket = grouped.get(key);
     if (bucket) bucket.push(reservation);
     else grouped.set(key, [reservation]);
@@ -164,13 +215,7 @@ export function mergeVisits(
       .find(Boolean) as OrderSummary | undefined;
 
     if (!order) {
-      order = orders.find(
-        (candidate) =>
-          !candidate.rekaz_source_id &&
-          !claimed.has(candidate.id) &&
-          digitsOf(candidate.customer_phone) === digitsOf(first.customerPhone) &&
-          dayKeyOf(candidate.arrival_at) === dayKeyOf(first.arrivalAt),
-      );
+      order = matchingOrder(first, liveOrders, claimed);
     }
     if (order) claimed.add(order.id);
 
@@ -194,7 +239,7 @@ export function mergeVisits(
 
   // Orders with no Rekaz counterpart are still real work — a booking taken
   // over WhatsApp never reaches Rekaz at all.
-  for (const order of orders) {
+  for (const order of liveOrders) {
     if (claimed.has(order.id)) continue;
     visits.push({
       key: `order:${order.id}`,
@@ -447,8 +492,9 @@ export function buildDaySchedule(
   orders: OrderSummary[],
   dayKey: string,
 ): DaySchedule {
+  const liveOrders = orders.filter(isLiveOrder);
   const ordersBySource = new Map<string, OrderSummary>();
-  for (const order of orders) {
+  for (const order of liveOrders) {
     if (order.rekaz_source_id) ordersBySource.set(order.rekaz_source_id, order);
     for (const service of order.approved_services ?? []) {
       if (service.sourceId) ordersBySource.set(service.sourceId, order);
@@ -466,13 +512,7 @@ export function buildDaySchedule(
     const end = start + Math.max(reservation.durationMinutes || 0, 15);
     const order =
       ordersBySource.get(reservation.id) ??
-      orders.find(
-        (candidate) =>
-          !candidate.rekaz_source_id &&
-          digitsOf(candidate.customer_phone) ===
-            digitsOf(reservation.customerPhone) &&
-          dayKeyOf(candidate.arrival_at) === dayKey,
-      ) ??
+      matchingOrder(reservation, liveOrders) ??
       null;
 
     // A service Rekaz lists under two providers is worked by both, so it is

@@ -131,6 +131,9 @@ export type MediaSlot = {
   original_filename?: string | null;
   /** "stored" is the only state with bytes behind it. */
   delivery_status?: "stored" | "too_large" | "failed" | string;
+  /** Provider URL kept when the ingest fetch failed, so it can be retried. */
+  source_url?: string | null;
+  fetch_error?: string | null;
 };
 
 /** The durable invoice/receipt attached to the booking workflow. */
@@ -295,7 +298,13 @@ export type OrderSummary = {
   updated_at?: string | null;
   updated_by_name: string | null;
   version: number;
-  dispatch_state: "idle" | "processing" | "sent" | "failed" | "uncertain";
+  dispatch_state:
+    | "idle"
+    | "processing"
+    | "sent"
+    | "failed"
+    | "uncertain"
+    | "cancelled";
   specialist_session?: FieldSessionState;
   driver_session?: FieldSessionState;
   /**
