@@ -62,6 +62,7 @@ import type {
 } from "@/types/api";
 
 const views: SegmentOption<InboxView>[] = [
+  { value: "all", label: "كل المحادثات" },
   { value: "today", label: "محادثات اليوم" },
   { value: "new", label: "جديد" },
   { value: "mine", label: "محادثاتي" },
@@ -510,7 +511,9 @@ export default function InboxScreen() {
   const { colors } = useTheme();
   const router = useRouter();
   const android = process.env.EXPO_OS === "android";
-  const [view, setView] = useState<InboxView>("today");
+  // Search and labels should start from the complete customer archive. The
+  // narrower operational queues remain one tap away in the same control.
+  const [view, setView] = useState<InboxView>("all");
   const [search, setSearch] = useState("");
   // The web inbox's status/section/label dropdowns, folded into one sheet.
   const [filters, setFilters] = useState<ConversationFilters>(

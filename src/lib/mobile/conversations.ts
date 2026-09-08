@@ -195,6 +195,10 @@ function matchesView(
   const isDriver = driverPhoneSet.has(normalizePhone(conversation.customer_phone));
   if (view === "drivers") return isDriver;
   if (isDriver) return false;
+  // The searchable archive of customer conversations. Staff and group chats
+  // keep their dedicated tabs, while every customer remains discoverable no
+  // matter when she last wrote or whether the WhatsApp reply window expired.
+  if (view === "all") return true;
   if (view === "today") {
     return RIYADH_DAY.format(new Date(conversation.last_message_at)) ===
       RIYADH_DAY.format(new Date(now));
@@ -470,6 +474,7 @@ export async function listMobileConversations(options: {
     );
 
   const counts = {
+    all: inView("all").length,
     today: inView("today").length,
     new: inView("new").length,
     mine: inView("mine").length,

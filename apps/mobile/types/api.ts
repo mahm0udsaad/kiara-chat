@@ -70,6 +70,7 @@ export type SavedReply = {
 };
 
 export type InboxView =
+  | "all"
   | "today"
   | "new"
   | "mine"

@@ -60,7 +60,7 @@ export async function GET(request: Request) {
     return mobileError(
       400,
       "INVALID_VIEW",
-      "view must be today, new, mine, unassigned, specialists, drivers, groups, or danger"
+      "view must be all, today, new, mine, unassigned, specialists, drivers, groups, or danger"
     );
   }
 
