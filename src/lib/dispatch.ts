@@ -85,6 +85,11 @@ const ORDER_COLS_WITH_REKAZ = `${ORDER_COLS_WITH_EDITOR}, rekaz_source_id`;
 const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_WITH_REKAZ}, driver_note, specialist_note, specialist_voice_path`;
 /** Adds the door photo. Falls back until 20260903090000 runs. */
 const ORDER_COLS_WITH_DOOR = `${ORDER_COLS_WITH_NOTES}, door_photo_path`;
+const operationalOrderScore = (row: Partial<DriverOrder>) =>
+  (row.status === "sent" ? 8 : 0) +
+  (row.driver_id ? 4 : 0) +
+  (row.specialist_id ? 2 : 0) +
+  (row.rekaz_source_id ? 1 : 0);
 const missingUpdatedBy = (err: { message: string } | null) =>
   Boolean(err?.message.includes("updated_by"));
 const missingRekazLink = (err: { message: string } | null) =>
@@ -410,6 +415,28 @@ export async function createBooking(
   if (convErr) throw new Error(convErr.message);
   if (!conv) throw new Error("Conversation not found");
 
+  // One customer has one operational visit per Riyadh day. Reuse it even when
+  // the employee enters another one of its Rekaz services from the inbox.
+  const bookingDay = riyadhDayOf(input.arrivalAt);
+  const { data: sameDayOrders, error: sameDayOrdersError } = await supabase
+    .from("driver_orders")
+    .select(ORDER_COLS_WITH_REKAZ)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("conversation_id", input.conversationId)
+    .gte("arrival_at", `${bookingDay}T00:00:00+03:00`)
+    .lte("arrival_at", `${bookingDay}T23:59:59+03:00`)
+    .neq("status", "cancelled")
+    .neq("dispatch_state", "cancelled");
+  if (sameDayOrdersError) throw new Error(sameDayOrdersError.message);
+  const sameDayOrder = (sameDayOrders ?? []).sort((left, right) =>
+    operationalOrderScore(right) - operationalOrderScore(left) ||
+    String(left.created_at).localeCompare(String(right.created_at)),
+  )[0];
+  if (sameDayOrder) {
+    await clearBookingRequest(input.conversationId).catch(() => {});
+    return sameDayOrder as unknown as DriverOrder;
+  }
+
   const { data: created, error: insErr } = await supabase
     .from("driver_orders")
     .insert({
@@ -475,31 +502,28 @@ export interface VisitService {
 }
 
 /**
- * The services of one visit: everything booked under the same Rekaz order
- * **on the same day**, in the order they are performed.
- *
- * The same-day rule is the whole point. A customer who buys a course of weekly
- * massages gets one Rekaz order id covering all of them, so grouping on that id
- * alone made four appointments three weeks apart into a single visit — spanning
- * 21 days, clamped to the 8-hour ceiling, and dated to the first session, which
- * for the last one is a month in the past. A visit is a day's work at one
- * address, never a package.
+ * The services of one visit: every live Rekaz service for the same customer on
+ * the same Riyadh day, in the order it will be performed. Rekaz can create a
+ * different order id for each service, while Kiara sends one specialist and
+ * one driver for the customer's whole visit.
  */
 async function rekazVisitServices(
   admin: ReturnType<typeof getAdminSupabaseClient>,
-  orderId: string,
+  customerPhone: string,
   arrivalAt: string,
 ): Promise<VisitService[]> {
-  if (!orderId) return [];
+  if (!customerPhone) return [];
+  const day = riyadhDayOf(arrivalAt);
   const { data } = await admin
     .from("rekaz_reservations")
     .select("arrival_at, payload, status, removed_at")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("customer_phone", customerPhone)
     .is("removed_at", null)
-    .filter("payload->order->>id", "eq", orderId);
+    .gte("arrival_at", `${day}T00:00:00+03:00`)
+    .lte("arrival_at", `${day}T23:59:59+03:00`);
   if (!data?.length) return [];
 
-  const day = riyadhDayOf(arrivalAt);
   return data
     .filter((row) => row.status !== "Cancelled")
     .map((row) => {
@@ -522,13 +546,15 @@ async function rekazVisitServices(
  * reservation when it carries no order id (or the lookup turns up nothing,
  * which must never block raising the order).
  *
- * The span runs from the first service to the last, gaps included: the
- * specialist is at the customer's home for the whole of it, and the driver is
- * planned around the full stay rather than around hands-on minutes.
+ * Kiara sends one specialist with one driver for the whole home visit. Rekaz
+ * may give several service rows the same or overlapping times, but they are
+ * still performed sequentially by that one specialist. Start each service at
+ * the later of its scheduled time and the previous service's finish, which
+ * counts every service while preserving any genuine gaps in the schedule.
  */
 async function rekazVisitSpan(
   admin: ReturnType<typeof getAdminSupabaseClient>,
-  orderId: string,
+  customerPhone: string,
   arrivalAt: string,
   durationMinutes: number
 ): Promise<{ startsAt: string; minutes: number; services: VisitService[] }> {
@@ -537,15 +563,16 @@ async function rekazVisitSpan(
     : 60;
   const alone = { startsAt: arrivalAt, minutes: own, services: [] as VisitService[] };
 
-  const services = await rekazVisitServices(admin, orderId, arrivalAt);
+  const services = await rekazVisitServices(admin, customerPhone, arrivalAt);
   if (!services.length) return alone;
 
   let start = Number.POSITIVE_INFINITY;
   let end = Number.NEGATIVE_INFINITY;
   for (const svc of services) {
-    const from = Date.parse(svc.startsAt);
-    start = Math.min(start, from);
-    end = Math.max(end, from + svc.minutes * 60_000);
+    const scheduledStart = Date.parse(svc.startsAt);
+    start = Math.min(start, scheduledStart);
+    const serviceStart = Math.max(scheduledStart, end);
+    end = serviceStart + svc.minutes * 60_000;
   }
   if (!Number.isFinite(start) || end <= start) return alone;
 
@@ -567,7 +594,12 @@ export async function servicesForOrder(
     .select("name, starts_at, minutes")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .eq("order_id", order.id).order("starts_at");
-  if (error) throw new Error(error.message);
+  // The snapshot table was added after initial production deployments. Its
+  // absence must not suppress the Rekaz fallback below for older databases.
+  const snapshotUnavailable =
+    error?.code === "PGRST205" ||
+    /order_visit_services|schema cache/i.test(error?.message ?? "");
+  if (error && !snapshotUnavailable) throw new Error(error.message);
   const approved = (data ?? []).map((row) => ({
     name: row.name,
     startsAt: row.starts_at,
@@ -581,16 +613,15 @@ export async function servicesForOrder(
   // empty message; newly created orders continue to use their frozen snapshot.
   const { data: anchor, error: anchorError } = await admin
     .from("rekaz_reservations")
-    .select("payload")
+    .select("customer_phone")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .eq("source_id", order.rekaz_source_id)
     .is("removed_at", null)
     .maybeSingle();
   if (anchorError) throw new Error(anchorError.message);
-  const orderId = (
-    anchor?.payload as { order?: { id?: string } } | null
-  )?.order?.id?.trim();
-  return orderId ? rekazVisitServices(admin, orderId, order.arrival_at) : [];
+  return anchor?.customer_phone
+    ? rekazVisitServices(admin, String(anchor.customer_phone), order.arrival_at)
+    : [];
 }
 
 export async function createBookingFromReservation(
@@ -620,17 +651,15 @@ export async function createBookingFromReservation(
     location?: { label?: string; lat?: number; lng?: number } | null;
     service?: string;
     providers?: string[];
-    order?: { id?: string } | null;
   };
   const phone = String(reservation.customer_phone ?? "");
 
-  // Several services booked together are one visit and share one Rekaz order
-  // id. The driver is planned around the whole stay, so the order spans from
-  // the first service's arrival to the last one's end — booking only the
-  // service that happened to be tapped would send the car back an hour early.
+  // Every same-day service for this customer is one visit, even when Rekaz
+  // assigns a different order id to each service. The driver is planned around
+  // the whole stay, not only the service card that happened to be tapped.
   const visit = await rekazVisitSpan(
     admin,
-    payload.order?.id?.trim() ?? "",
+    phone,
     String(reservation.arrival_at),
     Number(payload.durationMinutes)
   );
@@ -674,6 +703,49 @@ export async function createBookingFromReservation(
     id: opened!.id,
     customer_phone: phone,
   };
+
+  // Older builds could raise one operational row for each Rekaz service.
+  // Reuse the strongest live row for this customer's day so tapping any other
+  // service never creates another card for the same home visit.
+  const visitDay = riyadhDayOf(visit.startsAt);
+  const { data: existingVisits, error: existingVisitError } = await admin
+    .from("driver_orders")
+    .select(ORDER_COLS_WITH_REKAZ)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .ilike("customer_phone", `%${national}%`)
+    .gte("arrival_at", `${visitDay}T00:00:00+03:00`)
+    .lte("arrival_at", `${visitDay}T23:59:59+03:00`)
+    .neq("status", "cancelled")
+    .neq("dispatch_state", "cancelled");
+  if (existingVisitError) throw new Error(existingVisitError.message);
+
+  const existingVisit = (existingVisits ?? []).sort((left, right) =>
+    operationalOrderScore(right) - operationalOrderScore(left) ||
+      String(left.created_at).localeCompare(String(right.created_at)),
+  )[0];
+  if (existingVisit) {
+    // A not-yet-dispatched row is safe to bring up to the complete visit span.
+    // Sent work keeps its confirmed timing; the calendar still collapses all
+    // of its Rekaz services into this one operational record.
+    if (existingVisit.status === "pending" && !existingVisit.sent_at) {
+      const { data: refreshed, error: refreshError } = await admin
+        .from("driver_orders")
+        .update({
+          arrival_at: visit.startsAt,
+          duration_minutes: Math.min(Math.max(visit.minutes, 5), 480),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingVisit.id)
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .select(ORDER_COLS_WITH_REKAZ)
+        .single();
+      if (refreshError) throw new Error(refreshError.message);
+      await clearBookingRequest(conversation.id).catch(() => {});
+      return refreshed as unknown as DriverOrder;
+    }
+    await clearBookingRequest(conversation.id).catch(() => {});
+    return existingVisit as unknown as DriverOrder;
+  }
 
   // Where she actually is — never what she booked.
   //

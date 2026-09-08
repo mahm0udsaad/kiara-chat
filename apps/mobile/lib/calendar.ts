@@ -67,15 +67,16 @@ const isLiveOrder = (order: OrderSummary) =>
   order.status !== "cancelled" && order.dispatch_state !== "cancelled";
 
 /**
- * Legacy orders do not always carry a Rekaz id. Pick their best match instead
- * of trusting database row order: an exact arrival wins, then a dispatched
- * and assigned order wins over an unfinished duplicate.
+ * Every live operational row for this customer's visit, strongest first.
+ * Older builds could create one row per Rekaz service; returning the whole
+ * set lets the calendar claim those rows as one visit instead of rendering
+ * the leftovers as duplicate cards.
  */
-function matchingOrder(
+function matchingOrders(
   reservation: RekazReservation,
   orders: OrderSummary[],
   claimed?: Set<string>,
-): OrderSummary | undefined {
+): OrderSummary[] {
   const arrival = new Date(reservation.arrivalAt).getTime();
   const candidates = orders.filter(
     (candidate) =>
@@ -108,7 +109,7 @@ function matchingOrder(
       ) ||
       a.id.localeCompare(b.id)
     );
-  })[0];
+  });
 }
 
 /**
@@ -124,11 +125,16 @@ function visitSpan(group: RekazReservation[]): {
 } {
   let start = Number.POSITIVE_INFINITY;
   let end = Number.NEGATIVE_INFINITY;
-  for (const item of group) {
+  for (const item of [...group].sort((a, b) =>
+    a.arrivalAt.localeCompare(b.arrivalAt),
+  )) {
     const from = new Date(item.arrivalAt).getTime();
     if (!Number.isFinite(from)) continue;
     start = Math.min(start, from);
-    end = Math.max(end, from + Math.max(item.durationMinutes || 0, 0) * 60_000);
+    // One specialist performs every service. Overlapping Rekaz slots are not
+    // parallel work; the next service starts after the previous one finishes.
+    const serviceStart = Math.max(from, end);
+    end = serviceStart + Math.max(item.durationMinutes || 0, 0) * 60_000;
   }
   if (!Number.isFinite(start)) {
     const fallback = group[0]?.arrivalAt ?? new Date().toISOString();
@@ -161,44 +167,26 @@ function countedServices(group: RekazReservation[]): string[] {
 /**
  * Pair each Rekaz reservation with its operational order.
  *
- * Preferred key is `order.rekaz_source_id`, written when the order was raised
- * from the calendar. Orders created before that link existed fall back to
- * phone-plus-day, which is a guess and is deliberately confined to this one
- * branch: it cannot tell two same-day bookings for one customer apart.
+ * Kiara's business rule is one home visit per customer per day. Rekaz records
+ * each service as its own reservation/order, so its order id cannot identify
+ * the visit; the customer's normalized phone and Riyadh day can.
  */
 export function mergeVisits(
   reservations: RekazReservation[],
   orders: OrderSummary[],
 ): CalendarVisit[] {
   const liveOrders = orders.filter(isLiveOrder);
-  const ordersBySource = new Map<string, OrderSummary>();
-  for (const order of liveOrders) {
-    if (order.rekaz_source_id) ordersBySource.set(order.rekaz_source_id, order);
-    for (const service of order.approved_services ?? []) {
-      if (service.sourceId) ordersBySource.set(service.sourceId, order);
-    }
-  }
-
   const claimed = new Set<string>();
   const visits: CalendarVisit[] = [];
 
-  // Rekaz lists a customer's several services as separate reservations that
-  // are really one visit, and it already says which: services booked together
-  // share one Rekaz order id. Grouping on that keeps a back-to-back pair —
-  // 11:00 for 30 minutes, then 11:40 for 40 — on one card, which matching on
-  // the arrival time alone could never do. Reservations with no order id fall
-  // back to phone-plus-arrival.
+  // Rekaz lists every service as a separate reservation (and may also give it
+  // a separate order id). The operation is still one customer visit that day.
   const grouped = new Map<string, RekazReservation[]>();
   for (const reservation of reservations) {
-    const orderId = reservation.order?.id?.trim();
-    // The day is part of the key even for an order id, so a group can never
-    // straddle two days and disappear from one of them in the agenda.
-    const linkedOrder = ordersBySource.get(reservation.id);
-    const key = orderId
-      ? `order:${dayKeyOf(reservation.arrivalAt)}|${orderId}`
-      : linkedOrder
-        ? `visit:${linkedOrder.id}`
-        : `slot:${digitsOf(reservation.customerPhone)}|${reservation.arrivalAt}`;
+    const phone = digitsOf(reservation.customerPhone);
+    const key = phone
+      ? `customer:${phone}|${dayKeyOf(reservation.arrivalAt)}`
+      : `reservation:${reservation.id}`;
     const bucket = grouped.get(key);
     if (bucket) bucket.push(reservation);
     else grouped.set(key, [reservation]);
@@ -210,28 +198,29 @@ export function mergeVisits(
     );
     const first = group[0]!;
     const span = visitSpan(group);
-    let order = group
-      .map((item) => ordersBySource.get(item.id))
-      .find(Boolean) as OrderSummary | undefined;
-
-    if (!order) {
-      order = matchingOrder(first, liveOrders, claimed);
-    }
-    if (order) claimed.add(order.id);
+    const matchedOrders = matchingOrders(first, liveOrders, claimed);
+    const order = matchedOrders[0];
+    for (const matched of matchedOrders) claimed.add(matched.id);
+    const responsibleProvider =
+      order?.specialist_name?.trim() ||
+      group.flatMap((item) => item.providers).find((name) => name.trim())?.trim();
 
     visits.push({
       key: `rekaz:${key}`,
-      arrivalAt: order?.arrival_at ?? span.startsAt,
-      endsAt: order?.expected_end_at ?? span.endsAt,
-      durationMinutes: order?.duration_minutes ?? span.minutes,
-      serviceCount: order?.approved_services?.length ?? group.length,
+      arrivalAt: span.startsAt,
+      endsAt: span.endsAt,
+      durationMinutes: span.minutes,
+      serviceCount: group.reduce(
+        (total, item) => total + Math.max(item.quantity || 1, 1),
+        0,
+      ),
       customerName: first.customerName || order?.customer_name || "",
       customerPhone: first.customerPhone,
       reservation: first,
       order: order ?? null,
       conversationId: order?.conversation_id ?? null,
-      services: order?.approved_services?.length ? order.approved_services.map(s => s.name) : countedServices(group),
-      providers: [...new Set(group.flatMap((item) => item.providers))],
+      services: countedServices(group),
+      providers: responsibleProvider ? [responsibleProvider] : [],
       location: first.location?.label?.trim() || order?.customer_location || "",
       amount: group.reduce((total, item) => total + (item.amount || 0), 0),
     });
@@ -340,11 +329,9 @@ export function visitMatchesSearch(
 /* ------------------------------------------------------------------ *
  * The day grid: one column per specialist, one row per hour.
  *
- * The agenda merges a customer's services into one card, which is right for
- * work done back to back and wrong for work done at once: two specialists on
- * the same customer at 08:00 collapsed onto a single line with room for one
- * assignment. The grid places every service in its own specialist's column
- * instead, the way the salon reads its schedule in Rekaz.
+ * Like the agenda, the grid shows one card for a customer's whole same-day
+ * visit. Rekaz may split its services into several rows, but Kiara assigns one
+ * specialist to perform them sequentially.
  * ------------------------------------------------------------------ */
 
 /** A booking with no one on it yet still has to appear somewhere. */
@@ -400,15 +387,13 @@ const isCancelled = (reservation: RekazReservation) =>
   reservation.status === "Cancelled";
 
 /**
- * One specialist, one customer, one card.
+ * Defensive folding for duplicate slots that reach the same column.
  *
  * A customer's services under the same specialist are one stretch of work, and
  * Rekaz lists them as separate reservations minutes apart. Placed individually
  * they overlap, each takes a lane, and the column splits four ways into
  * slivers too narrow to read — which is how bookings went missing on the grid.
- * Runs that touch or overlap are merged into the span they really occupy. Work
- * by a DIFFERENT specialist is never merged in: keeping that apart is the
- * whole point of the grid.
+ * Runs that touch or overlap are merged into the span they really occupy.
  */
 function mergeRuns(slots: ScheduleSlot[]): ScheduleSlot[] {
   const byCustomer = new Map<string, ScheduleSlot[]>();
@@ -493,49 +478,51 @@ export function buildDaySchedule(
   dayKey: string,
 ): DaySchedule {
   const liveOrders = orders.filter(isLiveOrder);
-  const ordersBySource = new Map<string, OrderSummary>();
-  for (const order of liveOrders) {
-    if (order.rekaz_source_id) ordersBySource.set(order.rekaz_source_id, order);
-    for (const service of order.approved_services ?? []) {
-      if (service.sourceId) ordersBySource.set(service.sourceId, order);
-    }
-  }
-
   const byColumn = new Map<string, ScheduleSlot[]>();
   const names = new Map<string, string>();
+  const grouped = new Map<string, RekazReservation[]>();
 
   for (const reservation of reservations) {
     if (isCancelled(reservation)) continue;
     if (dayKeyOf(reservation.arrivalAt) !== dayKey) continue;
+    const phone = digitsOf(reservation.customerPhone);
+    const key = phone ? `${phone}|${dayKey}` : reservation.id;
+    const group = grouped.get(key) ?? [];
+    group.push(reservation);
+    grouped.set(key, group);
+  }
 
-    const start = riyadhMinutesOf(reservation.arrivalAt);
-    const end = start + Math.max(reservation.durationMinutes || 0, 15);
-    const order =
-      ordersBySource.get(reservation.id) ??
-      matchingOrder(reservation, liveOrders) ??
-      null;
-
-    // A service Rekaz lists under two providers is worked by both, so it is
-    // drawn in both columns rather than arbitrarily assigned to one.
-    const providers = reservation.providers.map((p) => p.trim()).filter(Boolean);
-    const columns = providers.length ? providers : [UNASSIGNED_COLUMN];
-    for (const columnId of columns) {
-      names.set(columnId, columnId === UNASSIGNED_COLUMN ? "بدون مقدمة" : columnId);
-      const bucket = byColumn.get(columnId) ?? [];
-      bucket.push({
-        key: `${reservation.id}:${columnId}`,
-        columnId,
-        startMinutes: start,
-        endMinutes: end,
-        lane: 0,
-        lanes: 1,
-        reservation,
-        services: [reservation.service?.trim()].filter(Boolean) as string[],
-        serviceCount: 1,
-        order,
-      });
-      byColumn.set(columnId, bucket);
-    }
+  for (const [visitKey, unordered] of grouped) {
+    const group = [...unordered].sort((a, b) =>
+      a.arrivalAt.localeCompare(b.arrivalAt),
+    );
+    const first = group[0]!;
+    const span = visitSpan(group);
+    const order = matchingOrders(first, liveOrders)[0] ?? null;
+    // An explicit operational assignment wins. Before dispatch, use the first
+    // Rekaz provider as the single specialist responsible for the whole visit.
+    const provider =
+      order?.specialist_name?.trim() ||
+      group.flatMap((item) => item.providers).find((name) => name.trim())?.trim();
+    const columnId = provider || UNASSIGNED_COLUMN;
+    names.set(columnId, columnId === UNASSIGNED_COLUMN ? "بدون مقدمة" : columnId);
+    const bucket = byColumn.get(columnId) ?? [];
+    bucket.push({
+      key: `visit:${visitKey}`,
+      columnId,
+      startMinutes: riyadhMinutesOf(span.startsAt),
+      endMinutes: riyadhMinutesOf(span.startsAt) + Math.max(span.minutes, 15),
+      lane: 0,
+      lanes: 1,
+      reservation: first,
+      services: countedServices(group),
+      serviceCount: group.reduce(
+        (total, item) => total + Math.max(item.quantity || 1, 1),
+        0,
+      ),
+      order,
+    });
+    byColumn.set(columnId, bucket);
   }
 
   const slots: ScheduleSlot[] = [];
