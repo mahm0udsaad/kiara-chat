@@ -11,7 +11,11 @@ import {
   ApiError,
   apiRequest,
   apiUpload,
+  formatMegabytes,
+  localUploadFileSize,
+  maxDirectUploadBytes,
   SEND_TIMEOUT_MS,
+  uploadFileToSignedUrl,
   type UploadFile,
 } from "@/lib/api";
 import { fieldNotificationDeviceId } from "@/lib/notifications";
@@ -180,7 +184,11 @@ export function useConversations(
         previousKey?.[8] === (filters.handling ?? "");
       return sameViewAndFilters ? previous : undefined;
     },
-    refetchInterval: 30_000,
+    // InboxLiveProvider invalidates this query when a conversation changes,
+    // and React Query refreshes stale data when the app returns to the
+    // foreground. Polling used to reload every conversation plus all of its
+    // classification data from Supabase every 30 seconds on every active
+    // device, even while nothing changed.
   });
 }
 
@@ -189,7 +197,8 @@ export function useConversation(id: string) {
     queryKey: queryKeys.conversation(id),
     queryFn: () => apiRequest<ConversationDetail>(`/conversations/${id}`),
     enabled: Boolean(id),
-    refetchInterval: 15_000,
+    // Realtime and push events invalidate the open conversation. Avoid a
+    // second unconditional polling loop while the thread sits unchanged.
   });
 }
 
@@ -313,22 +322,52 @@ export function useReply(id: string) {
 export function useSendMedia(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: {
+    mutationFn: async (input: {
       file: UploadFile;
       caption?: string;
       voiceNote?: boolean;
       idempotencyKey: string;
-    }) =>
-      apiUpload<{
+    }) => {
+      const sizeBytes = localUploadFileSize(input.file);
+      const sizeLimit = maxDirectUploadBytes(input.file.type);
+      if (sizeBytes > sizeLimit) {
+        throw new ApiError(
+          `الملف أكبر من الحد المسموح (${formatMegabytes(sizeLimit)}).`,
+          413,
+          "FILE_TOO_LARGE",
+        );
+      }
+      const ticket = await apiRequest<{
+        signedUrl: string;
+        storagePath: string;
+      }>(`/conversations/${id}/media/upload`, {
+        method: "POST",
+        body: JSON.stringify({
+          contentType: input.file.type,
+          filename: input.file.name,
+          idempotencyKey: input.idempotencyKey,
+          sizeBytes,
+        }),
+      });
+      await uploadFileToSignedUrl(ticket.signedUrl, input.file);
+      return apiRequest<{
         conversationId: string;
         messageId: string | null;
         deliveryStatus: string;
       }>(`/conversations/${id}/media`, {
-        file: input.file,
-        ...(input.caption ? { caption: input.caption } : {}),
-        ...(input.voiceNote ? { voiceNote: "true" } : {}),
-        idempotencyKey: input.idempotencyKey,
-      }, { timeoutMs: SEND_TIMEOUT_MS }),
+        method: "POST",
+        body: JSON.stringify({
+          caption: input.caption ?? "",
+          contentType: input.file.type,
+          filename: input.file.name,
+          idempotencyKey: input.idempotencyKey,
+          sizeBytes,
+          storagePath: ticket.storagePath,
+          voiceNote: input.voiceNote === true,
+        }),
+        timeoutMs: SEND_TIMEOUT_MS,
+      });
+    },
     onSuccess: async () => {
       // The open thread is awaited because the screen renders it: the reply
       // should be in the list before the composer clears. The inbox list is

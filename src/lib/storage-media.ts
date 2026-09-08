@@ -15,6 +15,15 @@ export const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
  * row has already been written.
  */
 export const MAX_MEDIA_BYTES = 16 * 1024 * 1024;
+/** WhatsApp's tighter per-image ceiling; other media can use the full cap. */
+export const MAX_IMAGE_MEDIA_BYTES = 5 * 1024 * 1024;
+
+export function maxMediaBytesForContentType(contentType: string): number {
+  const normalized = contentType.toLowerCase().split(";")[0].trim();
+  return normalized.startsWith("image/")
+    ? MAX_IMAGE_MEDIA_BYTES
+    : MAX_MEDIA_BYTES;
+}
 
 const CONTENT_TYPE_TO_EXT: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -59,12 +68,16 @@ export function buildMediaStoragePath(params: {
   restaurantId: string;
   conversationId: string;
   contentType: string;
+  /** Stable for direct-upload retries; random for ordinary server uploads. */
+  objectId?: string;
 }): string {
   const now = new Date();
   const yyyy = now.getUTCFullYear().toString();
   const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
   const ext = extFromContentType(params.contentType);
-  const id = `${Date.now().toString(36)}${randomUUID().replace(/-/g, "").slice(0, 18)}`;
+  const id = params.objectId
+    ? params.objectId.replace(/-/g, "")
+    : `${Date.now().toString(36)}${randomUUID().replace(/-/g, "").slice(0, 18)}`;
   return `${params.restaurantId}/${params.conversationId}/${yyyy}/${mm}/${id}.${ext}`;
 }
 
@@ -92,6 +105,8 @@ export async function uploadBase64Media(params: {
     original_filename: params.originalFilename ?? null,
     delivery_status: "failed",
   };
+  // Inbound provider media keeps the existing 16 MB archival ceiling. The
+  // stricter 5 MB image limit applies only to outbound WhatsApp sends.
   if (buffer.byteLength > MAX_MEDIA_BYTES) {
     return { ...base, delivery_status: "too_large" };
   }

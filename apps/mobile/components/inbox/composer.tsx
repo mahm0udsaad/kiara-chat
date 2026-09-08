@@ -32,12 +32,11 @@ import { InlineAlert } from "@/components/screen-state";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { commitFeedback, errorFeedback, tapFeedback } from "@/lib/haptics";
-import { MAX_UPLOAD_BYTES, formatMegabytes } from "@/lib/api";
+import { formatMegabytes, maxDirectUploadBytes } from "@/lib/api";
 import { useBootstrap, useReply, useSendMedia } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { CatalogItem } from "@/types/api";
 
-/** Matches the server's cap, so an oversized file fails before it uploads. */
 /** The longest edge a photo is re-encoded to before it leaves the phone. */
 const MAX_IMAGE_EDGE = 1280;
 
@@ -119,27 +118,40 @@ export function Composer({
       allowsMultipleSelection: true,
       selectionLimit: 5,
       quality: 0.85,
+      // WhatsApp accepts MP4 video with H.264 video and AAC audio. iOS's
+      // default passthrough can otherwise return HEVC/MOV that Twilio rejects.
+      videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
+      preferredAssetRepresentationMode:
+        ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
     });
     if (result.canceled) return;
 
-    const oversized = result.assets.filter(
-      (asset) => (asset.fileSize ?? 0) > MAX_UPLOAD_BYTES,
+    const selected = result.assets.map((asset) => {
+      const isImage = asset.type !== "video";
+      const mimeType = asset.mimeType ?? (isImage ? "image/jpeg" : "video/mp4");
+      return { asset, isImage, mimeType };
+    });
+    const oversized = selected.filter(
+      ({ asset, mimeType }) =>
+        (asset.fileSize ?? 0) > maxDirectUploadBytes(mimeType),
     );
     if (oversized.length) {
       setMediaError(
-        `بعض الملفات أكبر من الحد المسموح (${formatMegabytes(MAX_UPLOAD_BYTES)}).`,
+        "بعض الملفات أكبر من حد واتساب (5 ميجابايت للصور و16 ميجابايت للفيديو والملفات).",
       );
     }
     stage(
-      result.assets
-        .filter((asset) => (asset.fileSize ?? 0) <= MAX_UPLOAD_BYTES)
-        .map((asset, index) => {
-          const isImage = asset.type !== "video";
+      selected
+        .filter(
+          ({ asset, mimeType }) =>
+            (asset.fileSize ?? 0) <= maxDirectUploadBytes(mimeType),
+        )
+        .map(({ asset, isImage, mimeType }) => {
           return {
             id: Crypto.randomUUID(),
             uri: asset.uri,
             name: asset.fileName ?? fallbackName(asset.uri, isImage ? "jpg" : "mp4"),
-            mimeType: asset.mimeType ?? (isImage ? "image/jpeg" : "video/mp4"),
+            mimeType,
             isImage,
           };
         }),
@@ -174,13 +186,14 @@ export function Composer({
     if (result.canceled) return;
     const asset = result.assets[0];
     if (!asset) return;
-    if ((asset.size ?? 0) > MAX_UPLOAD_BYTES) {
+    const mimeType = asset.mimeType ?? "application/octet-stream";
+    const sizeLimit = maxDirectUploadBytes(mimeType);
+    if ((asset.size ?? 0) > sizeLimit) {
       setMediaError(
-        `الملف أكبر من الحد المسموح (${formatMegabytes(MAX_UPLOAD_BYTES)}).`,
+        `الملف أكبر من الحد المسموح (${formatMegabytes(sizeLimit)}).`,
       );
       return;
     }
-    const mimeType = asset.mimeType ?? "application/octet-stream";
     stage([
       {
         id: Crypto.randomUUID(),

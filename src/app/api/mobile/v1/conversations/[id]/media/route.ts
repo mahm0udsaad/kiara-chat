@@ -1,11 +1,9 @@
 /**
- * POST /api/mobile/v1/conversations/[id]/media — send a photo, a document, or
- * a voice note from the phone.
+ * POST /api/mobile/v1/conversations/[id]/media — send a photo, video,
+ * document, or voice note from the phone.
  *
- * Multipart rather than base64 JSON, for the same reason the web route is:
- * the phone streams the file off disk instead of inflating it by a third on
- * the way up. The assignment rule from the reply route is repeated here on
- * purpose — an upload must not become a way into a thread someone else holds.
+ * New clients commit a file already uploaded through the signed-URL endpoint,
+ * so large videos never cross Vercel. Multipart remains for older app builds.
  */
 import { replyDenialFor } from "@/lib/conversation-reply-access";
 import { getConversationById } from "@/lib/inbox";
@@ -16,7 +14,7 @@ import {
   mobileError,
   mobileServerError,
 } from "@/lib/mobile/http";
-import { MAX_MEDIA_BYTES } from "@/lib/storage-media";
+import { maxMediaBytesForContentType } from "@/lib/storage-media";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -31,52 +29,6 @@ export async function POST(
 ) {
   const auth = await authorizeMobileRequest(request);
   if (auth.response) return auth.response;
-
-  let form: FormData;
-  try {
-    form = await request.formData();
-  } catch {
-    return mobileError(
-      400,
-      "INVALID_FORM_DATA",
-      "الطلب يجب أن يكون multipart/form-data"
-    );
-  }
-
-  const file = form.get("file");
-  if (!(file instanceof File) || file.size === 0) {
-    return mobileError(400, "EMPTY_FILE", "لم يتم اختيار ملف");
-  }
-  if (file.size > MAX_MEDIA_BYTES) {
-    return mobileError(
-      413,
-      "FILE_TOO_LARGE",
-      "الملف أكبر من الحد المسموح (20 ميجابايت)"
-    );
-  }
-
-  const caption = ((form.get("caption") as string | null) ?? "")
-    .trim()
-    .slice(0, MAX_CAPTION_LENGTH);
-  // Only audio captured with the microphone becomes a WhatsApp voice note; an
-  // audio file picked from storage stays an ordinary attachment.
-  const voiceNote = form.get("voiceNote") === "true";
-  const idempotencyKey = String(form.get("idempotencyKey") ?? "");
-  if (!UUID.test(idempotencyKey)) {
-    return mobileError(
-      400,
-      "INVALID_IDEMPOTENCY_KEY",
-      "idempotencyKey must be a UUID",
-    );
-  }
-  const contentType = file.type || "application/octet-stream";
-  if (voiceNote && !contentType.toLowerCase().startsWith("audio/")) {
-    return mobileError(
-      400,
-      "NOT_AUDIO",
-      "الملاحظة الصوتية يجب أن تكون ملفًا صوتيًا"
-    );
-  }
 
   const { id } = await params;
   const viewer = {
@@ -101,17 +53,118 @@ export async function POST(
       return mobileError(denial.status, denial.code, denial.message);
     }
 
+    const requestContentType = request.headers.get("content-type") ?? "";
+    let caption: string;
+    let voiceNote: boolean;
+    let idempotencyKey: string;
+    let media:
+      | { buffer: Buffer; contentType: string; filename: string | null }
+      | {
+          storagePath: string;
+          sizeBytes: number;
+          contentType: string;
+          filename: string | null;
+        };
+
+    if (requestContentType.toLowerCase().includes("application/json")) {
+      const body = (await request.json().catch(() => null)) as {
+        caption?: unknown;
+        contentType?: unknown;
+        filename?: unknown;
+        idempotencyKey?: unknown;
+        sizeBytes?: unknown;
+        storagePath?: unknown;
+        voiceNote?: unknown;
+      } | null;
+      const contentType =
+        typeof body?.contentType === "string" ? body.contentType : "";
+      const storagePath =
+        typeof body?.storagePath === "string" ? body.storagePath : "";
+      const sizeBytes = Number(body?.sizeBytes);
+      caption =
+        typeof body?.caption === "string"
+          ? body.caption.trim().slice(0, MAX_CAPTION_LENGTH)
+          : "";
+      voiceNote = body?.voiceNote === true;
+      idempotencyKey = String(body?.idempotencyKey ?? "");
+      if (
+        !contentType ||
+        !storagePath ||
+        !Number.isSafeInteger(sizeBytes) ||
+        sizeBytes <= 0
+      ) {
+        return mobileError(400, "INVALID_MEDIA", "بيانات الملف غير مكتملة");
+      }
+      media = {
+        storagePath,
+        sizeBytes,
+        contentType,
+        filename:
+          typeof body?.filename === "string"
+            ? body.filename.trim().slice(0, 255) || null
+            : null,
+      };
+    } else {
+      let form: FormData;
+      try {
+        form = await request.formData();
+      } catch {
+        return mobileError(
+          400,
+          "INVALID_FORM_DATA",
+          "الطلب يجب أن يكون multipart/form-data",
+        );
+      }
+      const file = form.get("file");
+      if (!(file instanceof File) || file.size === 0) {
+        return mobileError(400, "EMPTY_FILE", "لم يتم اختيار ملف");
+      }
+      const contentType = file.type || "application/octet-stream";
+      const sizeLimit = maxMediaBytesForContentType(contentType);
+      if (file.size > sizeLimit) {
+        return mobileError(
+          413,
+          "FILE_TOO_LARGE",
+          `الملف أكبر من الحد المسموح (${sizeLimit / (1024 * 1024)} ميجابايت)`,
+        );
+      }
+      caption = ((form.get("caption") as string | null) ?? "")
+        .trim()
+        .slice(0, MAX_CAPTION_LENGTH);
+      voiceNote = form.get("voiceNote") === "true";
+      idempotencyKey = String(form.get("idempotencyKey") ?? "");
+      media = {
+        buffer: Buffer.from(await file.arrayBuffer()),
+        contentType,
+        filename: file.name || null,
+      };
+    }
+
+    if (!UUID.test(idempotencyKey)) {
+      return mobileError(
+        400,
+        "INVALID_IDEMPOTENCY_KEY",
+        "idempotencyKey must be a UUID",
+      );
+    }
+    if (
+      voiceNote &&
+      !media.contentType.toLowerCase().startsWith("audio/")
+    ) {
+      return mobileError(
+        400,
+        "NOT_AUDIO",
+        "الملاحظة الصوتية يجب أن تكون ملفًا صوتيًا",
+      );
+    }
+
     const result = await sendMediaReply(
       id,
       {
         email: auth.session.email,
         teamMemberId: auth.session.teamMemberId,
       },
-      {
-        buffer: Buffer.from(await file.arrayBuffer()),
-        contentType,
-        filename: file.name || null,
-      },
+      media,
       caption,
       { ptt: voiceNote, clientRequestId: idempotencyKey }
     );

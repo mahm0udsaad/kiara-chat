@@ -29,7 +29,9 @@ import { twilioErrorCode, getTwilioSenderStatus } from "@/lib/transport/twilio";
 import {
   uploadBase64Media,
   messageTypeFromContentType,
-  MAX_MEDIA_BYTES,
+  maxMediaBytesForContentType,
+  WHATSAPP_MEDIA_BUCKET,
+  type StoredMediaSlot,
 } from "@/lib/storage-media";
 import type {
   BookingStage,
@@ -776,14 +778,20 @@ export async function sendTemplateReply(
 }
 
 /**
- * Send an image / document / voice note. Stores our own copy in the bucket
- * first so the thread renders it even if the WhatsApp send fails, then hands
- * the bytes to the transport.
+ * Send an image, video, document, or voice note. The file is stored in our
+ * bucket first so the thread renders it even if the WhatsApp send fails.
  */
 export async function sendMediaReply(
   conversationId: string,
   sender: { email: string | null; teamMemberId?: string | null },
-  file: { buffer: Buffer; contentType: string; filename: string | null },
+  file:
+    | { buffer: Buffer; contentType: string; filename: string | null }
+    | {
+        storagePath: string;
+        sizeBytes: number;
+        contentType: string;
+        filename: string | null;
+      },
   caption: string,
   options: { ptt?: boolean; clientRequestId?: string } = {},
 ): Promise<{ messageId: string | null; sent: boolean }> {
@@ -808,21 +816,69 @@ export async function sendMediaReply(
     return { messageId: alreadyRecorded.id as string, sent: false };
   }
 
-  if (file.buffer.byteLength > MAX_MEDIA_BYTES) {
-    throw new Error("الملف أكبر من الحد المسموح (16 ميجابايت)");
+  const normalizedContentType = file.contentType
+    .toLowerCase()
+    .split(";")[0]
+    .trim();
+  if (
+    normalizedContentType.startsWith("video/") &&
+    normalizedContentType !== "video/mp4"
+  ) {
+    throw new Error("صيغة الفيديو غير مدعومة. اختاري فيديو MP4.");
+  }
+  const sizeLimit = maxMediaBytesForContentType(normalizedContentType);
+  let base64 = "";
+  let slot: StoredMediaSlot;
+  if ("buffer" in file) {
+    if (file.buffer.byteLength > sizeLimit) {
+      throw new Error(
+        `الملف أكبر من الحد المسموح (${sizeLimit / (1024 * 1024)} ميجابايت)`,
+      );
+    }
+    base64 = file.buffer.toString("base64");
+    slot = await uploadBase64Media({
+      restaurantId: KIARA_RESTAURANT_ID,
+      conversationId,
+      contentType: normalizedContentType,
+      base64,
+      originalFilename: file.filename,
+    });
+  } else {
+    const expectedPrefix = `${KIARA_RESTAURANT_ID}/${conversationId}/`;
+    if (!file.storagePath.startsWith(expectedPrefix)) {
+      throw new Error("مسار الملف غير صالح لهذه المحادثة");
+    }
+    const { data: stored, error: storedError } = await admin.storage
+      .from(WHATSAPP_MEDIA_BUCKET)
+      .info(file.storagePath);
+    if (storedError || !stored) {
+      throw new Error("لم يكتمل رفع الملف. حاولي مرة أخرى.");
+    }
+    const actualSize = stored.size ?? file.sizeBytes;
+    const storedContentType = (stored.contentType || normalizedContentType)
+      .toLowerCase()
+      .split(";")[0]
+      .trim();
+    if (actualSize <= 0 || actualSize > sizeLimit) {
+      throw new Error(
+        `الملف أكبر من الحد المسموح (${sizeLimit / (1024 * 1024)} ميجابايت)`,
+      );
+    }
+    if (storedContentType !== normalizedContentType) {
+      throw new Error("نوع الملف المرفوع لا يطابق الملف المحدد");
+    }
+    slot = {
+      storage_path: file.storagePath,
+      content_type: normalizedContentType,
+      size_bytes: actualSize,
+      original_filename: file.filename,
+      delivery_status: "stored",
+    };
   }
 
-  const base64 = file.buffer.toString("base64");
   const messageType = options.ptt
     ? "voice"
-    : messageTypeFromContentType(file.contentType);
-  const slot = await uploadBase64Media({
-    restaurantId: KIARA_RESTAURANT_ID,
-    conversationId,
-    contentType: file.contentType,
-    base64,
-    originalFilename: file.filename,
-  });
+    : messageTypeFromContentType(normalizedContentType);
 
   const { data: msg, error } = await admin
     .from("messages")
@@ -862,7 +918,7 @@ export async function sendMediaReply(
   deliverInBackground(messageId, conversationId, (transport, sendOptions) =>
     transport.sendMedia(conv.customer_phone as string, {
       base64,
-      contentType: file.contentType,
+      contentType: normalizedContentType,
       filename: file.filename ?? undefined,
       caption: caption || undefined,
       ptt: options.ptt,

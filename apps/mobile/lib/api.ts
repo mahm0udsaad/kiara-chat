@@ -1,4 +1,5 @@
 import { fetch } from "expo/fetch";
+import { File, UploadType } from "expo-file-system";
 
 import { supabase } from "@/lib/supabase";
 
@@ -45,7 +46,7 @@ export const AI_TIMEOUT_MS = 45_000;
 export const SEND_TIMEOUT_MS = 65_000;
 
 /**
- * The real ceiling on anything we upload.
+ * Ceiling for legacy uploads that still cross a Vercel function.
  *
  * The API rejects above 16 MB, but that limit is never reached: the app is
  * served by Vercel functions, which refuse a request body over 4.5 MB before
@@ -58,7 +59,17 @@ export const SEND_TIMEOUT_MS = 65_000;
  */
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
-/** `4.2 ميجابايت` — for an error the employee can act on. */
+/** Direct-to-Storage media avoids Vercel's body cap and uses WhatsApp's cap. */
+export const MAX_DIRECT_MEDIA_UPLOAD_BYTES = 16 * 1024 * 1024;
+export const MAX_DIRECT_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024;
+
+export function maxDirectUploadBytes(contentType: string): number {
+  return contentType.toLowerCase().startsWith("image/")
+    ? MAX_DIRECT_IMAGE_UPLOAD_BYTES
+    : MAX_DIRECT_MEDIA_UPLOAD_BYTES;
+}
+
+/** `4.0 ميجابايت` — for an error the employee can act on. */
 export function formatMegabytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} ميجابايت`;
 }
@@ -161,6 +172,65 @@ export type UploadFile = {
   name: string;
   type: string;
 };
+
+/** Size of a picker-backed file without loading its bytes into JavaScript. */
+export function localUploadFileSize(file: UploadFile): number {
+  const size = new File(file.uri).size;
+  if (!Number.isSafeInteger(size) || size <= 0) {
+    throw new ApiError("تعذّر قراءة حجم الملف", 0, "INVALID_FILE");
+  }
+  return size;
+}
+
+/**
+ * Stream a picker-backed file straight to a short-lived Supabase upload URL.
+ * The signed URL carries its own narrow authorization; no session or storage
+ * credential is attached to the request.
+ */
+export async function uploadFileToSignedUrl(
+  signedUrl: string,
+  file: UploadFile,
+  options: { timeoutMs?: number } = {},
+): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    options.timeoutMs ?? 3 * 60_000,
+  );
+  try {
+    const result = await new File(file.uri).upload(signedUrl, {
+      httpMethod: "PUT",
+      uploadType: UploadType.BINARY_CONTENT,
+      headers: {
+        "cache-control": "max-age=3600",
+        "content-type": file.type,
+        "x-upsert": "true",
+      },
+      signal: controller.signal,
+    });
+    if (result.status < 200 || result.status >= 300) {
+      let message = "تعذّر رفع الملف إلى التخزين";
+      try {
+        const payload = JSON.parse(result.body) as { message?: string };
+        if (payload.message) message = payload.message;
+      } catch {
+        // Supabase can answer plain text at the proxy boundary.
+      }
+      throw new ApiError(message, result.status, "STORAGE_UPLOAD_FAILED");
+    }
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(
+      controller.signal.aborted
+        ? "استغرق رفع الفيديو وقتًا طويلًا. حاولي مرة أخرى."
+        : "تعذّر رفع الملف. تحققي من الإنترنت.",
+      0,
+      controller.signal.aborted ? "TIMEOUT" : "STORAGE_UPLOAD_FAILED",
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Multipart POST to the mobile API.
