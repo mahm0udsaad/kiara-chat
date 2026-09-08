@@ -124,6 +124,8 @@ for (const row of ordered) {
   const category = row.categories.find((c) => c && c !== NO_CATEGORY) ?? FALLBACK_CATEGORY;
   const price = row.options[0]?.price ?? null;
   const description = describe(row);
+  const descriptionIsDurationOnly =
+    row.options.length === 1 && !row.options[0]?.label && Boolean(row.options[0]?.duration);
   const exact = byName.get(key);
   const current = exact && !claimed.has(exact.id) ? exact : looseMatch(key);
   if (current) claimed.add(current.id);
@@ -151,8 +153,15 @@ for (const row of ordered) {
   if (price != null && Number(current.price) !== price) patch.price = price;
   if (current.category !== category) patch.category = category;
   if (row.imageUrl && current.image_url !== row.imageUrl) patch.image_url = row.imageUrl;
-  // Never blank a description the crawl captured; only replace it with a real one.
-  if (description && current.description_ar !== description) patch.description_ar = description;
+  // Preserve a richer catalog description when Rekaz only supplies a duration.
+  // Variant price lists remain authoritative and are still refreshed normally.
+  if (
+    description &&
+    current.description_ar !== description &&
+    !(descriptionIsDurationOnly && current.description_ar?.trim())
+  ) {
+    patch.description_ar = description;
+  }
   if (current.is_available === false) patch.is_available = true;
   if (Object.keys(patch).length) plan.update.push({ id: current.id, name: current.name_ar, patch });
 }

@@ -1,4 +1,4 @@
-# Kiara's live service list, pulled from platform.rekaz.io/products on 2026-08-02.
+# Kiara's live service list, last verified against rekaz.io/kyara-sba-1/ar/products on 2026-09-08.
 # Columns: name | type | categories | status | imageId | options
 #   options = "label~price~duration" joined by ";" (empty label = the service itself)
 #   imageId  = https://cdn.rekaz.io/tenants/3a1f3638-e6dc-d864-4aa7-df60cdbb1146/<imageId>.webp
@@ -35,7 +35,9 @@
 باقة خدمتين|حجز|اختر القسم|داخلي||~250~ساعة و 30 دقيقة
 بكج اخشاب|باقة|قسم الشعر والحف, قسم المساج, +4|داخلي|3a1f66ab-ab83-10ac-083d-3423175d946e|~250~
 التوصيل 10|منتج|اختر القسم|داخلي||~10~
-بكج عيد الميلاد 🍃|هدية|اختر القسم|داخلي|3a21211e-431d-aa9b-8307-62083b0570d1|~389~
+بكج عيد الميلاد 🍃|هدية|البكجات|منشور|3a21211e-431d-aa9b-8307-62083b0570d1|~598~
+بكج النفـاس 🍃|حجز|البكجات|منشور|3a230625-324d-1276-0c6d-8efc30eefd6c|~785~6 ساعات
+بكـج العـروس 🍃|حجز|البكجات|منشور|3a23061f-85fa-14b0-1d56-2f6ed9ab5e42|~1125~6 ساعات
 مساج الحامل 🍃 Air Cupping Massage|حجز|قسم المساج|منشور|3a227e81-7d8b-583b-c9c0-f07dd9fc3b38|- مساج الحامل 60 د - 🍃~185~ساعة;- مساج الحامل 40 د - 🍃~150~40 دقيقة
 مساج كاسات الهوى 🍃 Cupping Massage|حجز|قسم المساج|منشور|3a22795d-cc25-ece7-7d85-3c6907a98480|~200~ساعة
 مساج العملات المعدنية 🍃 Metal Coin Massage|حجز|قسم المساج|منشور|3a22798a-f2e0-8c47-aeb6-bc6dd76ccbbb|- مساج العملات المعدنية 60 د - 🍃~185~ساعة;- مساج العملات المعدنية 40 د - 🍃~150~40 دقيقة
