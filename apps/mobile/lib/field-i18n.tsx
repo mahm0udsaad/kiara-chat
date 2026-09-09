@@ -3,7 +3,7 @@ import type { FlexStyle, TextStyle } from "react-native";
 
 import type { FieldOrderAction, TripType } from "@/types/api";
 
-export const FIELD_LOCALES = ["ar", "id", "fil", "ru", "am"] as const;
+export const FIELD_LOCALES = ["ar", "en", "id", "fil", "ru", "am"] as const;
 export type FieldLocale = (typeof FIELD_LOCALES)[number];
 
 const arabic = {
@@ -128,6 +128,52 @@ const arabic = {
 
 type TranslationKey = keyof typeof arabic;
 type Dictionary = Record<TranslationKey, string>;
+
+const english: Dictionary = {
+  preparingAccount: "Preparing your account…", prepareAccountError: "Unable to prepare your account",
+  myOrders: "My Orders", orderDetails: "Order Details", account: "Account", loading: "Loading…",
+  retry: "Try again", cancel: "Back", confirm: "Confirm", today: "Today", upcoming: "Upcoming",
+  previous: "Previous", completedTab: "Completed", noTodayTitle: "No orders today",
+  noTodayDetail: "Orders assigned to you today will appear here.", noUpcomingTitle: "No upcoming orders",
+  noUpcomingDetail: "There are no trips scheduled after today.", noPreviousTitle: "No previous orders",
+  noPreviousDetail: "There are no older orders in your history.", noCompletedTitle: "No completed orders",
+  noCompletedDetail: "Orders appear here after the driver confirms the return trip.", openOrder: "Open {customer}'s order",
+  completed: "Completed", waitingForYou: "Waiting for you", inProgress: "In progress", orderFinished: "Order completed",
+  hello: "Hello {name}", ordersGuidance: "Open the order and follow only the step shown.",
+  filterOrders: "Filter my orders", loadingOrders: "Loading orders…", ordersLoadError: "Unable to load orders",
+  stepConfirmRide: "Confirm trip", stepPickup: "Specialist pickup", stepStartService: "Start service",
+  stepCompleteService: "Complete service", stepDriverReturn: "Driver return", managementNotes: "Management notes",
+  customerDoor: "Customer's door", customerDoorPhoto: "Customer door photo", stopListening: "Stop listening",
+  listenToNote: "Listen to note", managementVoiceNote: "Voice note from management", loadingOrder: "Loading order…",
+  orderLoadError: "Unable to load order", orderNotFound: "Order not found", customer: "Customer",
+  waitingNextStep: "Waiting for the next step", orderDetailsSection: "Order details", appointment: "Appointment time",
+  serviceDuration: "Service duration", tripType: "Trip type", oneWay: "One way", roundTrip: "Round trip",
+  customerLocation: "Customer location", openLocation: "Open location", mapLocation: "Location on map", orderTeam: "Order team",
+  specialist: "Specialist", driver: "Driver", unassignedFeminine: "Unassigned", unassignedMasculine: "Unassigned",
+  automaticReminder: "An automatic reminder will be sent if the required step is not completed within 30 minutes.",
+  driverArrived: "I arrived at the specialist's location", confirmStep: "Confirm step",
+  actionFailed: "Unable to save this step. Check your connection and try again.", notifications: "Notifications", enabled: "Enabled",
+  disabled: "Disabled", checkingNotifications: "Checking notification status…", sendTestNotification: "Send test notification",
+  enableNotifications: "Enable notifications", notificationRegistered: "Notifications are enabled on this device.",
+  notificationMuted: "Notifications are muted on this device.", notificationSimulator: "Notifications do not work in the simulator. Use a physical device.",
+  notificationUnsupported: "Notifications are not supported in this test version.", notificationNoProject: "Notification setup is incomplete.",
+  notificationDenied: "Notifications are blocked. Enable them in device settings and try again.", notificationFailed: "Unable to enable notifications.",
+  pushWorksTitle: "Notifications work", pushWorksBody: "The test notification was delivered to this device.",
+  pushSentTitle: "Test sent", pushSentBody: "The notification service accepted the message, but delivery is not confirmed yet. Wait a moment.",
+  pushMissingTitle: "Test not received", pushNoToken: "No notification token is registered for this device. Re-enable notifications first.",
+  pushRejected: "The notification service rejected the request.", pushTestError: "Unable to test notifications", roleSpecialist: "Specialist",
+  roleDriver: "Driver", appLanguage: "App language", legalSupport: "Legal and support", privacy: "Privacy",
+  privacyPolicy: "Privacy Policy", openPrivacy: "Open the privacy policy", terms: "Terms", termsOfUse: "App terms of use",
+  openTerms: "Open the terms of use", help: "Help", technicalSupport: "Technical support", openSupport: "Open the support page",
+  logout: "Log out", logoutBody: "Your session on this device will be closed.", unknownError: "Unknown error",
+  todayRelative: "Today", tomorrowRelative: "Tomorrow", yesterdayRelative: "Yesterday",
+  confirmRideTitle: "Confirm departure", confirmRideBody: "I confirm that I have left to pick up the specialist.",
+  driverArrivedTitle: "Arrived at the specialist", driverArrivedBody: "The specialist will be notified that you have arrived.",
+  confirmPickupTitle: "I am with the driver", confirmPickupBody: "I confirm that the driver picked me up and we are heading to the customer.",
+  startServiceTitle: "Start service", startServiceBody: "I confirm that I arrived at the customer's home and started the service.",
+  completeOrderTitle: "Complete service and leave", completeOrderBody: "I confirm that the service is complete and I am leaving the customer's home.",
+  driverReturnTitle: "Complete return trip", driverReturnBody: "I confirm that I returned and completed this order's trip.",
+};
 
 const indonesian: Dictionary = {
   preparingAccount: "Menyiapkan akun Anda…", prepareAccountError: "Akun tidak dapat disiapkan",
@@ -316,6 +362,7 @@ const amharic: Dictionary = {
 
 const dictionaries: Record<FieldLocale, Dictionary> = {
   ar: arabic,
+  en: english,
   id: indonesian,
   fil: filipino,
   ru: russian,
@@ -323,11 +370,11 @@ const dictionaries: Record<FieldLocale, Dictionary> = {
 };
 
 const localeTags: Record<FieldLocale, string> = {
-  ar: "ar-EG", id: "id-ID", fil: "fil-PH", ru: "ru-RU", am: "am-ET",
+  ar: "ar-EG", en: "en-PH", id: "id-ID", fil: "fil-PH", ru: "ru-RU", am: "am-ET",
 };
 
 const languageNames: Record<FieldLocale, string> = {
-  ar: "العربية", id: "Bahasa Indonesia", fil: "Filipino", ru: "Русский", am: "አማርኛ",
+  ar: "العربية", en: "English", id: "Bahasa Indonesia", fil: "Filipino", ru: "Русский", am: "አማርኛ",
 };
 
 const nationalityLocales: Record<string, FieldLocale> = {
@@ -417,6 +464,7 @@ function createI18n(locale: FieldLocale): FieldI18n {
       const formattedMinutes = number.format(minutes);
       if (minutes < 60) {
         if (locale === "ar") return `${formattedMinutes} دقيقة`;
+        if (locale === "en") return `${formattedMinutes} min`;
         if (locale === "id") return `${formattedMinutes} menit`;
         if (locale === "fil") return `${formattedMinutes} minuto`;
         if (locale === "ru") return `${formattedMinutes} мин`;
@@ -432,6 +480,8 @@ function createI18n(locale: FieldLocale): FieldI18n {
       }
       const units: [string, string] = locale === "id"
         ? [`${formattedHours} jam`, `${formattedRest} menit`]
+        : locale === "en"
+          ? [`${formattedHours} hr`, `${formattedRest} min`]
         : locale === "fil"
           ? [`${formattedHours} oras`, `${formattedRest} minuto`]
           : locale === "ru"

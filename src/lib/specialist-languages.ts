@@ -1,6 +1,6 @@
 import { nationalityOf } from "@/lib/nationalities";
 
-export const SPECIALIST_LANGUAGE_CODES = ["ar", "id", "fil", "ru", "am"] as const;
+export const SPECIALIST_LANGUAGE_CODES = ["ar", "en", "id", "fil", "ru", "am"] as const;
 
 export type SpecialistLanguageCode = (typeof SPECIALIST_LANGUAGE_CODES)[number];
 
@@ -16,6 +16,7 @@ export interface SpecialistLanguage {
 
 export const SPECIALIST_LANGUAGES: SpecialistLanguage[] = [
   { code: "ar", label: "العربية", autonym: "العربية", targetLanguage: null },
+  { code: "en", label: "الإنجليزية", autonym: "English", targetLanguage: "English" },
   { code: "id", label: "الإندونيسية", autonym: "Bahasa Indonesia", targetLanguage: "Indonesian" },
   { code: "fil", label: "الفلبينية", autonym: "Filipino", targetLanguage: "Filipino (Tagalog)" },
   { code: "ru", label: "الروسية", autonym: "Русский", targetLanguage: "Russian" },

@@ -433,6 +433,13 @@ export async function createBooking(
     String(left.created_at).localeCompare(String(right.created_at)),
   )[0];
   if (sameDayOrder) {
+    await snapshotRekazVisitServices({
+      orderId: String(sameDayOrder.id),
+      customerPhone: String(conv.customer_phone),
+      arrivalAt: String(sameDayOrder.arrival_at),
+    }).catch((error) =>
+      console.error("Failed to snapshot Rekaz visit services", error),
+    );
     await clearBookingRequest(input.conversationId).catch(() => {});
     return sameDayOrder as unknown as DriverOrder;
   }
@@ -456,6 +463,14 @@ export async function createBooking(
     .select(ORDER_COLS)
     .single();
   if (insErr) throw new Error(insErr.message);
+
+  await snapshotRekazVisitServices({
+    orderId: String(created.id),
+    customerPhone: String(conv.customer_phone),
+    arrivalAt: String(created.arrival_at),
+  }).catch((error) =>
+    console.error("Failed to snapshot Rekaz visit services", error),
+  );
 
   await clearBookingRequest(input.conversationId).catch(() => {});
   return created as DriverOrder;
@@ -499,6 +514,12 @@ export interface VisitService {
   name: string;
   startsAt: string;
   minutes: number;
+  sourceId?: string | null;
+}
+
+interface RekazVisitService extends VisitService {
+  sourceId: string;
+  sourcePayload: Record<string, unknown>;
 }
 
 /**
@@ -511,14 +532,15 @@ async function rekazVisitServices(
   admin: ReturnType<typeof getAdminSupabaseClient>,
   customerPhone: string,
   arrivalAt: string,
-): Promise<VisitService[]> {
-  if (!customerPhone) return [];
+): Promise<RekazVisitService[]> {
+  const national = normalizePhone(customerPhone);
+  if (!national) return [];
   const day = riyadhDayOf(arrivalAt);
   const { data } = await admin
     .from("rekaz_reservations")
-    .select("arrival_at, payload, status, removed_at")
+    .select("source_id, arrival_at, payload, status, removed_at")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq("customer_phone", customerPhone)
+    .ilike("customer_phone", `%${national}%`)
     .is("removed_at", null)
     .gte("arrival_at", `${day}T00:00:00+03:00`)
     .lte("arrival_at", `${day}T23:59:59+03:00`);
@@ -531,6 +553,8 @@ async function rekazVisitServices(
         | { durationMinutes?: number; service?: string }
         | null;
       return {
+        sourceId: String(row.source_id),
+        sourcePayload: (payload ?? {}) as Record<string, unknown>,
         name: (payload?.service ?? "").trim(),
         startsAt: String(row.arrival_at),
         minutes: Math.max(Number(payload?.durationMinutes) || 0, 0),
@@ -539,6 +563,54 @@ async function rekazVisitServices(
     .filter((svc) => Number.isFinite(Date.parse(svc.startsAt)))
     .filter((svc) => riyadhDayOf(svc.startsAt) === day)
     .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt));
+}
+
+/**
+ * Freeze the complete Rekaz visit on the operational order. This is explicit
+ * application work rather than relying only on the database insert trigger:
+ * orders created from a conversation have no Rekaz source id at insert time,
+ * and older production databases may have the snapshot table without the
+ * trigger. The live lookup still powers the preview fallback if this optional
+ * persistence step is unavailable during a rolling deploy.
+ */
+async function snapshotRekazVisitServices(input: {
+  orderId: string;
+  customerPhone: string;
+  arrivalAt: string;
+}): Promise<void> {
+  const admin = getAdminSupabaseClient();
+  const services = await rekazVisitServices(
+    admin,
+    input.customerPhone,
+    input.arrivalAt,
+  );
+  if (!services.length) return;
+
+  const rows = services.map((service) => ({
+    restaurant_id: KIARA_RESTAURANT_ID,
+    order_id: input.orderId,
+    source_id: service.sourceId,
+    source_payload: service.sourcePayload,
+    name: service.name || "خدمة",
+    minutes: Math.min(Math.max(service.minutes || 60, 1), 480),
+    starts_at: service.startsAt,
+  }));
+  const { error } = await admin.from("order_visit_services").upsert(rows, {
+    onConflict: "restaurant_id,source_id",
+    ignoreDuplicates: true,
+  });
+  if (error) throw new Error(error.message);
+
+  // Manual orders become durable Rekaz-linked visits too. Ignore a uniqueness
+  // race here: the same-day order lookup remains the authority for reuse, and
+  // the frozen service rows above are already enough for message composition.
+  const { error: linkError } = await admin
+    .from("driver_orders")
+    .update({ rekaz_source_id: services[0].sourceId })
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("id", input.orderId)
+    .is("rekaz_source_id", null);
+  if (linkError && linkError.code !== "23505") throw new Error(linkError.message);
 }
 
 /**
@@ -585,13 +657,15 @@ async function rekazVisitSpan(
 
 /** Approved services, including manual additions and linked Rekaz reservations. */
 export async function servicesForOrder(
-  order: Pick<DriverOrder, "id" | "rekaz_source_id" | "arrival_at">,
+  order: Pick<DriverOrder, "id" | "rekaz_source_id" | "arrival_at"> & {
+    customer_phone?: string;
+  },
 ): Promise<VisitService[]> {
   // Read the approved snapshot first. It freezes the agreed visit even if
   // Rekaz changes after dispatch.
   const admin = getAdminSupabaseClient();
   const { data, error } = await admin.from("order_visit_services")
-    .select("name, starts_at, minutes")
+    .select("source_id, name, starts_at, minutes")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .eq("order_id", order.id).order("starts_at");
   // The snapshot table was added after initial production deployments. Its
@@ -601,11 +675,20 @@ export async function servicesForOrder(
     /order_visit_services|schema cache/i.test(error?.message ?? "");
   if (error && !snapshotUnavailable) throw new Error(error.message);
   const approved = (data ?? []).map((row) => ({
+    sourceId: row.source_id,
     name: row.name,
     startsAt: row.starts_at,
     minutes: row.minutes,
   }));
-  if (approved.length || !order.rekaz_source_id) return approved;
+  if (approved.length) return approved;
+
+  // Conversation-created orders used to have no Rekaz link at all. The phone
+  // and Riyadh day are the business visit key: one specialist performs every
+  // service the customer booked for that home visit.
+  if (order.customer_phone) {
+    return rekazVisitServices(admin, order.customer_phone, order.arrival_at);
+  }
+  if (!order.rekaz_source_id) return approved;
 
   // Orders created before the snapshot trigger was deployed can still have a
   // Rekaz link but no captured rows. Use the linked booking only for this
@@ -740,9 +823,23 @@ export async function createBookingFromReservation(
         .select(ORDER_COLS_WITH_REKAZ)
         .single();
       if (refreshError) throw new Error(refreshError.message);
+      await snapshotRekazVisitServices({
+        orderId: String(refreshed.id),
+        customerPhone: phone,
+        arrivalAt: String(refreshed.arrival_at),
+      }).catch((error) =>
+        console.error("Failed to snapshot Rekaz visit services", error),
+      );
       await clearBookingRequest(conversation.id).catch(() => {});
       return refreshed as unknown as DriverOrder;
     }
+    await snapshotRekazVisitServices({
+      orderId: String(existingVisit.id),
+      customerPhone: phone,
+      arrivalAt: String(existingVisit.arrival_at),
+    }).catch((error) =>
+      console.error("Failed to snapshot Rekaz visit services", error),
+    );
     await clearBookingRequest(conversation.id).catch(() => {});
     return existingVisit as unknown as DriverOrder;
   }
@@ -808,6 +905,14 @@ export async function createBookingFromReservation(
     if (missingRekazLink(insErr)) throw new RekazBookingError("REKAZ_LINK_UNAVAILABLE");
     throw new Error(insErr.message);
   }
+
+  await snapshotRekazVisitServices({
+    orderId: String(created.id),
+    customerPhone: phone,
+    arrivalAt: String(created.arrival_at),
+  }).catch((error) =>
+    console.error("Failed to snapshot Rekaz visit services", error),
+  );
 
   await clearBookingRequest(conversation.id).catch(() => {});
   return created as unknown as DriverOrder;
@@ -1691,6 +1796,15 @@ async function withNames(
       .eq("restaurant_id", KIARA_RESTAURANT_ID).in("order_id", orders.map(o => o.id)).order("starts_at"),
   ]);
 
+  // The detail endpoint enriches one order. Production had the snapshot table
+  // but no captured rows, so make the detail self-healing from Rekaz instead
+  // of rendering an empty "services" section. Large list reads keep using the
+  // single batch query above and avoid one Rekaz request per card.
+  let detailServiceFallback: VisitService[] = [];
+  if (orders.length === 1 && !services.error && !(services.data ?? []).length) {
+    detailServiceFallback = await servicesForOrder(orders[0]).catch(() => []);
+  }
+
   return orders.map((o) => {
     const driver = o.driver_id ? drivers.get(o.driver_id) : undefined;
     const customer = customers.get(o.conversation_id);
@@ -1713,8 +1827,17 @@ async function withNames(
       ),
       field_progress: progress.get(o.id) ?? null,
       expected_end_at: new Date(Date.parse(progress.get(o.id)?.serviceStartedAt ?? o.arrival_at) + o.duration_minutes * 60_000).toISOString(),
-      approved_services: services.error ? undefined : (services.data ?? []).filter(s => s.order_id === o.id)
-        .map(s => ({sourceId:s.source_id, name:s.name, minutes:s.minutes})),
+      approved_services: services.error
+        ? undefined
+        : ((services.data ?? []).filter((s) => s.order_id === o.id).length
+            ? (services.data ?? [])
+                .filter((s) => s.order_id === o.id)
+                .map((s) => ({ sourceId: s.source_id, name: s.name, minutes: s.minutes }))
+            : detailServiceFallback.map((s) => ({
+                sourceId: s.sourceId ?? null,
+                name: s.name,
+                minutes: s.minutes,
+              }))),
     };
   });
 }

@@ -90,6 +90,7 @@
           "supportedLocales": {
             "ios": [
               "ar",
+              "en",
               "id",
               "fil",
               "ru",
@@ -97,6 +98,7 @@
             ],
             "android": [
               "ar",
+              "en",
               "id",
               "fil",
               "ru",
