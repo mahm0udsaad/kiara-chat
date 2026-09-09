@@ -174,7 +174,14 @@ export interface TemplateSummary {
   status: ApprovalStatus;
   rejectionReason: string | null;
   body: string;
+  buttons: string[];
+  variableKeys: string[];
   dateCreated: string | null;
+}
+
+interface ContentTypeDefinition {
+  body?: string;
+  actions?: Array<{ title?: string }>;
 }
 
 interface ContentAndApproval {
@@ -182,7 +189,8 @@ interface ContentAndApproval {
   friendly_name: string;
   language: string;
   date_created: string;
-  types: Record<string, { body?: string }>;
+  variables?: Record<string, string>;
+  types: Record<string, ContentTypeDefinition>;
   approval_requests?: {
     status?: string;
     category?: string;
@@ -207,6 +215,13 @@ export async function listTemplatesWithStatus(): Promise<TemplateSummary[]> {
     for (const c of data.contents ?? []) {
       const twType = Object.keys(c.types ?? {})[0] ?? "twilio/text";
       const body = c.types?.[twType]?.body ?? "";
+      const buttons = (c.types?.[twType]?.actions ?? [])
+        .map((action) => action.title?.trim() ?? "")
+        .filter(Boolean);
+      const variableKeys = new Set(Object.keys(c.variables ?? {}));
+      for (const match of JSON.stringify(c.types ?? {}).matchAll(/\{\{(\d+)\}\}/g)) {
+        variableKeys.add(match[1]);
+      }
       const ar = c.approval_requests ?? null;
       out.push({
         sid: c.sid,
@@ -217,6 +232,8 @@ export async function listTemplatesWithStatus(): Promise<TemplateSummary[]> {
         status: (ar?.status as ApprovalStatus) ?? "unsubmitted",
         rejectionReason: ar?.rejection_reason || null,
         body,
+        buttons,
+        variableKeys: [...variableKeys].sort((a, b) => Number(a) - Number(b)),
         dateCreated: c.date_created ?? null,
       });
     }

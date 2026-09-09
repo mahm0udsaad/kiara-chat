@@ -8,7 +8,6 @@
 import { replyDenialFor } from "@/lib/conversation-reply-access";
 import { getConversationById } from "@/lib/inbox";
 import { sendTemplateReply } from "@/lib/interactions";
-import { isTemplateKey } from "@/lib/templates";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -28,7 +27,7 @@ export async function POST(
     payload && typeof payload === "object"
       ? (payload as { key?: unknown; variables?: unknown })
       : {};
-  if (typeof record.key !== "string" || !isTemplateKey(record.key)) {
+  if (typeof record.key !== "string" || !record.key.trim()) {
     return mobileError(400, "UNKNOWN_TEMPLATE", "key must name a known template");
   }
   const variables =

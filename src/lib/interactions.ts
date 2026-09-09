@@ -20,10 +20,9 @@ import { getServiceWindow, isWindowClosedError } from "@/lib/transport/window";
 import {
   contentSidFor,
   greetingName,
-  renderTemplate,
-  templateSpec,
+  renderTemplateBody,
+  resolveComposerTemplate,
   templateVariable,
-  type TemplateKey,
 } from "@/lib/templates";
 import { twilioErrorCode, getTwilioSenderStatus } from "@/lib/transport/twilio";
 import {
@@ -663,7 +662,7 @@ export async function sendReply(
 export async function sendTemplateReply(
   conversationId: string,
   sender: { email: string | null; teamMemberId?: string | null },
-  key: TemplateKey,
+  key: string,
   variables: Record<string, string>,
 ): Promise<{ messageId: string | null; sent: boolean; error: string | null }> {
   const admin = getAdminSupabaseClient();
@@ -675,12 +674,8 @@ export async function sendTemplateReply(
     .maybeSingle();
   if (!conv) throw new Error("Conversation not found");
 
-  const contentSid = contentSidFor(key);
-  if (!contentSid) {
-    throw new Error("هذا القالب غير مُهيّأ بعد. راجعي إعدادات النشر.");
-  }
-
-  const spec = templateSpec(key);
+  const spec = await resolveComposerTemplate(key);
+  const contentSid = spec.contentSid;
   // Sanitise here rather than trusting the caller: a newline inside a variable
   // is rejected by Meta at send time, far from whoever typed it.
   const clean: Record<string, string> = {};
@@ -730,7 +725,7 @@ export async function sendTemplateReply(
     .insert({
       conversation_id: conversationId,
       role: "agent",
-      content: renderTemplate(key, clean),
+      content: renderTemplateBody(spec.body, clean),
       message_type: "text",
       metadata: {
         source: "app",

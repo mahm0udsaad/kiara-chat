@@ -5,27 +5,41 @@
  * employee offered a template that cannot be sent has been promised something
  * the app will then refuse to do.
  */
-import { listSendableTemplates } from "@/lib/templates";
-import { authorizeMobileRequest, mobileData } from "@/lib/mobile/http";
+import { listComposerTemplates } from "@/lib/templates";
+import {
+  authorizeMobileRequest,
+  mobileData,
+  mobileServerError,
+} from "@/lib/mobile/http";
+
+export const maxDuration = 60;
 
 export async function GET(request: Request) {
   const auth = await authorizeMobileRequest(request);
   if (auth.response) return auth.response;
 
-  return mobileData({
-    templates: listSendableTemplates().map((t) => ({
-      key: t.key,
-      label: t.label,
-      description: t.description,
-      category: t.category,
-      body: t.body,
-      buttons: t.buttons,
-      variables: t.variables.map((v) => ({
-        key: v.key,
-        label: v.label,
-        prefill: v.prefill ?? null,
-        maxLength: v.maxLength ?? null,
+  try {
+    return mobileData({
+      templates: (await listComposerTemplates()).map((t) => ({
+        key: t.key,
+        label: t.label,
+        description: t.description,
+        category: t.category,
+        body: t.body,
+        buttons: t.buttons,
+        variables: t.variables.map((v) => ({
+          key: v.key,
+          label: v.label,
+          prefill: v.prefill ?? null,
+          maxLength: v.maxLength ?? null,
+        })),
       })),
-    })),
-  });
+    });
+  } catch (error) {
+    return mobileServerError(
+      error,
+      "TEMPLATES_FETCH_FAILED",
+      "تعذّر جلب القوالب المعتمدة",
+    );
+  }
 }

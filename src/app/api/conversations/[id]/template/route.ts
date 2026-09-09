@@ -10,12 +10,21 @@ import { getKiaraSession } from "@/lib/tenant";
 import { replyDenialFor } from "@/lib/conversation-reply-access";
 import { getConversationById } from "@/lib/inbox";
 import { sendTemplateReply } from "@/lib/interactions";
-import { isTemplateKey, listSendableTemplates } from "@/lib/templates";
+import { listComposerTemplates } from "@/lib/templates";
+
+export const maxDuration = 60;
 
 export async function GET() {
   const session = await getKiaraSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  return NextResponse.json({ templates: listSendableTemplates() });
+  try {
+    return NextResponse.json({ templates: await listComposerTemplates() });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "تعذّر جلب القوالب" },
+      { status: 502 },
+    );
+  }
 }
 
 export async function POST(
@@ -30,7 +39,7 @@ export async function POST(
     payload && typeof payload === "object"
       ? (payload as { key?: unknown; variables?: unknown })
       : {};
-  if (typeof record.key !== "string" || !isTemplateKey(record.key)) {
+  if (typeof record.key !== "string" || !record.key.trim()) {
     return NextResponse.json({ error: "قالب غير معروف" }, { status: 400 });
   }
   const variables =

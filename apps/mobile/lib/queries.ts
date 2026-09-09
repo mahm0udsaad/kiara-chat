@@ -1260,16 +1260,16 @@ export function useClaimedConversationForPhone() {
 /**
  * The approved templates this account can send.
  *
- * Long-lived: a template changes only when someone submits a new one to Meta
- * and waits for approval, so refetching it on every composer open would be
- * pure noise.
+ * Approval changes on Meta's clock. Treat the list as immediately stale so
+ * reopening the sheet picks up a newly-approved template without restarting
+ * the app.
  */
 export function useMessageTemplates(enabled = true) {
   return useQuery({
     queryKey: ["message-templates"] as const,
     queryFn: () => apiRequest<MessageTemplatesResponse>("/templates"),
     enabled,
-    staleTime: 10 * 60_000,
+    staleTime: 0,
   });
 }
 

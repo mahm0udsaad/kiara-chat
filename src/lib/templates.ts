@@ -12,6 +12,12 @@
  * ever diverge, Meta's copy is the one that goes out.
  */
 
+import {
+  isContentApiConfigured,
+  listTemplatesWithStatus,
+  type TemplateSummary,
+} from "@/lib/transport/twilio-content";
+
 export type TemplateKey = "booking_followup" | "conversation_opener" | "number_notice";
 
 export interface TemplateVariableSpec {
@@ -36,6 +42,19 @@ export interface TemplateSpec {
   buttons: string[];
   variables: TemplateVariableSpec[];
 }
+
+export interface SendableTemplate {
+  key: string;
+  contentSid: string;
+  label: string;
+  description: string;
+  category: "utility" | "marketing";
+  body: string;
+  buttons: string[];
+  variables: TemplateVariableSpec[];
+}
+
+const LIVE_TEMPLATE_PREFIX = "twilio:";
 
 const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
   booking_followup: {
@@ -98,6 +117,99 @@ export function listSendableTemplates(): (TemplateSpec & { key: TemplateKey })[]
     .map((key) => ({ key, ...TEMPLATES[key] }));
 }
 
+function staticSendableTemplates(): SendableTemplate[] {
+  return listSendableTemplates().map((template) => ({
+    key: template.key,
+    contentSid: contentSidFor(template.key)!,
+    label: template.label,
+    description: template.description,
+    category: template.category,
+    body: template.body,
+    buttons: template.buttons,
+    variables: template.variables,
+  }));
+}
+
+function variableSpecs(keys: string[]): TemplateVariableSpec[] {
+  return keys
+    .map((key) => ({ key, label: `القيمة ${key}`, maxLength: 512 }));
+}
+
+function liveSendableTemplate(template: TemplateSummary): SendableTemplate {
+  return {
+    key: `${LIVE_TEMPLATE_PREFIX}${template.sid}`,
+    contentSid: template.sid,
+    label: template.name,
+    description:
+      template.category === "UTILITY"
+        ? "قالب خدمة معتمد من واتساب."
+        : template.category === "MARKETING"
+          ? "قالب تسويقي معتمد من واتساب."
+          : template.category === "AUTHENTICATION"
+            ? "قالب مصادقة معتمد من واتساب."
+            : "قالب معتمد من واتساب.",
+    category: template.category === "MARKETING" ? "marketing" : "utility",
+    body: template.body,
+    buttons: template.buttons,
+    variables: variableSpecs(template.variableKeys),
+  };
+}
+
+/**
+ * What the conversation composer lists: the long-standing configured
+ * templates plus every template whose current Meta status is approved.
+ * Configured templates win by content SID so the employee never sees the same
+ * template twice with two different labels.
+ */
+export async function listComposerTemplates(): Promise<SendableTemplate[]> {
+  const configured = staticSendableTemplates();
+  if (!isContentApiConfigured()) return configured;
+
+  const configuredSids = new Set(configured.map((template) => template.contentSid));
+  const live = (await listTemplatesWithStatus())
+    .filter(
+      (template) =>
+        template.status === "approved" &&
+        template.body.trim().length > 0 &&
+        !configuredSids.has(template.sid),
+    )
+    .map(liveSendableTemplate);
+
+  return [...configured, ...live];
+}
+
+/** Resolve from the server-side source of truth; never trust a client SID. */
+export async function resolveComposerTemplate(key: string): Promise<SendableTemplate> {
+  if (isTemplateKey(key)) {
+    const contentSid = contentSidFor(key);
+    if (!contentSid) throw new Error("هذا القالب غير مُهيّأ بعد. راجعي إعدادات النشر.");
+    const template = templateSpec(key);
+    return {
+      key,
+      contentSid,
+      label: template.label,
+      description: template.description,
+      category: template.category,
+      body: template.body,
+      buttons: template.buttons,
+      variables: template.variables,
+    };
+  }
+
+  if (!key.startsWith(LIVE_TEMPLATE_PREFIX)) throw new Error("قالب غير معروف");
+  const contentSid = key.slice(LIVE_TEMPLATE_PREFIX.length);
+  if (!/^HX[a-zA-Z0-9]{32}$/.test(contentSid)) throw new Error("قالب غير معروف");
+  if (!isContentApiConfigured()) throw new Error("تعذّر التحقق من اعتماد القالب.");
+
+  const template = (await listTemplatesWithStatus()).find(
+    (candidate) => candidate.sid === contentSid,
+  );
+  if (!template || template.status !== "approved" || !template.body.trim()) {
+    throw new Error("هذا القالب غير معتمد حاليًا في واتساب.");
+  }
+  return liveSendableTemplate(template);
+}
+
 /**
  * Make a value safe to pass as a template variable.
  *
@@ -132,6 +244,16 @@ export function renderTemplate(
   variables: Record<string, string>,
 ): string {
   return templateSpec(key).body.replace(/\{\{(\d+)\}\}/g, (whole, index) => {
+    const value = variables[index];
+    return value && value.trim() ? value : whole;
+  });
+}
+
+export function renderTemplateBody(
+  body: string,
+  variables: Record<string, string>,
+): string {
+  return body.replace(/\{\{(\d+)\}\}/g, (whole, index) => {
     const value = variables[index];
     return value && value.trim() ? value : whole;
   });
