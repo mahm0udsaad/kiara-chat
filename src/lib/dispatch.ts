@@ -1172,6 +1172,7 @@ export async function previewBookingDispatch(
   const language = specialistDispatchLanguageOf(
     context.specialist.nationality,
     context.specialist.preferred_language,
+    context.specialist.id,
   );
   const translated = language.targetLanguage
     ? await translateMessage(arabicSpecialistMessage, language.targetLanguage)
@@ -1543,6 +1544,7 @@ export async function updateDriverOrder(
     if (sp) {
       specialistPhone = (sp.phone as string | null) ?? null;
       specialistCopy = specialistOrderUpdatedCopy({
+        specialistId,
         nationality: sp.nationality as string | null,
         preferredLanguage: sp.preferred_language as string | null,
         customerName,
@@ -1667,6 +1669,7 @@ export async function cancelDriverOrder(
     if (sp) {
       specialistPhone = (sp.phone as string | null) ?? null;
       specialistCopy = specialistOrderCancelledCopy({
+        specialistId,
         nationality: sp.nationality as string | null,
         preferredLanguage: sp.preferred_language as string | null,
         customerName,

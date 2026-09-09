@@ -340,6 +340,7 @@ export async function previewServiceChange(
   const language = specialistLanguageOf(
     specialist.data?.nationality,
     specialist.data?.preferred_language,
+    order.specialist_id,
   );
   if (language.targetLanguage)
     specialistMessage =

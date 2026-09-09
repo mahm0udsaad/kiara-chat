@@ -23,6 +23,15 @@ export const SPECIALIST_LANGUAGES: SpecialistLanguage[] = [
   { code: "am", label: "الأمهرية", autonym: "አማርኛ", targetLanguage: "Amharic" },
 ];
 
+/**
+ * Rollout-safe overrides for specialists whose stored row cannot yet carry a
+ * newly introduced language code. The database migration persists the same
+ * choice; keeping this keyed by immutable UUID prevents a deploy-order gap.
+ */
+const LANGUAGE_BY_SPECIALIST_ID: Partial<Record<string, SpecialistLanguageCode>> = {
+  "44600482-2d4b-4026-bc33-c6730de7a8b0": "en", // Gigi
+};
+
 const LANGUAGE_BY_NATIONALITY: Record<string, SpecialistLanguageCode> = {
   sa: "ar",
   eg: "ar",
@@ -42,12 +51,16 @@ export function isSpecialistLanguageCode(value: string): value is SpecialistLang
 export function specialistLanguageOf(
   nationality: string | null | undefined,
   preferredLanguage: string | null | undefined,
+  specialistId?: string | null,
 ): SpecialistLanguage {
   const preferred = preferredLanguage && isSpecialistLanguageCode(preferredLanguage)
     ? preferredLanguage
     : null;
+  const specialistOverride = specialistId
+    ? LANGUAGE_BY_SPECIALIST_ID[specialistId] ?? null
+    : null;
   const nationalityCode = nationality ? LANGUAGE_BY_NATIONALITY[nationality] : null;
-  const code = preferred ?? nationalityCode ?? "ar";
+  const code = preferred ?? specialistOverride ?? nationalityCode ?? "ar";
   return SPECIALIST_LANGUAGES.find((language) => language.code === code) ?? SPECIALIST_LANGUAGES[0];
 }
 
@@ -58,9 +71,13 @@ export function specialistLanguageOf(
 export function specialistDispatchLanguageOf(
   nationality: string | null | undefined,
   preferredLanguage: string | null | undefined,
+  specialistId?: string | null,
 ): { label: string; targetLanguage: string | null } {
-  if (preferredLanguage && isSpecialistLanguageCode(preferredLanguage)) {
-    const language = specialistLanguageOf(nationality, preferredLanguage);
+  if (
+    (preferredLanguage && isSpecialistLanguageCode(preferredLanguage)) ||
+    (specialistId && LANGUAGE_BY_SPECIALIST_ID[specialistId])
+  ) {
+    const language = specialistLanguageOf(nationality, preferredLanguage, specialistId);
     return { label: language.label, targetLanguage: language.targetLanguage };
   }
   const nationalityLanguage = nationalityOf(nationality);

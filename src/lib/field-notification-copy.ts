@@ -103,10 +103,15 @@ function interpolate(
 }
 
 function resolveCode(input: {
+  specialistId?: string | null;
   nationality: string | null | undefined;
   preferredLanguage: string | null | undefined;
 }): SpecialistLanguageCode {
-  return specialistLanguageOf(input.nationality, input.preferredLanguage).code;
+  return specialistLanguageOf(
+    input.nationality,
+    input.preferredLanguage,
+    input.specialistId,
+  ).code;
 }
 
 function clientName(
@@ -124,6 +129,7 @@ export interface SpecialistFieldCopy {
 }
 
 export function specialistOrderUpdatedCopy(input: {
+  specialistId?: string | null;
   nationality: string | null | undefined;
   preferredLanguage: string | null | undefined;
   customerName: string | null | undefined;
@@ -148,6 +154,7 @@ export function specialistOrderUpdatedCopy(input: {
 }
 
 export function specialistOrderCancelledCopy(input: {
+  specialistId?: string | null;
   nationality: string | null | undefined;
   preferredLanguage: string | null | undefined;
   customerName: string | null | undefined;
