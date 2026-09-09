@@ -1169,6 +1169,13 @@ export async function previewBookingDispatch(
     services: context.services,
     sessionLink: null,
   });
+  const englishSpecialistMessage = formatSpecialistOrderMessageEnglish({
+    ...orderDetails,
+    driverName: context.driver.full_name,
+    note: input.specialistNote?.trim() || null,
+    services: context.services,
+    sessionLink: null,
+  });
   const language = specialistDispatchLanguageOf(
     context.specialist.nationality,
     context.specialist.preferred_language,
@@ -1177,15 +1184,17 @@ export async function previewBookingDispatch(
   const translated = language.targetLanguage
     ? await translateMessage(arabicSpecialistMessage, language.targetLanguage)
     : null;
+  const deterministicEnglish = language.targetLanguage === "English";
 
   return {
     driverMessage,
-    specialistMessage: translated || arabicSpecialistMessage,
+    specialistMessage:
+      translated || (deterministicEnglish ? englishSpecialistMessage : arabicSpecialistMessage),
     // Name the language of the text actually produced. Reporting her mother
     // tongue while handing back the Arabic fallback told the employee the
     // translation had happened when it had not — she would send it believing
     // the specialist could read it.
-    specialistLanguage: translated
+    specialistLanguage: translated || deterministicEnglish
       ? language.label
       : "العربية",
     automaticAdditions: [],
@@ -2042,6 +2051,51 @@ export function formatSpecialistOrderMessage(o: {
   if (o.note) lines.push("", `📝 ملاحظة من الفريق: ${o.note}`);
   if (o.sessionLink) {
     lines.push("", "📲 جلساتك وتأكيد البداية والنهاية:", o.sessionLink);
+  }
+  return lines.join("\n");
+}
+
+const EN_ARRIVAL_FMT = new Intl.DateTimeFormat("en-SA", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZone: "Asia/Riyadh",
+});
+
+function formatDurationEnglish(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  const hourLabel = `${hours} ${hours === 1 ? "hour" : "hours"}`;
+  return rest ? `${hourLabel} ${rest} min` : hourLabel;
+}
+
+/** Guaranteed English fallback when live translation is unavailable. */
+function formatSpecialistOrderMessageEnglish(
+  o: Parameters<typeof formatSpecialistOrderMessage>[0],
+): string {
+  const lines = [
+    "🌸 *New appointment for you*",
+    "",
+    `🕒 Arrival time: ${EN_ARRIVAL_FMT.format(new Date(o.arrivalAt))}`,
+    `⏱️ Session duration: ${formatDurationEnglish(o.durationMinutes)}`,
+    `🚕 Driver: ${o.driverName}`,
+  ];
+  const services = (o.services ?? []).filter((service) => service.name);
+  if (services.length) {
+    lines.push("", "💅 Services in order:");
+    services.forEach((service, index) => {
+      const length = service.minutes > 0
+        ? ` (${formatDurationEnglish(service.minutes)})`
+        : "";
+      lines.push(`${index + 1}. ${service.name}${length}`);
+    });
+  }
+  if (o.note) lines.push("", `📝 Note from the team: ${o.note}`);
+  if (o.sessionLink) {
+    lines.push("", "📲 Your visits and start/end confirmation:", o.sessionLink);
   }
   return lines.join("\n");
 }
