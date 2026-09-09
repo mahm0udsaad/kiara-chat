@@ -1,7 +1,11 @@
 import { fetch } from "expo/fetch";
 import { File, UploadType } from "expo-file-system";
 
-import { supabase } from "@/lib/supabase";
+import {
+  rememberSession,
+  rememberedAccessToken,
+  supabase,
+} from "@/lib/supabase";
 
 const apiUrl = (process.env.EXPO_PUBLIC_API_URL ?? "").replace(/\/$/, "");
 
@@ -94,6 +98,24 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   ]);
 }
 
+/**
+ * Prefer the valid JWT AuthProvider already loaded into memory. Calling
+ * getSession() for every request makes unrelated API reads join a proactive
+ * refresh when the app has just foregrounded. We only ask Supabase when the
+ * in-memory token is missing or actually expired.
+ */
+async function accessTokenUntilAborted(signal: AbortSignal): Promise<string> {
+  const remembered = rememberedAccessToken();
+  if (remembered) return remembered;
+
+  const { data, error } = await untilAborted(supabase.auth.getSession(), signal);
+  if (error || !data.session?.access_token) {
+    throw new ApiError("انتهت الجلسة. سجّلي الدخول مرة أخرى.", 401, "NO_SESSION");
+  }
+  rememberSession(data.session);
+  return data.session.access_token;
+}
+
 export type ApiRequestOptions = RequestInit & {
   /** Override the default deadline for a route known to take longer. */
   timeoutMs?: number;
@@ -115,22 +137,14 @@ export async function apiRequest<T>(
    * The deadline covers the session read, not just the fetch.
    *
    * This await used to sit above the timer, outside the deadline it claims to
-   * have. That is not a theoretical gap: supabase-js serialises session access
-   * behind a lock, and the keychain-backed storage reads a sharded value one
-   * await at a time, so a token refresh stalling on salon wifi holds the lock
-   * and every later read queues behind it with no upper bound. A "20 second"
-   * request then hangs forever — the spinner the timeout exists to prevent.
+   * have. Close to expiry, supabase-js makes session readers join one refresh;
+   * if the phone's network stalls during resume, those readers can all wait on
+   * it. The remembered-token fast path above avoids that refresh for a JWT that
+   * is still valid, while this deadline bounds the genuinely expired case.
    */
   let accessToken: string;
   try {
-    const { data, error } = await untilAborted(
-      supabase.auth.getSession(),
-      controller.signal,
-    );
-    if (error || !data.session?.access_token) {
-      throw new ApiError("انتهت الجلسة. سجّلي الدخول مرة أخرى.", 401, "NO_SESSION");
-    }
-    accessToken = data.session.access_token;
+    accessToken = await accessTokenUntilAborted(controller.signal);
   } catch (cause) {
     clearTimeout(timer);
     if (cause instanceof ApiError) throw cause;
@@ -254,14 +268,7 @@ export async function apiUpload<T>(
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? TIMEOUT_MS);
   let accessToken: string;
   try {
-    const { data, error } = await untilAborted(
-      supabase.auth.getSession(),
-      controller.signal,
-    );
-    if (error || !data.session?.access_token) {
-      throw new ApiError("انتهت الجلسة. سجّلي الدخول مرة أخرى.", 401, "NO_SESSION");
-    }
-    accessToken = data.session.access_token;
+    accessToken = await accessTokenUntilAborted(controller.signal);
   } catch (cause) {
     clearTimeout(timer);
     if (cause instanceof ApiError) throw cause;

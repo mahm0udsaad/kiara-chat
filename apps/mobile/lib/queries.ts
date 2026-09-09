@@ -124,11 +124,18 @@ export const queryKeys = {
 export function useBootstrap(enabled = true) {
   return useQuery({
     queryKey: queryKeys.bootstrap,
-    queryFn: () => apiRequest<BootstrapResponse>("/bootstrap"),
+    queryFn: () =>
+      apiRequest<BootstrapResponse>("/bootstrap", {
+        // Bootstrap is a small database read. A shorter attempt plus one
+        // transient retry recovers faster than one 20s foreground stall.
+        timeoutMs: 10_000,
+      }),
     enabled,
-    // Startup already has a bounded network deadline. Surface its retry action
-    // instead of multiplying that wait behind an unexplained full-screen spinner.
-    retry: false,
+    retry: (failureCount, error) =>
+      failureCount < 1 &&
+      error instanceof ApiError &&
+      (error.status === 0 || error.status >= 500),
+    retryDelay: 750,
     staleTime: 5 * 60_000,
   });
 }

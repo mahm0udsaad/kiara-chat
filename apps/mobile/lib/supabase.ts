@@ -1,12 +1,37 @@
 import "react-native-url-polyfill/auto";
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type Session } from "@supabase/supabase-js";
 import * as SecureStore from "expo-secure-store";
-import { AppState } from "react-native";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() ?? "";
 const publishableKey =
   process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim() ?? "";
+
+/**
+ * Supabase Auth's refresh request otherwise owns no deadline. On iOS the
+ * network stack can leave that request pending while an app moves from
+ * background to foreground; every getSession() close to token expiry then
+ * joins the same in-flight refresh. Bound the underlying request so the Auth
+ * client can release its single-flight and recover on the next tick/retry.
+ */
+const SUPABASE_REQUEST_TIMEOUT_MS = 7_000;
+const platformFetch = globalThis.fetch.bind(globalThis);
+const fetchWithDeadline: typeof globalThis.fetch = async (input, init) => {
+  const controller = new AbortController();
+  const callerSignal = init?.signal;
+  const abortFromCaller = () => controller.abort();
+  const timer = setTimeout(() => controller.abort(), SUPABASE_REQUEST_TIMEOUT_MS);
+
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+
+  try {
+    return await platformFetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
+  }
+};
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && publishableKey);
 
@@ -50,9 +75,8 @@ const secureStorage = {
     const count = Number.parseInt(manifest.slice(CHUNK_MANIFEST_PREFIX.length), 10);
     if (!Number.isInteger(count) || count <= 0) return null;
     // The shards are independent keychain entries, so they are read together.
-    // This read sits inside supabase-js's session lock and runs on every API
-    // call, so N serial round trips here is latency every request pays and time
-    // the lock is held against everything else waiting on a session.
+    // Session recovery and refresh both wait for this read, so N serial keychain
+    // round trips here would delay every caller joining that work.
     const shards = await Promise.all(
       Array.from({ length: count }, (_, i) =>
         SecureStore.getItemAsync(`${key}.${i}`),
@@ -112,6 +136,27 @@ const webStorage = {
 const authStorage =
   process.env.EXPO_OS === "web" ? webStorage : secureStorage;
 
+// AuthProvider is the owner of the current identity. Keeping its latest
+// session in memory lets ordinary API calls use a still-valid JWT immediately
+// after foregrounding instead of joining a proactive refresh request. The
+// server still validates the JWT on every mobile API request.
+let rememberedSession: Session | null = null;
+
+export function rememberSession(session: Session | null) {
+  rememberedSession = session;
+}
+
+export function rememberedAccessToken(): string | null {
+  if (!rememberedSession?.access_token) return null;
+  if (
+    rememberedSession.expires_at &&
+    rememberedSession.expires_at * 1_000 <= Date.now() + 5_000
+  ) {
+    return null;
+  }
+  return rememberedSession.access_token;
+}
+
 export const supabase = createClient(
   supabaseUrl || "https://configuration-required.supabase.co",
   publishableKey || "configuration-required",
@@ -122,12 +167,6 @@ export const supabase = createClient(
       persistSession: true,
       detectSessionInUrl: false,
     },
+    global: { fetch: fetchWithDeadline },
   },
 );
-
-if (process.env.EXPO_OS !== "web") {
-  AppState.addEventListener("change", (state) => {
-    if (state === "active") supabase.auth.startAutoRefresh();
-    else supabase.auth.stopAutoRefresh();
-  });
-}

@@ -13,7 +13,7 @@ import {
   clearNotificationRegistrationHints,
   revokeLocalNotificationRegistrations,
 } from "@/lib/notifications";
-import { supabase } from "@/lib/supabase";
+import { rememberSession, supabase } from "@/lib/supabase";
 
 type AuthContextValue = {
   session: Session | null;
@@ -45,12 +45,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
      *
      * `loading` blocks the whole app behind a full-screen spinner, and the only
      * thing that used to clear it was `getSession()` resolving. That call is not
-     * as safe as it looks: supabase-js serialises session access behind a lock,
-     * and the keychain-backed storage reads a sharded value one await at a time,
-     * so a token refresh stalling on a flaky connection holds the lock and every
-     * later read queues behind it. There was no `.catch()` either, so a rejection
-     * was equally fatal. Either way the spinner stayed up with no error and no
-     * retry — indistinguishable from a frozen app.
+     * as safe as it looks: close to token expiry, supabase-js makes concurrent
+     * session readers join the same refresh request. If that request stalls while
+     * iOS is restoring connectivity, every later read waits with it. There was no
+     * `.catch()` either, so a rejection was equally fatal. Either way the spinner
+     * stayed up with no error and no retry — indistinguishable from a frozen app.
      *
      * So the gate opens on whichever comes first: the session, a failure, or the
      * deadline. Opening with no session lands on /login rather than the inbox,
@@ -72,6 +71,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         void revokeLocalNotificationRegistrations();
       }
       currentUserId.current = nextUserId;
+      rememberSession(next);
       setSession(next);
       setLoading(false);
     };
