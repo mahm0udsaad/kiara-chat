@@ -22,6 +22,7 @@ import { fieldNotificationDeviceId } from "@/lib/notifications";
 import type {
   BootstrapResponse,
   BookingReceipt,
+  CallPermission,
   CatalogItem,
   ConversationActionsInput,
   ConversationDetail,
@@ -114,6 +115,7 @@ export const queryKeys = {
     ["field-orders", view ?? "all", dayStart ?? ""] as const,
   fieldOrder: (id: string) => ["field-order", id] as const,
   customerTimeline: (phone: string) => ["customer-timeline", phone] as const,
+  callPermission: (id: string) => ["call-permission", id] as const,
   conversationNotes: (id: string) => ["conversation-notes", id] as const,
   conversationAudit: (id: string) => ["conversation-audit", id] as const,
   orderAudit: (id: string) => ["order-audit", id] as const,
@@ -206,6 +208,53 @@ export function useConversation(id: string) {
     enabled: Boolean(id),
     // Realtime and push events invalidate the open conversation. Avoid a
     // second unconditional polling loop while the thread sits unchanged.
+  });
+}
+
+/**
+ * May we call this customer, and may we ask?
+ *
+ * The server reconciles this against Meta rather than trusting its own table —
+ * a permission can lapse with no webhook at all when the customer revokes it
+ * or four calls go unanswered. `staleTime` keeps the screen from paying for
+ * that round trip on every focus; the server holds its own short cache behind
+ * this, so a stale badge self-corrects within a minute.
+ */
+export function useCallPermission(id: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.callPermission(id),
+    queryFn: () => apiRequest<CallPermission>(`/conversations/${id}/call-permission`),
+    enabled: Boolean(id) && enabled,
+    staleTime: 60_000,
+    // Never the reason a thread fails to open: the screen treats an error as
+    // "unknown" and simply hides the pill.
+    retry: 1,
+  });
+}
+
+/** Ask the customer for permission to call her. */
+export function useRequestCallPermission(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body?: string) =>
+      apiRequest<{ conversationId: string; messageSid: string; status: string }>(
+        `/conversations/${id}/call-permission`,
+        {
+          method: "POST",
+          body: JSON.stringify(body?.trim() ? { body } : {}),
+        },
+      ),
+    onSuccess: async () => {
+      // The ask is posted into the thread, so the message list is the one the
+      // employee is looking at and is awaited; the pill follows from the same
+      // refetch.
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.callPermission(id),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.conversationMessages(id),
+      });
+    },
   });
 }
 

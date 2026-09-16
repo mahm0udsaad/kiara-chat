@@ -1087,3 +1087,21 @@ export type CampaignsResponse = {
   segments: { key: CampaignSegment; label: string; hint: string }[];
   segmentCounts: Record<CampaignSegment, number>;
 };
+
+/**
+ * Whether the spa may call this customer over WhatsApp, and whether it may
+ * ask. `requestAvailable` folds together Meta's two independent limits —
+ * the ask quota (1 per 24h, 2 per 7 days) and the 24-hour service window —
+ * so the screen never has to reason about them separately.
+ */
+export type CallPermission = {
+  conversationId: string;
+  callable: boolean;
+  status: "none" | "requested" | "granted" | "declined" | "expired" | "revoked";
+  expiresAt: string | null;
+  canRequest: boolean;
+  /** False when Graph was unreachable and this is the remembered answer. */
+  authoritative: boolean;
+  requestChannel: "free_form" | "template";
+  requestAvailable: boolean;
+};

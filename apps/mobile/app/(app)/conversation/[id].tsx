@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { BookingSheet } from "@/components/inbox/booking-sheet";
+import { CallPermissionPill } from "@/components/inbox/call-permission-pill";
 import { Composer } from "@/components/inbox/composer";
 import { MessageResendSheet } from "@/components/inbox/message-resend-sheet";
 import { ConversationActionsButton } from "@/components/conversation-actions-button";
@@ -641,6 +642,11 @@ export default function ConversationScreen() {
             </>
           )}
         </Pressable>
+        {/* Sits beside حجز rather than behind the actions menu: deciding to
+            call is a mid-chat decision, and the pill is also the only place
+            that says whether calling is possible at all. Not on a group —
+            its `customer_phone` is a jid, and there is nobody to call. */}
+        <CallPermissionPill conversationId={id} enabled={!isGroup} />
         <ConversationActionsButton
           conversationId={id}
           csStatus={current.csStatus}

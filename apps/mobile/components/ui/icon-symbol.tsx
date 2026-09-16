@@ -23,6 +23,8 @@ export type IconName =
   | "exclamationmark.circle"
   | "mappin.and.ellipse"
   | "phone"
+  | "phone.badge.plus"
+  | "phone.down"
   | "arrow.up"
   | "arrow.up.circle.fill"
   | "arrow.clockwise"
@@ -78,6 +80,8 @@ const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcon
   "exclamationmark.circle": "error-outline",
   "mappin.and.ellipse": "place",
   phone: "call",
+  "phone.badge.plus": "add-ic-call",
+  "phone.down": "phone-disabled",
   "arrow.up": "arrow-upward",
   "arrow.up.circle.fill": "arrow-circle-up",
   "arrow.clockwise": "refresh",

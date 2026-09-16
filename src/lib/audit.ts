@@ -47,6 +47,13 @@ export const CONVERSATION_EVENTS = {
   reminderConfirmed: "conversation.reminder_confirmed",
   botResumed: "conversation.bot_resumed",
   customerRenamed: "conversation.customer_renamed",
+  // Calling. The request is an employee action and belongs on the
+  // responsibility trail; the grant and the decline are the customer
+  // answering, recorded as system events so the report can show the outcome
+  // beside the ask that produced it.
+  callPermissionRequested: "conversation.call_permission_requested",
+  callPermissionGranted: "conversation.call_permission_granted",
+  callPermissionDeclined: "conversation.call_permission_declined",
 } as const;
 
 export type ConversationEventType =
@@ -96,6 +103,39 @@ export function recordConversationEvent(
     actor,
     payload,
   });
+}
+
+/**
+ * An event with no employee behind it — the customer answered, or a webhook
+ * told us something changed.
+ *
+ * Kept separate from `recordConversationEvent` rather than loosening
+ * `AuditActor.userId` to nullable: every existing caller genuinely has a
+ * signed-in employee, and making that field optional for all of them would
+ * lose a real guarantee to serve one case.
+ */
+export async function recordSystemConversationEvent(
+  conversationId: string,
+  eventType: ConversationEventType,
+  payload?: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await getAdminSupabaseClient()
+    .from("operation_events")
+    .insert({
+      restaurant_id: KIARA_RESTAURANT_ID,
+      aggregate_type: "conversation",
+      aggregate_id: conversationId,
+      event_type: eventType,
+      actor_type: "system",
+      actor_role: "system",
+      payload: payload ?? {},
+    });
+  if (error) {
+    console.error(
+      `[audit] ${eventType} on conversation ${conversationId} was not recorded`,
+      error,
+    );
+  }
 }
 
 /** The column only accepts the roles the operations model knows. */
