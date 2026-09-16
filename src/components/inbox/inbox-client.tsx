@@ -64,6 +64,7 @@ import { ConversationAuditPanel } from "@/components/audit-trail";
 import { Modal } from "@/components/ui/modal";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { CallControl } from "@/components/inbox/call-control";
 import { Button } from "@/components/ui/button";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
@@ -1756,6 +1757,13 @@ export function InboxClient({
                     ) : null}
                   </div>
                 </div>
+                {/* Beside حجز rather than inside the actions menu: calling is
+                    a mid-chat decision, and this control is also the only
+                    place that says whether calling is possible at all. */}
+                <CallControl
+                  conversationId={selected.id}
+                  disabled={isGroupConversation(selected)}
+                />
                 {/* Create the visit first; dispatch happens from /orders. */}
                 <Button
                   type="button"

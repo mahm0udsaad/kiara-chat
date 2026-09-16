@@ -19,6 +19,9 @@ import {
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { metaCloudConfig } from "@/lib/transport/meta-api";
 import { downloadMetaMedia } from "@/lib/transport/meta";
+import { parseCallPermissionReply } from "@/lib/transport/meta-calling";
+import { applyCallPermissionReply } from "@/lib/call-permissions";
+import { ingestCalls } from "@/lib/calls";
 import { customerProvider } from "@/lib/transport";
 
 export const runtime = "nodejs";
@@ -35,6 +38,12 @@ type MetaMessage = {
     type?: string;
     button_reply?: { id?: string; title?: string };
     list_reply?: { id?: string; title?: string; description?: string };
+    call_permission_reply?: {
+      response?: string;
+      is_permanent?: boolean;
+      expiration_timestamp?: number | string;
+      response_source?: string;
+    };
   };
   location?: {
     latitude?: number;
@@ -42,6 +51,9 @@ type MetaMessage = {
     name?: string;
     address?: string;
   };
+  /** Set when this message answers another — a call permission reply points
+   * back at the request that produced it. */
+  context?: { id?: string; from?: string };
   image?: MetaMedia;
   video?: MetaMedia;
   audio?: MetaMedia & { voice?: boolean };
@@ -226,8 +238,21 @@ async function ingestMessage(value: MetaValue, message: MetaMessage): Promise<vo
           : message.type === "unsupported"
             ? "text"
             : message.type || "text";
+  // A call permission reply carries no text of its own, so without this it
+  // would render as an empty bubble — the same failure the `unsupported`
+  // branch above exists to prevent. `content` deliberately stays empty: it is
+  // what the bot reads, and the customer did not write anything for it to
+  // answer.
+  const permissionReply = parseCallPermissionReply(message);
   const displayContent =
-    content || (message.type === "unsupported" ? "⚠️ رسالة غير مدعومة من واتساب" : content);
+    content ||
+    (permissionReply
+      ? permissionReply.response === "accept"
+        ? "✅ سمحت العميلة باستقبال مكالمة"
+        : "🚫 رفضت العميلة استقبال مكالمة"
+      : message.type === "unsupported"
+        ? "⚠️ رسالة غير مدعومة من واتساب"
+        : content);
 
   const createdAt = message.timestamp
     ? new Date(Number(message.timestamp) * 1000).toISOString()
@@ -246,6 +271,14 @@ async function ingestMessage(value: MetaValue, message: MetaMessage): Promise<vo
 
   await bumpConversationActivity(conversation.id, { inbound: true });
   after(() => notifyInboundInboxMessage(conversation.id));
+  // Deferred: the customer's answer is already stored as a message, and the
+  // permission bookkeeping must never be able to fail the ingestion that
+  // carries the spa's live inbox.
+  if (permissionReply) {
+    after(() =>
+      applyCallPermissionReply(conversation.id, phone, permissionReply),
+    );
+  }
   if (content.trim() && inboxProvider() === "meta") {
     after(() =>
       runBotTurn({ conversationId: conversation.id, customerPhone: phone, body: content }),
@@ -314,13 +347,24 @@ export async function POST(request: NextRequest) {
 
   // The app and webhook can be prepared before cutover without duplicating
   // Twilio's inbound messages. Only the environment flag opens ingestion.
-  if (customerProvider() !== "meta") {
-    return NextResponse.json({ ok: true, standby: true });
-  }
+  //
+  // Scoped to messages rather than to the whole request, which is what it used
+  // to guard. Calling exists only on the Business Platform — there is no
+  // Twilio path for it to duplicate — so gating calls on the *messaging*
+  // provider switch would silently drop live call signalling the day anyone
+  // flipped that flag, and a dropped SDP answer is a call that never connects.
+  const messagesEnabled = customerProvider() === "meta";
 
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
-      if (change.field === "messages" && change.value) await ingestValue(change.value);
+      if (change.field === "messages" && change.value && messagesEnabled) {
+        await ingestValue(change.value);
+      } else if (change.field === "calls" && change.value) {
+        // A sibling branch, never a step inside message ingestion: a call
+        // event must not be able to touch the path that carries the spa's
+        // customer inbox, and ingestCalls swallows its own per-entry errors.
+        await ingestCalls(change.value as { calls?: unknown[]; statuses?: unknown[] });
+      }
     }
   }
   return NextResponse.json({ ok: true });
