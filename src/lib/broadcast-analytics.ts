@@ -12,7 +12,8 @@
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { loadAllCustomers, type BroadcastMark, type CustomerRow } from "@/lib/broadcast";
-import { templateSpec, isTemplateKey, type TemplateKey } from "@/lib/templates";
+import { templateSpec, type TemplateKey } from "@/lib/templates";
+import { normalizePhone } from "@/lib/phone";
 
 export interface CustomerCampaignEvent {
   customerId: string;
@@ -52,8 +53,6 @@ export interface BroadcastAnalyticsResult {
   feed: CustomerCampaignEvent[];
 }
 
-const normalizeDigits = (p: string | null | undefined) => (p || "").replace(/\D/g, "");
-
 export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<BroadcastAnalyticsResult> {
   const admin = getAdminSupabaseClient();
   const spec = templateSpec(templateKey);
@@ -76,7 +75,7 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
     customer: CustomerRow;
     mark: BroadcastMark;
     sentTime: number;
-    phoneDigits: string;
+    phoneNormalized: string;
   }[] = [];
 
   let failedCount = 0;
@@ -97,7 +96,7 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
         customer: c,
         mark: matchedMark,
         sentTime: new Date(matchedMark.at).getTime(),
-        phoneDigits: normalizeDigits(c.phone_number),
+        phoneNormalized: normalizePhone(c.phone_number || ""),
       });
     } else if (matchedMark?.status === "failed") {
       failedCount += 1;
@@ -130,30 +129,27 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
     return { summary, feed: [] };
   }
 
-  // Earliest sent time to filter conversation activity
-  const earliestSentIso = new Date(
-    Math.min(...sentCustomers.map((s) => s.sentTime))
-  ).toISOString();
+  // Earliest sent time to filter conversation activity (with 1-minute skew tolerance)
+  const earliestSentMs = Math.min(...sentCustomers.map((s) => s.sentTime)) - 60000;
+  const earliestSentIso = new Date(Math.max(0, earliestSentMs)).toISOString();
 
   // Load conversations for our restaurant
   const { data: conversationsData } = await admin
     .from("conversations")
-    .select("id, customer_phone, last_message_at, updated_at")
+    .select("id, customer_phone, last_message_at, last_inbound_at, updated_at")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .limit(5000);
+    .limit(10000);
 
-  const convByDigits = new Map<string, { id: string; last_message_at: string | null }>();
-  const convIdToDigits = new Map<string, string>();
+  const convByPhone = new Map<string, { id: string; last_message_at: string | null; last_inbound_at: string | null }>();
 
   for (const conv of conversationsData ?? []) {
-    const d = normalizeDigits(conv.customer_phone);
-    if (d) {
-      convByDigits.set(d, conv);
-      convIdToDigits.set(conv.id, d);
+    const p = normalizePhone(conv.customer_phone);
+    if (p) {
+      convByPhone.set(p, conv);
     }
   }
 
-  // Load all recent customer inbound messages after earliestSentIso in one fast query
+  // Load all recent customer inbound messages after earliestSentIso
   const repliesByConvId = new Map<
     string,
     { content: string; created_at: string }[]
@@ -166,7 +162,7 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
       .eq("role", "customer")
       .gte("created_at", earliestSentIso)
       .order("created_at", { ascending: true })
-      .limit(5000);
+      .limit(10000);
 
     for (const msg of recentInbound ?? []) {
       const list = repliesByConvId.get(msg.conversation_id) ?? [];
@@ -217,40 +213,44 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
     const phone = s.customer.phone_number || "";
     const name = s.customer.full_name || null;
     const sentAt = s.mark.at;
-    const conv = convByDigits.get(s.phoneDigits);
+    const conv = convByPhone.get(s.phoneNormalized);
     const convId = conv?.id ?? null;
 
     const sidInfo = s.mark.sid ? sidStatusMap.get(s.mark.sid) : null;
     const rawDeliveryStatus = sidInfo?.delivery_status?.toLowerCase() || "sent";
 
-    const isRead = rawDeliveryStatus === "read";
-    const isDelivered = isRead || rawDeliveryStatus === "delivered";
-
-    if (isRead) readCount += 1;
-    if (isDelivered) deliveredCount += 1;
-
-    // Check for customer replies after the send timestamp
+    // Check for customer replies after the send timestamp (with 1-minute skew tolerance)
+    const thresholdTime = s.sentTime - 60000;
     let repliedAt: string | null = null;
     let lastCustomerMessage: string | null = null;
 
     if (convId && repliesByConvId.has(convId)) {
       const convReplies = repliesByConvId.get(convId)!;
       const validReplies = convReplies.filter(
-        (r) => new Date(r.created_at).getTime() >= s.sentTime
+        (r) => new Date(r.created_at).getTime() >= thresholdTime
       );
       if (validReplies.length > 0) {
-        repliedCount += 1;
         repliedAt = validReplies[0].created_at;
         lastCustomerMessage = validReplies[validReplies.length - 1].content;
       }
+    } else if (conv?.last_inbound_at && new Date(conv.last_inbound_at).getTime() >= thresholdTime) {
+      repliedAt = conv.last_inbound_at;
     }
 
+    const hasReplied = Boolean(repliedAt);
+    const isRead = hasReplied || rawDeliveryStatus === "read";
+    const isDelivered = hasReplied || isRead || rawDeliveryStatus === "delivered" || rawDeliveryStatus === "sent";
+
+    if (hasReplied) repliedCount += 1;
+    if (isRead) readCount += 1;
+    if (isDelivered) deliveredCount += 1;
+
     let itemStatus: CustomerCampaignEvent["status"] = "sent";
-    if (repliedAt) {
+    if (hasReplied) {
       itemStatus = "replied";
-    } else if (isRead) {
+    } else if (rawDeliveryStatus === "read") {
       itemStatus = "read";
-    } else if (isDelivered) {
+    } else if (rawDeliveryStatus === "delivered") {
       itemStatus = "delivered";
     }
 
@@ -261,7 +261,7 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
       status: itemStatus,
       sentAt,
       deliveredAt: isDelivered ? (sidInfo?.created_at ?? sentAt) : null,
-      readAt: isRead ? (sidInfo?.created_at ?? sentAt) : null,
+      readAt: isRead ? (sidInfo?.created_at ?? (repliedAt ?? sentAt)) : null,
       repliedAt,
       lastCustomerMessage,
       conversationId: convId,
@@ -277,19 +277,18 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
   });
 
   const totalSent = sentCustomers.length;
-  const effectiveDelivered = Math.max(deliveredCount, readCount);
-  const deliveryRate = totalSent > 0 ? Math.round((effectiveDelivered / totalSent) * 100) : 0;
-  const readRate = effectiveDelivered > 0 ? Math.round((readCount / effectiveDelivered) * 100) : 0;
+  const deliveryRate = totalSent > 0 ? Math.round((deliveredCount / totalSent) * 100) : 0;
+  const readRate = deliveredCount > 0 ? Math.round((readCount / deliveredCount) * 100) : 0;
   const replyRate = totalSent > 0 ? Math.round((repliedCount / totalSent) * 100) : 0;
 
   // Health indicator
   let healthTone: BroadcastAnalyticsSummary["healthTone"] = "moderate";
   let healthLabel = "تفاعل متوسط";
 
-  if (replyRate >= 15 || (readRate >= 60 && replyRate >= 8)) {
+  if (replyRate >= 10 || (readRate >= 50 && replyRate >= 5)) {
     healthTone = "excellent";
     healthLabel = "حملة ناجحة جدًا 🔥 (تفاعل مرتفع)";
-  } else if (replyRate >= 5 || readRate >= 30) {
+  } else if (replyRate >= 3 || readRate >= 20) {
     healthTone = "good";
     healthLabel = "تفاعل جيد جدًا 👍";
   } else if (totalSent > 0 && repliedCount === 0 && readCount === 0) {
@@ -303,7 +302,7 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
     templateBody: spec.body,
     totalAudience: allCustomers.length,
     sent: totalSent,
-    delivered: effectiveDelivered,
+    delivered: deliveredCount,
     read: readCount,
     replied: repliedCount,
     failed: failedCount,

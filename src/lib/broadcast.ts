@@ -29,6 +29,7 @@ import {
   templateVariable,
   type TemplateKey,
 } from "@/lib/templates";
+import { findOrCreateConversation, saveMessage } from "@/lib/server-conversations";
 
 export const DAILY_SEND_CAP = Number(process.env.BROADCAST_DAILY_CAP || 2000);
 const BATCH_SIZE = 20;
@@ -350,6 +351,24 @@ export async function sendBroadcastBatch(
       const res = await transport.sendTemplate(phone, contentSid, vars);
       mark = { status: "sent", sid: res.providerMessageId || null, at: new Date().toISOString() };
       sent += 1;
+
+      // Ensure conversation and message row exist so status webhooks and inbox link immediately
+      try {
+        const conv = await findOrCreateConversation(phone, row.full_name);
+        if (res.providerMessageId) {
+          await saveMessage({
+            conversationId: conv.id,
+            role: "agent",
+            content: spec.body,
+            messageType: "template",
+            externalMessageSid: res.providerMessageId,
+            metadata: { template: templateKey, broadcast: true },
+            deliveryStatus: "sent",
+          });
+        }
+      } catch (convErr) {
+        console.warn("[broadcast] failed to create conversation/message record for broadcast:", convErr);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastError = message;

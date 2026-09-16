@@ -410,6 +410,48 @@ async function main() {
       };
       successCount++;
       process.stdout.write(`✅ Sent (SID: ${res.providerMessageId || "ok"})\n`);
+
+      // Ensure conversation and message row exist
+      try {
+        const { data: convData } = await supabase
+          .from("conversations")
+          .select("id")
+          .eq("restaurant_id", KIARA_RESTAURANT_ID)
+          .eq("customer_phone", phone)
+          .maybeSingle();
+
+        let conversationId = convData?.id;
+        if (!conversationId) {
+          const { data: newConv } = await supabase
+            .from("conversations")
+            .insert({
+              restaurant_id: KIARA_RESTAURANT_ID,
+              customer_phone: phone,
+              customer_name: name || null,
+              status: "active",
+              started_at: new Date().toISOString(),
+              last_message_at: new Date().toISOString(),
+            })
+            .select("id")
+            .single();
+          conversationId = newConv?.id;
+        }
+
+        if (conversationId && res.providerMessageId) {
+          await supabase.from("messages").insert({
+            conversation_id: conversationId,
+            role: "agent",
+            content: selectedTemplate.body,
+            message_type: "template",
+            external_message_sid: res.providerMessageId,
+            channel: "whatsapp",
+            delivery_status: "sent",
+            metadata: { template: TEMPLATE_KEY, broadcast: true },
+          });
+        }
+      } catch (cErr) {
+        // non-blocking
+      }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       mark = {
