@@ -136,7 +136,7 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
   // Load conversations for our restaurant
   const { data: conversationsData } = await admin
     .from("conversations")
-    .select("id, customer_phone, last_message_at, last_inbound_at, updated_at")
+    .select("id, customer_phone, last_message_at, last_inbound_at")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .limit(10000);
 
