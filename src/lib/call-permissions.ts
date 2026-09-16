@@ -425,7 +425,13 @@ export async function resolveCallPermission(
   }
 
   return {
-    callable: granted && (!expiresAt || new Date(expiresAt).getTime() > Date.now()),
+    // `canCall` is Meta's own answer and outranks our reading of the status:
+    // permission can be granted and still spent, since a business may connect
+    // at most 100 calls to one customer per 24 hours.
+    callable:
+      granted &&
+      live.canCall &&
+      (!expiresAt || new Date(expiresAt).getTime() > Date.now()),
     status,
     expiresAt,
     canRequest: live.canRequest,

@@ -48,6 +48,13 @@ export interface CallPermissionState {
    */
   canRequest: boolean;
   /**
+   * Meta's own answer to "may this business place a call right now", from the
+   * `start_call` action. Distinct from `status`: permission can be granted and
+   * still spent, since a business may connect at most 100 calls per customer
+   * per 24 hours.
+   */
+  canCall: boolean;
+  /**
    * Whether the response was actually understood.
    *
    * False means Graph answered with a shape this parser does not recognise, so
@@ -60,12 +67,42 @@ export interface CallPermissionState {
   raw: unknown;
 }
 
+/**
+ * The real shape, captured from a live response on 2026-09-16:
+ *
+ *   {
+ *     "messaging_product": "whatsapp",
+ *     "permission": { "status": "permanent" },
+ *     "actions": [
+ *       { "action_name": "send_call_permission_request",
+ *         "can_perform_action": false,
+ *         "limits": [ { "max_allowed": 1, "time_period": "PT24H",
+ *                       "current_usage": 1 }, … ] },
+ *       { "action_name": "start_call", "can_perform_action": true,
+ *         "limits": [ { "max_allowed": 100, "time_period": "PT24H",
+ *                       "current_usage": 0 } ] }
+ *     ]
+ *   }
+ *
+ * Worth stating because the first version of this parser guessed a `data[]`
+ * array of entries with `name`/`remaining_quota`, found nothing, and reported
+ * a confident "no permission" for a customer who had granted it permanently.
+ */
 type PermissionResponse = {
-  data?: Array<{
+  messaging_product?: string;
+  permission?: {
     status?: string;
-    expiration_time?: number | string;
     expiration_timestamp?: number | string;
-    actions?: Array<{ name?: string; limit?: number; remaining_quota?: number }>;
+    expiration_time?: number | string;
+  };
+  actions?: Array<{
+    action_name?: string;
+    can_perform_action?: boolean;
+    limits?: Array<{
+      max_allowed?: number;
+      time_period?: string;
+      current_usage?: number;
+    }>;
   }>;
 };
 
@@ -91,21 +128,19 @@ export async function fetchCallPermission(
     { method: "GET" },
   );
 
-  const entry = result.data?.[0];
-  const rawStatus = String(entry?.status ?? "").toLowerCase();
+  const permission = result.permission;
+  const rawStatus = String(permission?.status ?? "").toLowerCase();
   const status: CallPermissionStatus =
     rawStatus === "temporary" || rawStatus === "permanent"
       ? rawStatus
       : "no_permission";
 
-  // An empty `data` array is a real answer — this user has no permission. A
-  // missing array, or an entry whose status is a word this parser has never
-  // seen, is not: it means the response shape moved. Say so rather than
-  // reporting a confident "no".
+  // `permission` present with a status word we know is the only shape that
+  // counts as an answer. Anything else means the response moved again, and
+  // reporting it as "no permission" is how a live grant got revoked once.
   const recognised =
-    Array.isArray(result.data) &&
-    (result.data.length === 0 ||
-      rawStatus === "temporary" ||
+    Boolean(permission) &&
+    (rawStatus === "temporary" ||
       rawStatus === "permanent" ||
       rawStatus === "no_permission");
   if (!recognised) {
@@ -115,23 +150,22 @@ export async function fetchCallPermission(
     );
   }
 
-  // The field has been spelled both ways across API versions; read either
-  // rather than silently reporting a temporary grant as never-expiring.
+  // Absent on a permanent grant, which never expires.
   const expiresAt =
-    asEpochSeconds(entry?.expiration_time) ??
-    asEpochSeconds(entry?.expiration_timestamp);
+    asEpochSeconds(permission?.expiration_timestamp) ??
+    asEpochSeconds(permission?.expiration_time);
 
-  const requestAction = entry?.actions?.find(
-    (action) => action?.name === "send_call_permission_request",
-  );
-  // Absent quota information is treated as "allowed": Graph rejects an
-  // over-quota request on its own, and refusing to show the button because a
-  // field was missing is the worse failure.
-  const canRequest = requestAction
-    ? (requestAction.remaining_quota ?? 1) > 0
-    : true;
+  const action = (name: string) =>
+    result.actions?.find((candidate) => candidate?.action_name === name);
 
-  return { status, expiresAt, canRequest, recognised, raw: result };
+  // Meta answers both questions directly, so neither is inferred. An absent
+  // action is treated as permitted: Graph refuses the call or the request on
+  // its own, and hiding a button because a field was missing is the worse
+  // failure of the two.
+  const canRequest = action("send_call_permission_request")?.can_perform_action ?? true;
+  const canCall = action("start_call")?.can_perform_action ?? true;
+
+  return { status, expiresAt, canRequest, canCall, recognised, raw: result };
 }
 
 export interface PermissionRequestResult {
