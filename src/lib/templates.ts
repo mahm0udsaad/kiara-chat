@@ -93,7 +93,7 @@ const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
   number_notice: {
     env: "TWILIO_CONTENT_SID_NUMBER_NOTICE",
     metaEnv: "META_TEMPLATE_NAME_NUMBER_NOTICE",
-    metaName: "kiara_number_notice_hx9ed2953b5f75cadc488e2cd0add1292b",
+    metaName: "open_conversation",
     label: "تنويه الرقم",
     description:
       "تنبيه جماعي يطلب من العميلة حذف الرقم وإعادة حفظه ليظهر حساب واتساب الأعمال بشكل صحيح.",
@@ -105,8 +105,8 @@ const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
   },
   open_conversation: {
     env: "TWILIO_CONTENT_SID_NUMBER_NOTICE",
-    metaEnv: "META_TEMPLATE_NAME_NUMBER_NOTICE",
-    metaName: "kiara_number_notice_hx9ed2953b5f75cadc488e2cd0add1292b",
+    metaEnv: "META_TEMPLATE_NAME_OPEN_CONVERSATION",
+    metaName: "open_conversation",
     label: "open_conversation (تنويه الرقم)",
     description:
       "تنبيه جماعي يطلب من العميلة حذف الرقم وإعادة حفظه ليظهر حساب واتساب الأعمال بشكل صحيح.",

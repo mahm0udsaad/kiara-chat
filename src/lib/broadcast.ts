@@ -30,7 +30,7 @@ import {
   type TemplateKey,
 } from "@/lib/templates";
 
-export const DAILY_SEND_CAP = Number(process.env.BROADCAST_DAILY_CAP || 250);
+export const DAILY_SEND_CAP = Number(process.env.BROADCAST_DAILY_CAP || 2000);
 const BATCH_SIZE = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
 

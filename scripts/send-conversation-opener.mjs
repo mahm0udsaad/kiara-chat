@@ -49,14 +49,14 @@ const TEMPLATES = {
     label: "open_conversation (تنويه الرقم)",
     body: "📢 تنويه مهم لعملائنا الكرام 🤍\n\nفي حال كان رقم الواتساب الخاص بكيارا لا يظهر لديكم أو لا يعمل بشكل صحيح، نرجو منكم حذف الرقم من جهات الاتصال في جوالكم ثم إعادة حفظه من جديد.\n\n📱 رقم كيارا سبا:\n966508421748\n\nبعد إعادة حفظ الرقم، افتحوا الواتساب من جديد وسيظهر لكم الحساب بإذن الله 🤍\n\nشاكرين لكم تفهّمكم وصبركم، ونسعد دائمًا بخدمتكم 🌿\nKiara Spa | كيارا سبا",
     contentSid: process.env.TWILIO_CONTENT_SID_NUMBER_NOTICE || "HX9ed2953b5f75cadc488e2cd0add1292b",
-    metaName: process.env.META_TEMPLATE_NAME_NUMBER_NOTICE || "kiara_number_notice_hx9ed2953b5f75cadc488e2cd0add1292b",
+    metaName: process.env.META_TEMPLATE_NAME_OPEN_CONVERSATION || "open_conversation",
     hasNameVar: false,
   },
   number_notice: {
     label: "تنويه الرقم (number_notice)",
     body: "📢 تنويه مهم لعملائنا الكرام 🤍\n\nفي حال كان رقم الواتساب الخاص بكيارا لا يظهر لديكم أو لا يعمل بشكل صحيح، نرجو منكم حذف الرقم من جهات الاتصال في جوالكم ثم إعادة حفظه من جديد.\n\n📱 رقم كيارا سبا:\n966508421748\n\nبعد إعادة حفظ الرقم، افتحوا الواتساب من جديد وسيظهر لكم الحساب بإذن الله 🤍\n\nشاكرين لكم تفهّمكم وصبركم، ونسعد دائمًا بخدمتكم 🌿\nKiara Spa | كيارا سبا",
     contentSid: process.env.TWILIO_CONTENT_SID_NUMBER_NOTICE || "HX9ed2953b5f75cadc488e2cd0add1292b",
-    metaName: process.env.META_TEMPLATE_NAME_NUMBER_NOTICE || "kiara_number_notice_hx9ed2953b5f75cadc488e2cd0add1292b",
+    metaName: process.env.META_TEMPLATE_NAME_NUMBER_NOTICE || "open_conversation",
     hasNameVar: false,
   },
   conversation_opener: {
