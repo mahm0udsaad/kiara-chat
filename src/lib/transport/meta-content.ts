@@ -122,6 +122,47 @@ export async function listMetaTemplatesWithStatus(): Promise<TemplateSummary[]> 
   return rows;
 }
 
+const HEADER_IMAGE_TTL_MS = 5 * 60_000;
+const headerImageCache = new Map<string, { at: number; link: string | null }>();
+
+/**
+ * A template approved with a media header must carry that media on every send
+ * or Meta rejects the whole message. The image it was approved with is the
+ * right one to resend, so read it back from the template itself rather than
+ * making every caller configure a URL. Cached because a broadcast resolves the
+ * same template once per recipient.
+ *
+ * Meta returns `header_handle` as an upload handle at create time but as a
+ * fetchable URL on read-back, so anything that is not an http(s) URL is no use
+ * to us as a `link` and is treated as absent.
+ */
+export async function metaTemplateHeaderImage(
+  name: string,
+  language: string,
+): Promise<string | null> {
+  const override = process.env.META_TEMPLATE_HEADER_IMAGE_URL?.trim();
+  if (override) return override;
+
+  const key = `${name}:${language}`;
+  const cached = headerImageCache.get(key);
+  if (cached && Date.now() - cached.at < HEADER_IMAGE_TTL_MS) return cached.link;
+
+  const { wabaId } = metaCloudConfig();
+  if (!wabaId) throw new Error("Meta Cloud API is not configured: missing WABA ID");
+  const page: { data?: MetaTemplateRow[] } = await metaGraphCall(
+    `/${wabaId}/message_templates?limit=50&fields=name,language,components&name=${encodeURIComponent(name)}`,
+  );
+  const row = (page.data ?? []).find(
+    (candidate) => candidate.name === name && candidate.language === language,
+  );
+  const header = (row?.components ?? []).find((component) => component.type === "HEADER");
+  const handle =
+    header?.format === "IMAGE" ? header.example?.header_handle?.[0]?.trim() : undefined;
+  const link = handle && /^https?:\/\//i.test(handle) ? handle : null;
+  headerImageCache.set(key, { at: Date.now(), link });
+  return link;
+}
+
 /** Resolve old Twilio HX identifiers against names Meta retained during migration. */
 export async function resolveMetaTemplateIdentifier(
   identifier: string,

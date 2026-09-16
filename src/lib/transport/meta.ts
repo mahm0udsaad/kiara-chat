@@ -1,6 +1,6 @@
 import { signMediaUrl } from "@/lib/storage-media";
 import { metaCloudConfig, metaErrorCode, metaGraphCall, isMetaCloudConfigured } from "./meta-api";
-import { resolveMetaTemplateIdentifier } from "./meta-content";
+import { metaTemplateHeaderImage, resolveMetaTemplateIdentifier } from "./meta-content";
 import type {
   MessageTransport,
   OutboundMedia,
@@ -72,22 +72,32 @@ export const metaTransport: MessageTransport = {
   async sendTemplate(toE164, identifier, variables: TemplateVariables) {
     const template = await resolveMetaTemplateIdentifier(identifier);
     const keys = Object.keys(variables).sort((a, b) => Number(a) - Number(b));
+    const headerImage = await metaTemplateHeaderImage(template.name, template.language);
+    const components = [
+      ...(headerImage
+        ? [
+            {
+              type: "header",
+              parameters: [{ type: "image", image: { link: headerImage } }],
+            },
+          ]
+        : []),
+      ...(keys.length
+        ? [
+            {
+              type: "body",
+              parameters: keys.map((key) => ({ type: "text", text: variables[key] })),
+            },
+          ]
+        : []),
+    ];
     return sendMessage({
       to: recipient(toE164),
       type: "template",
       template: {
         name: template.name,
         language: { policy: "deterministic", code: template.language },
-        ...(keys.length
-          ? {
-              components: [
-                {
-                  type: "body",
-                  parameters: keys.map((key) => ({ type: "text", text: variables[key] })),
-                },
-              ],
-            }
-          : {}),
+        ...(components.length ? { components } : {}),
       },
     });
   },
