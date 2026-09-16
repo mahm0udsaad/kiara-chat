@@ -56,8 +56,15 @@ const normalizeDigits = (p: string | null | undefined) => (p || "").replace(/\D/
 
 export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<BroadcastAnalyticsResult> {
   const admin = getAdminSupabaseClient();
-  const allCustomers = await loadAllCustomers();
   const spec = templateSpec(templateKey);
+
+  // Load all customers
+  let allCustomers: CustomerRow[] = [];
+  try {
+    allCustomers = await loadAllCustomers();
+  } catch (err) {
+    console.error("[analytics] Failed to load customers:", err);
+  }
 
   // Identify marks for this template or aliases (e.g. open_conversation and number_notice)
   const aliasKeys =
@@ -100,7 +107,7 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
     }
   }
 
-  // If nobody was sent yet, return clean summary
+  // If nobody was sent yet, return clean empty summary
   if (sentCustomers.length === 0) {
     const summary: BroadcastAnalyticsSummary = {
       templateKey,
@@ -128,77 +135,78 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
     Math.min(...sentCustomers.map((s) => s.sentTime))
   ).toISOString();
 
-  // Find conversations for our restaurant
-  const customerPhones = sentCustomers.map((s) => s.customer.phone_number).filter(Boolean) as string[];
-  
-  // Load matching conversations
+  // Load conversations for our restaurant
   const { data: conversationsData } = await admin
     .from("conversations")
     .select("id, customer_phone, last_message_at, updated_at")
-    .eq("restaurant_id", KIARA_RESTAURANT_ID);
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .limit(5000);
 
   const convByDigits = new Map<string, { id: string; last_message_at: string | null }>();
+  const convIdToDigits = new Map<string, string>();
+
   for (const conv of conversationsData ?? []) {
     const d = normalizeDigits(conv.customer_phone);
-    if (d) convByDigits.set(d, conv);
-  }
-
-  // Load message delivery statuses and customer replies
-  // 1. Check messages with external_message_sid for sent marks
-  const sids = sentCustomers.map((s) => s.mark.sid).filter(Boolean) as string[];
-  const sidStatusMap = new Map<string, { delivery_status: string; created_at: string }>();
-
-  if (sids.length > 0) {
-    const pageSize = 1000;
-    for (let i = 0; i < sids.length; i += pageSize) {
-      const batch = sids.slice(i, i + pageSize);
-      const { data: msgStatuses } = await admin
-        .from("messages")
-        .select("external_message_sid, delivery_status, created_at")
-        .in("external_message_sid", batch);
-
-      for (const m of msgStatuses ?? []) {
-        if (m.external_message_sid) {
-          sidStatusMap.set(m.external_message_sid, {
-            delivery_status: m.delivery_status || "sent",
-            created_at: m.created_at,
-          });
-        }
-      }
+    if (d) {
+      convByDigits.set(d, conv);
+      convIdToDigits.set(conv.id, d);
     }
   }
 
-  // 2. Load inbound customer messages that happened after earliest sent time
-  const matchingConvIds = sentCustomers
-    .map((s) => convByDigits.get(s.phoneDigits)?.id)
-    .filter(Boolean) as string[];
-
+  // Load all recent customer inbound messages after earliestSentIso in one fast query
   const repliesByConvId = new Map<
     string,
     { content: string; created_at: string }[]
   >();
 
-  if (matchingConvIds.length > 0) {
-    const pageSize = 1000;
-    for (let i = 0; i < matchingConvIds.length; i += pageSize) {
-      const batch = matchingConvIds.slice(i, i + pageSize);
-      const { data: inboundMessages } = await admin
-        .from("messages")
-        .select("conversation_id, content, created_at")
-        .in("conversation_id", batch)
-        .eq("role", "customer")
-        .gte("created_at", earliestSentIso)
-        .order("created_at", { ascending: true });
+  try {
+    const { data: recentInbound } = await admin
+      .from("messages")
+      .select("conversation_id, content, created_at")
+      .eq("role", "customer")
+      .gte("created_at", earliestSentIso)
+      .order("created_at", { ascending: true })
+      .limit(5000);
 
-      for (const msg of inboundMessages ?? []) {
-        const list = repliesByConvId.get(msg.conversation_id) ?? [];
-        list.push({ content: msg.content || "", created_at: msg.created_at });
-        repliesByConvId.set(msg.conversation_id, list);
+    for (const msg of recentInbound ?? []) {
+      const list = repliesByConvId.get(msg.conversation_id) ?? [];
+      list.push({ content: msg.content || "", created_at: msg.created_at });
+      repliesByConvId.set(msg.conversation_id, list);
+    }
+  } catch (err) {
+    console.error("[analytics] Failed to load inbound messages:", err);
+  }
+
+  // Load delivery statuses from messages for sent messages
+  const sidStatusMap = new Map<string, { delivery_status: string; created_at: string }>();
+  const sids = sentCustomers.map((s) => s.mark.sid).filter(Boolean) as string[];
+
+  if (sids.length > 0) {
+    // Chunk sids in safe batches of 50 to avoid PostgREST URI length limits
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < sids.length; i += CHUNK_SIZE) {
+      const chunk = sids.slice(i, i + CHUNK_SIZE);
+      try {
+        const { data: msgStatuses } = await admin
+          .from("messages")
+          .select("external_message_sid, delivery_status, created_at")
+          .in("external_message_sid", chunk);
+
+        for (const m of msgStatuses ?? []) {
+          if (m.external_message_sid) {
+            sidStatusMap.set(m.external_message_sid, {
+              delivery_status: m.delivery_status || "sent",
+              created_at: m.created_at,
+            });
+          }
+        }
+      } catch (err) {
+        console.error("[analytics] Failed to load msg statuses chunk:", err);
       }
     }
   }
 
-  // Now aggregate each customer's metrics
+  // Aggregate stats per recipient
   let deliveredCount = 0;
   let readCount = 0;
   let repliedCount = 0;
@@ -269,20 +277,19 @@ export async function getBroadcastAnalytics(templateKey: TemplateKey): Promise<B
   });
 
   const totalSent = sentCustomers.length;
-  // If delivery receipts are disabled/pending, treat sent as baseline delivered
   const effectiveDelivered = Math.max(deliveredCount, readCount);
   const deliveryRate = totalSent > 0 ? Math.round((effectiveDelivered / totalSent) * 100) : 0;
   const readRate = effectiveDelivered > 0 ? Math.round((readCount / effectiveDelivered) * 100) : 0;
   const replyRate = totalSent > 0 ? Math.round((repliedCount / totalSent) * 100) : 0;
 
-  // Determine campaign health indicator
+  // Health indicator
   let healthTone: BroadcastAnalyticsSummary["healthTone"] = "moderate";
   let healthLabel = "تفاعل متوسط";
 
   if (replyRate >= 15 || (readRate >= 60 && replyRate >= 8)) {
     healthTone = "excellent";
     healthLabel = "حملة ناجحة جدًا 🔥 (تفاعل مرتفع)";
-  } else if (replyRate >= 7 || readRate >= 40) {
+  } else if (replyRate >= 5 || readRate >= 30) {
     healthTone = "good";
     healthLabel = "تفاعل جيد جدًا 👍";
   } else if (totalSent > 0 && repliedCount === 0 && readCount === 0) {

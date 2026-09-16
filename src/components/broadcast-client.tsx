@@ -69,7 +69,7 @@ interface DrainResult {
 
 export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { initialTemplateKey?: string }) {
   const [activeTemplate, setActiveTemplate] = useState<string>(initialTemplateKey);
-  const [activeTab, setActiveTab] = useState<"analytics" | "send">("analytics");
+  const [activeTab, setActiveTab] = useState<"send" | "analytics">("send");
   const [segment, setSegment] = useState<Segment>("all");
   const [status, setStatus] = useState<Status | null>(null);
   const [running, setRunning] = useState(false);
