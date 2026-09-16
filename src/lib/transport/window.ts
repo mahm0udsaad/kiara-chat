@@ -39,9 +39,14 @@ export async function getServiceWindow(
   return { open: elapsed < WINDOW_MS - SAFETY_MARGIN_MS, lastInboundAt };
 }
 
-/** Twilio's code for "the service window has closed". */
+/** Twilio and Meta codes for "the service window has closed". */
 export const WINDOW_CLOSED_CODE = "63016";
+export const META_WINDOW_CLOSED_CODE = "131047";
 
 export function isWindowClosedError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes(WINDOW_CLOSED_CODE);
+  return (
+    error instanceof Error &&
+    (error.message.includes(WINDOW_CLOSED_CODE) ||
+      error.message.includes(META_WINDOW_CLOSED_CODE))
+  );
 }

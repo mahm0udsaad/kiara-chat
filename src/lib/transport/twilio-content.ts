@@ -85,6 +85,8 @@ export interface CreateTemplateInput {
   /** Lowercase alphanumeric + underscores; Twilio's friendly_name and the WA name. */
   name: string;
   language: string; // e.g. "ar"
+  /** Meta requires the category at creation; Twilio submits it separately. */
+  category?: TemplateCategory;
   contentType: ContentType;
   body: string;
   /** Sample values for {{n}} variables, keyed "1", "2", … */

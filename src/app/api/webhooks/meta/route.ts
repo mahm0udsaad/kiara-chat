@@ -1,0 +1,327 @@
+import { inboxProvider } from "@/lib/transport/inbox-provider";
+import { createHmac, timingSafeEqual } from "crypto";
+import { after, NextRequest, NextResponse } from "next/server";
+import { runBotTurn } from "@/lib/bot/reply";
+import { notifyInboundInboxMessage } from "@/lib/inbox-notifications";
+import {
+  bumpConversationActivity,
+  findOrCreateConversation,
+  hasMessageWithSid,
+  rememberConversationTransport,
+  saveMessage,
+  updateDeliveryStatus,
+} from "@/lib/server-conversations";
+import {
+  messageTypeFromContentType,
+  uploadBase64Media,
+  type StoredMediaSlot,
+} from "@/lib/storage-media";
+import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import { metaCloudConfig } from "@/lib/transport/meta-api";
+import { downloadMetaMedia } from "@/lib/transport/meta";
+import { customerProvider } from "@/lib/transport";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
+type MetaMessage = {
+  id?: string;
+  from?: string;
+  timestamp?: string;
+  type?: string;
+  text?: { body?: string };
+  button?: { text?: string; payload?: string };
+  interactive?: {
+    type?: string;
+    button_reply?: { id?: string; title?: string };
+    list_reply?: { id?: string; title?: string; description?: string };
+  };
+  location?: {
+    latitude?: number;
+    longitude?: number;
+    name?: string;
+    address?: string;
+  };
+  image?: MetaMedia;
+  video?: MetaMedia;
+  audio?: MetaMedia & { voice?: boolean };
+  document?: MetaMedia;
+  sticker?: MetaMedia;
+  /** Present on `type: "unsupported"` — e.g. polls, view-once media past its
+   * viewing window, or a message shape this API version doesn't relay. */
+  errors?: Array<{ code?: number; title?: string; message?: string }>;
+};
+
+type MetaMedia = {
+  id?: string;
+  mime_type?: string;
+  caption?: string;
+  filename?: string;
+};
+
+type MetaValue = {
+  messaging_product?: string;
+  metadata?: { display_phone_number?: string; phone_number_id?: string };
+  contacts?: Array<{ wa_id?: string; profile?: { name?: string } }>;
+  messages?: MetaMessage[];
+  statuses?: Array<{
+    id?: string;
+    status?: string;
+    timestamp?: string;
+    errors?: Array<{ code?: number; title?: string; message?: string }>;
+  }>;
+};
+
+type WebhookPayload = {
+  object?: string;
+  entry?: Array<{ changes?: Array<{ field?: string; value?: MetaValue }> }>;
+};
+
+const STATUS_MAP: Record<string, string> = {
+  sent: "sent",
+  delivered: "delivered",
+  read: "read",
+  failed: "failed",
+};
+
+function e164(value: string | undefined): string | null {
+  const digits = (value ?? "").replace(/\D/g, "");
+  return digits ? `+${digits}` : null;
+}
+
+function validSignature(rawBody: string, signature: string | null, secret: string): boolean {
+  if (!signature?.startsWith("sha256=")) return false;
+  const received = signature.slice("sha256=".length);
+  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+  if (!/^[a-f0-9]{64}$/i.test(received) || received.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(received, "hex"), Buffer.from(expected, "hex"));
+}
+
+function messageText(message: MetaMessage): string {
+  if (message.text?.body) return message.text.body;
+  if (message.button?.text) return message.button.text;
+  if (message.interactive?.button_reply?.title) return message.interactive.button_reply.title;
+  if (message.interactive?.list_reply?.title) return message.interactive.list_reply.title;
+  if (message.location) {
+    return (
+      message.location.name ||
+      message.location.address ||
+      `${message.location.latitude ?? ""},${message.location.longitude ?? ""}`
+    );
+  }
+  return (
+    message.image?.caption ||
+    message.video?.caption ||
+    message.document?.caption ||
+    ""
+  );
+}
+
+const MEDIA_TYPES = new Set(["image", "video", "audio", "document", "sticker"]);
+
+function messageMedia(message: MetaMessage): MetaMedia | null {
+  return (
+    message.image ||
+    message.video ||
+    message.audio ||
+    message.document ||
+    message.sticker ||
+    null
+  );
+}
+
+async function storeInboundMedia(
+  message: MetaMessage,
+  conversationId: string,
+): Promise<StoredMediaSlot | null> {
+  const media = messageMedia(message);
+  if (!media?.id) return null;
+  try {
+    const downloaded = await downloadMetaMedia(media.id);
+    return uploadBase64Media({
+      restaurantId: KIARA_RESTAURANT_ID,
+      conversationId,
+      contentType: media.mime_type || downloaded.contentType,
+      base64: downloaded.buffer.toString("base64"),
+      originalFilename: media.filename || downloaded.filename,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`[meta/webhook] media ${media.id} failed: ${detail}`);
+    return {
+      storage_path: null,
+      content_type: media.mime_type || "application/octet-stream",
+      size_bytes: null,
+      original_filename: media.filename || null,
+      delivery_status: "failed",
+      fetch_error: detail.slice(0, 300),
+    };
+  }
+}
+
+async function ingestMessage(value: MetaValue, message: MetaMessage): Promise<void> {
+  const messageSid = message.id?.trim();
+  const phone = e164(message.from);
+  if (!messageSid || !phone || (await hasMessageWithSid(messageSid))) return;
+
+  const contact = value.contacts?.find(
+    (candidate) => e164(candidate.wa_id) === phone,
+  );
+  const conversation = await findOrCreateConversation(
+    phone,
+    contact?.profile?.name || null,
+  );
+  const kiaraNumber = e164(value.metadata?.display_phone_number);
+  await rememberConversationTransport(conversation.id, "meta", kiaraNumber);
+
+  const content = messageText(message);
+  const metadata: Record<string, unknown> = {
+    provider: "meta",
+    meta_type: message.type || "unknown",
+    ...(kiaraNumber ? { via: kiaraNumber } : {}),
+  };
+  if (message.button) metadata.button = message.button;
+  if (message.interactive) metadata.interactive = message.interactive;
+  if (message.location) metadata.location = message.location;
+
+  if (message.type === "unsupported" && message.errors?.length) {
+    // Kept on the row, not just in the log. Meta's `errors[]` is the only
+    // place that says *why* a message arrived with nothing in it, and runtime
+    // logs roll off long before someone reports "my client sent a voice note
+    // and I see an empty bubble" — which is exactly how this was found.
+    metadata.meta_errors = message.errors.map((e) => ({
+      code: e.code ?? null,
+      title: e.title ?? null,
+      message: e.message ?? null,
+    }));
+    console.warn(
+      `[meta/webhook] message ${messageSid} unsupported: ` +
+        message.errors.map((e) => `${e.code ?? ""} ${e.title || e.message || ""}`).join("; "),
+    );
+  }
+
+  const media = await storeInboundMedia(message, conversation.id);
+  if (media) metadata.media = [media];
+  else if (message.type && MEDIA_TYPES.has(message.type)) {
+    // Meta marked this message as carrying media, but none of the known
+    // fields (image/video/audio/document/sticker) had an id to download —
+    // otherwise storeInboundMedia would have returned a "failed" slot, not
+    // null. Surface it loudly instead of silently rendering as if nothing
+    // was ever attached, so a payload-shape drift shows up in logs the day
+    // it happens rather than as a support screenshot weeks later.
+    console.error(
+      `[meta/webhook] message ${messageSid} declared type "${message.type}" but no matching media field was found`,
+    );
+    metadata.media_parse_failed = true;
+  }
+  const contentType = media?.content_type || "";
+  const messageType = message.location
+    ? "location"
+    : message.audio?.voice
+      ? "voice"
+      : media
+        ? messageTypeFromContentType(contentType)
+        : message.type === "button" || message.type === "interactive"
+          ? "text"
+          : message.type === "unsupported"
+            ? "text"
+            : message.type || "text";
+  const displayContent =
+    content || (message.type === "unsupported" ? "⚠️ رسالة غير مدعومة من واتساب" : content);
+
+  const createdAt = message.timestamp
+    ? new Date(Number(message.timestamp) * 1000).toISOString()
+    : undefined;
+  const messageId = await saveMessage({
+    conversationId: conversation.id,
+    role: "customer",
+    content: displayContent,
+    messageType,
+    externalMessageSid: messageSid,
+    metadata,
+    deliveryStatus: "received",
+    createdAt,
+  });
+  if (!messageId) return;
+
+  await bumpConversationActivity(conversation.id, { inbound: true });
+  after(() => notifyInboundInboxMessage(conversation.id));
+  if (content.trim() && inboxProvider() === "meta") {
+    after(() =>
+      runBotTurn({ conversationId: conversation.id, customerPhone: phone, body: content }),
+    );
+  }
+}
+
+async function ingestValue(value: MetaValue): Promise<void> {
+  const configuredPhoneId = metaCloudConfig().phoneNumberId;
+  if (
+    configuredPhoneId &&
+    value.metadata?.phone_number_id &&
+    value.metadata.phone_number_id !== configuredPhoneId
+  ) {
+    console.warn("[meta/webhook] ignored event for a different phone number id");
+    return;
+  }
+
+  for (const status of value.statuses ?? []) {
+    const raw = status.status?.toLowerCase() || "";
+    if (status.id && STATUS_MAP[raw]) {
+      await updateDeliveryStatus(status.id, STATUS_MAP[raw]);
+    }
+    if (status.errors?.length) {
+      console.warn(
+        `[meta/webhook] delivery ${status.id || "unknown"} ${raw}: ` +
+          status.errors.map((error) => `${error.code || ""} ${error.title || error.message || ""}`).join("; "),
+      );
+    }
+  }
+  for (const message of value.messages ?? []) await ingestMessage(value, message);
+}
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = request.nextUrl;
+  const mode = searchParams.get("hub.mode");
+  const verify = searchParams.get("hub.verify_token");
+  const challenge = searchParams.get("hub.challenge");
+  const configured = metaCloudConfig().verifyToken;
+  if (mode === "subscribe" && configured && verify === configured && challenge) {
+    return new NextResponse(challenge, { status: 200 });
+  }
+  return NextResponse.json({ error: "Verification failed" }, { status: 403 });
+}
+
+export async function POST(request: NextRequest) {
+  const secret = metaCloudConfig().appSecret;
+  if (!secret) {
+    console.error("[meta/webhook] META_APP_SECRET is not configured");
+    return NextResponse.json({ error: "Not configured" }, { status: 500 });
+  }
+  const rawBody = await request.text();
+  if (!validSignature(rawBody, request.headers.get("x-hub-signature-256"), secret)) {
+    return NextResponse.json({ error: "Bad signature" }, { status: 403 });
+  }
+
+  let payload: WebhookPayload;
+  try {
+    payload = JSON.parse(rawBody) as WebhookPayload;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  if (payload.object !== "whatsapp_business_account") {
+    return NextResponse.json({ ok: true, ignored: payload.object || "unknown" });
+  }
+
+  // The app and webhook can be prepared before cutover without duplicating
+  // Twilio's inbound messages. Only the environment flag opens ingestion.
+  if (customerProvider() !== "meta") {
+    return NextResponse.json({ ok: true, standby: true });
+  }
+
+  for (const entry of payload.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      if (change.field === "messages" && change.value) await ingestValue(change.value);
+    }
+  }
+  return NextResponse.json({ ok: true });
+}

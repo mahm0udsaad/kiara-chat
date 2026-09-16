@@ -1,3 +1,4 @@
+import { inboxProvider } from "@/lib/transport/inbox-provider";
 /**
  * Approved WhatsApp content templates.
  *
@@ -16,7 +17,9 @@ import {
   isContentApiConfigured,
   listTemplatesWithStatus,
   type TemplateSummary,
-} from "@/lib/transport/twilio-content";
+} from "@/lib/transport/content";
+import { customerProvider } from "@/lib/transport";
+import { META_TEMPLATE_PREFIX } from "@/lib/transport/meta-content";
 
 export type TemplateKey = "booking_followup" | "conversation_opener" | "number_notice";
 
@@ -32,6 +35,8 @@ export interface TemplateVariableSpec {
 
 export interface TemplateSpec {
   env: string;
+  metaEnv: string;
+  metaName: string;
   /** What the employee picks from the list. */
   label: string;
   description: string;
@@ -54,11 +59,13 @@ export interface SendableTemplate {
   variables: TemplateVariableSpec[];
 }
 
-const LIVE_TEMPLATE_PREFIX = "twilio:";
+const TWILIO_LIVE_TEMPLATE_PREFIX = "twilio:";
 
 const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
   booking_followup: {
     env: "TWILIO_CONTENT_SID_BOOKING_FOLLOWUP",
+    metaEnv: "META_TEMPLATE_NAME_BOOKING_FOLLOWUP",
+    metaName: "kiara_booking_followup_hxbb5e5dbfc42600f2678e55b38445cdac",
     label: "متابعة حجز",
     description:
       "لبدء محادثة مع عميلة لم تراسلنا خلال ٢٤ ساعة. الأزرار تفتح المحادثة فور ضغطها.",
@@ -71,6 +78,8 @@ const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
   },
   conversation_opener: {
     env: "TWILIO_CONTENT_SID_CONVERSATION_OPENER",
+    metaEnv: "META_TEMPLATE_NAME_CONVERSATION_OPENER",
+    metaName: "kiara_conversation_opener_hx21822b343fb1d89bed64aa0ef27fcd6c",
     label: "بدء محادثة",
     description:
       "الافتتاحية العامة: شعار كيّارا ثم تحية باسم العميلة. لأي عميلة خارج نافذة الـ٢٤ ساعة بدون سبب محدد.",
@@ -83,6 +92,8 @@ const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
   },
   number_notice: {
     env: "TWILIO_CONTENT_SID_NUMBER_NOTICE",
+    metaEnv: "META_TEMPLATE_NAME_NUMBER_NOTICE",
+    metaName: "kiara_number_notice_hx9ed2953b5f75cadc488e2cd0add1292b",
     label: "تنويه الرقم",
     description:
       "تنبيه جماعي يطلب من العميلة حذف الرقم وإعادة حفظه ليظهر حساب واتساب الأعمال بشكل صحيح.",
@@ -99,6 +110,10 @@ export function templateSpec(key: TemplateKey): TemplateSpec {
 }
 
 export function contentSidFor(key: TemplateKey): string | null {
+  if (customerProvider() === "meta") {
+    const name = process.env[TEMPLATES[key].metaEnv]?.trim() || TEMPLATES[key].metaName;
+    return `${META_TEMPLATE_PREFIX}${name}:ar`;
+  }
   return process.env[TEMPLATES[key].env]?.trim() || null;
 }
 
@@ -137,7 +152,10 @@ function variableSpecs(keys: string[]): TemplateVariableSpec[] {
 
 function liveSendableTemplate(template: TemplateSummary): SendableTemplate {
   return {
-    key: `${LIVE_TEMPLATE_PREFIX}${template.sid}`,
+    key:
+      customerProvider() === "meta"
+        ? template.sid
+        : `${TWILIO_LIVE_TEMPLATE_PREFIX}${template.sid}`,
     contentSid: template.sid,
     label: template.name,
     description:
@@ -162,20 +180,28 @@ function liveSendableTemplate(template: TemplateSummary): SendableTemplate {
  * template twice with two different labels.
  */
 export async function listComposerTemplates(): Promise<SendableTemplate[]> {
+  if (inboxProvider() === "openwa") return [];
   const configured = staticSendableTemplates();
   if (!isContentApiConfigured()) return configured;
 
-  const configuredSids = new Set(configured.map((template) => template.contentSid));
-  const live = (await listTemplatesWithStatus())
-    .filter(
-      (template) =>
-        template.status === "approved" &&
-        template.body.trim().length > 0 &&
-        !configuredSids.has(template.sid),
-    )
+  const approved = (await listTemplatesWithStatus()).filter(
+    (template) => template.status === "approved" && template.body.trim().length > 0,
+  );
+  const approvedSids = new Set(approved.map((template) => template.sid));
+  // Meta sids are synthesised from the spec rather than read back from the API,
+  // so a configured template lists even when it was never created upstream.
+  // Offering one is a dead end: the send fails in front of the employee.
+  const sendable =
+    customerProvider() === "meta"
+      ? configured.filter((template) => approvedSids.has(template.contentSid))
+      : configured;
+
+  const configuredSids = new Set(sendable.map((template) => template.contentSid));
+  const live = approved
+    .filter((template) => !configuredSids.has(template.sid))
     .map(liveSendableTemplate);
 
-  return [...configured, ...live];
+  return [...sendable, ...live];
 }
 
 /** Resolve from the server-side source of truth; never trust a client SID. */
@@ -196,9 +222,14 @@ export async function resolveComposerTemplate(key: string): Promise<SendableTemp
     };
   }
 
-  if (!key.startsWith(LIVE_TEMPLATE_PREFIX)) throw new Error("قالب غير معروف");
-  const contentSid = key.slice(LIVE_TEMPLATE_PREFIX.length);
-  if (!/^HX[a-zA-Z0-9]{32}$/.test(contentSid)) throw new Error("قالب غير معروف");
+  const contentSid = key.startsWith(TWILIO_LIVE_TEMPLATE_PREFIX)
+    ? key.slice(TWILIO_LIVE_TEMPLATE_PREFIX.length)
+    : key;
+  const validForProvider =
+    customerProvider() === "meta"
+      ? Boolean(contentSid.startsWith(META_TEMPLATE_PREFIX))
+      : /^HX[a-zA-Z0-9]{32}$/.test(contentSid);
+  if (!validForProvider) throw new Error("قالب غير معروف");
   if (!isContentApiConfigured()) throw new Error("تعذّر التحقق من اعتماد القالب.");
 
   const template = (await listTemplatesWithStatus()).find(

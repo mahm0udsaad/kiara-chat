@@ -1,3 +1,4 @@
+import { inboxProvider } from "@/lib/transport/inbox-provider";
 /**
  * POST /api/webhooks/twilio
  *
@@ -163,7 +164,7 @@ export async function POST(request: NextRequest) {
   // ingestion or earn us a retry.
   after(() => notifyInboundInboxMessage(conv.id));
 
-  if (body.trim()) {
+  if (body.trim() && inboxProvider() === "twilio") {
     after(() =>
       runBotTurn({
         conversationId: conv.id,
