@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView,
   Linking,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   View,
@@ -548,19 +549,32 @@ export default function ConversationScreen() {
       />
 
       {/* Pinned context strip — status must stay visible while scrolling back.
-          Kept to a single line: `nowrap` plus a shrinking phone means a long
-          booking-stage label truncates the number instead of wrapping the whole
-          strip onto a second row and pushing the conversation down. */}
+          Still one line, but now a scrolling one. It used to rely on the phone
+          number shrinking to absorb overflow; once the call control joined the
+          badges, the booking and actions buttons were pushed off the edge with
+          no way to reach them. Scrolling keeps every control reachable without
+          taking a second row from the conversation.
+
+          `flexGrow: 1` keeps the common case byte-identical: when everything
+          fits, the content fills the width and nothing scrolls at all. */}
       <View
         style={{
+          borderBottomWidth: 1,
+          borderBottomColor: colors.border,
+          backgroundColor: colors.surface,
+        }}
+      >
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{
           flexDirection: "row-reverse",
           alignItems: "center",
           gap: spacing.sm,
           paddingHorizontal: spacing.lg,
           paddingVertical: spacing.sm,
-          borderBottomWidth: 1,
-          borderBottomColor: colors.border,
-          backgroundColor: colors.surface,
+          flexGrow: 1,
         }}
       >
         {/* A group has no CS lifecycle: nobody claims it, the assistant never
@@ -587,7 +601,10 @@ export default function ConversationScreen() {
           selectable
           numberOfLines={1}
           style={{
-            flexShrink: 1,
+            // Was flexShrink: 1, back when truncating the number was how this
+            // strip coped with running out of width. The strip scrolls now, so
+            // the number stays whole.
+            flexShrink: 0,
             ...type.caption,
             color: colors.textTertiary,
             fontVariant: ["tabular-nums"],
@@ -670,6 +687,7 @@ export default function ConversationScreen() {
             conversationActions.mutate(input, { onSuccess })
           }
         />
+      </ScrollView>
       </View>
 
       {/* The assistant collected the details; a human still owns the date. The

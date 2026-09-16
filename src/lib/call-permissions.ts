@@ -382,6 +382,23 @@ export async function resolveCallPermission(
       ? new Date(live.expiresAt * 1000).toISOString()
       : null;
 
+  // A response we could not parse is not evidence of anything. Treating it as
+  // "no permission" would revoke a grant the customer actually gave — the call
+  // button would vanish and the 1-per-24h ask quota would be spent re-asking
+  // someone who already said yes.
+  if (!live.recognised) {
+    console.error(
+      `[call-permissions] keeping stored state for ${phone}; Graph returned a shape this parser does not understand`,
+    );
+    return {
+      callable: cached ? isCallable(cached) : false,
+      status: cached?.status ?? "none",
+      expiresAt: cached?.expiresAt ?? null,
+      canRequest: cached?.status !== "requested",
+      authoritative: false,
+    };
+  }
+
   // Graph reporting no permission does not distinguish "never asked" from
   // "revoked" or "declined". Only downgrade a grant we believed in — and call
   // that revoked, which is what it is — so a pending ask or a recorded decline

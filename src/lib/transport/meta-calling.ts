@@ -47,6 +47,15 @@ export interface CallPermissionState {
    * button unconditionally will produce failures the customer never sees.
    */
   canRequest: boolean;
+  /**
+   * Whether the response was actually understood.
+   *
+   * False means Graph answered with a shape this parser does not recognise, so
+   * `status` is a default rather than a reading. Callers must not treat that
+   * as "no permission" — downgrading a live grant on an unparsed response
+   * would silently remove the call button from a customer who had said yes.
+   */
+  recognised: boolean;
   /** Everything Graph returned, for logging a shape that drifted. */
   raw: unknown;
 }
@@ -83,11 +92,28 @@ export async function fetchCallPermission(
   );
 
   const entry = result.data?.[0];
-  const rawStatus = String(entry?.status ?? "no_permission").toLowerCase();
+  const rawStatus = String(entry?.status ?? "").toLowerCase();
   const status: CallPermissionStatus =
     rawStatus === "temporary" || rawStatus === "permanent"
       ? rawStatus
       : "no_permission";
+
+  // An empty `data` array is a real answer — this user has no permission. A
+  // missing array, or an entry whose status is a word this parser has never
+  // seen, is not: it means the response shape moved. Say so rather than
+  // reporting a confident "no".
+  const recognised =
+    Array.isArray(result.data) &&
+    (result.data.length === 0 ||
+      rawStatus === "temporary" ||
+      rawStatus === "permanent" ||
+      rawStatus === "no_permission");
+  if (!recognised) {
+    console.error(
+      "[meta-calling] unrecognised call_permissions response shape: " +
+        JSON.stringify(result).slice(0, 500),
+    );
+  }
 
   // The field has been spelled both ways across API versions; read either
   // rather than silently reporting a temporary grant as never-expiring.
@@ -105,7 +131,7 @@ export async function fetchCallPermission(
     ? (requestAction.remaining_quota ?? 1) > 0
     : true;
 
-  return { status, expiresAt, canRequest, raw: result };
+  return { status, expiresAt, canRequest, recognised, raw: result };
 }
 
 export interface PermissionRequestResult {

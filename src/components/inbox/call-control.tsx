@@ -117,6 +117,32 @@ export function CallControl({
     };
   }, [conversationId, disabled]);
 
+  /**
+   * While an ask is outstanding, the answer arrives as an ordinary WhatsApp
+   * message — there is no signal on this screen that permission changed. So
+   * this is the one state that polls. It stops the moment the status moves off
+   * "requested", which is the only reason polling is acceptable here at all.
+   */
+  useEffect(() => {
+    if (disabled || permission?.status !== "requested") return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      void fetch(`/api/conversations/${conversationId}/call-permission`, {
+        cache: "no-store",
+      })
+        .then(async (response) => {
+          if (!response.ok || cancelled) return;
+          const data = (await response.json()) as Permission;
+          if (!cancelled) setLoaded({ conversationId, data });
+        })
+        .catch(() => {});
+    }, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [conversationId, disabled, permission?.status]);
+
   // Hanging up when the employee switches threads would be worse than leaving
   // the call up, so the call survives; only the timer is per-mount.
   useEffect(() => {

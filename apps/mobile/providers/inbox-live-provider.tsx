@@ -229,6 +229,14 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
             queryClient.invalidateQueries({
               queryKey: queryKeys.conversationMessages(event.conversationId),
             }),
+            // A call permission answer arrives as an ordinary message, so this
+            // broadcast is the only signal that it changed. Without it the
+            // header pill keeps its cached "بانتظار رد العميلة" after the
+            // customer has already accepted — the thread updates around it and
+            // the one control that matters stays stuck.
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.callPermission(event.conversationId),
+            }),
           ]);
         })
         .subscribe();
