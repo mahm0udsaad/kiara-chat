@@ -165,6 +165,28 @@ if (phoneArg) {
 if (apply) {
   console.log(`\n${paint("1", "Applying settings")}`);
 
+  // Order matters, and not in the obvious way: Meta refuses to enable
+  // calling on a number that has no calls webhook subscribed, with
+  // error 2593151 ("you need to configure webhooks or set up Session
+  // Initiation Protocol"). Subscribing first, enabling second.
+  await step("Subscribe the `calls` webhook field", async () => {
+    // Re-subscribing the app replaces its field set, so `messages` is listed
+    // explicitly alongside `calls`. Omitting it here would silence the live
+    // customer inbox.
+    const current = await graph(`/${WABA_ID}/subscribed_apps`);
+    const existing = new Set(
+      (current.data?.[0]?.subscribed_fields ?? []).map(String),
+    );
+    existing.add("messages");
+    existing.add("calls");
+    await graph(`/${WABA_ID}/subscribed_apps`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subscribed_fields: [...existing] }),
+    });
+    console.log(`${ok("✓")} subscribed fields: ${[...existing].join(", ")}`);
+  });
+
   // Deliberately does not touch `sip`. Enabling SIP disables every Graph
   // calling endpoint this project is built on, and is a one-way door on the
   // spa's only production number — it must never be a side effect of a setup
@@ -182,24 +204,6 @@ if (apply) {
       }),
     });
     console.log(`${ok("✓")} calling.status = ENABLED, callback_permission_status = ENABLED`);
-  });
-
-  await step("Subscribe the `calls` webhook field", async () => {
-    // Re-subscribing the app replaces its field set, so `messages` is listed
-    // explicitly alongside `calls`. Omitting it here would silence the live
-    // customer inbox.
-    const current = await graph(`/${WABA_ID}/subscribed_apps`);
-    const existing = new Set(
-      (current.data?.[0]?.subscribed_fields ?? []).map(String),
-    );
-    existing.add("messages");
-    existing.add("calls");
-    await graph(`/${WABA_ID}/subscribed_apps`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subscribed_fields: [...existing] }),
-    });
-    console.log(`${ok("✓")} subscribed fields: ${[...existing].join(", ")}`);
   });
 
   console.log(dim("\n  Re-run without --apply to confirm the new state."));
