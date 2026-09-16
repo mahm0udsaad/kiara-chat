@@ -544,7 +544,13 @@ const VisitCard = memo(function VisitCard({
               <Badge label="بدون حجز ركاز" tone="neutral" />
             )}
             {order?.specialist_name ? (
-              <Badge label={order.specialist_name} tone="brand" icon="sparkles" />
+              <Badge
+                label={[order.specialist_name, order.second_specialist_name]
+                  .filter(Boolean)
+                  .join(" و ")}
+                tone="brand"
+                icon="sparkles"
+              />
             ) : null}
             {order?.driver_name ? (
               <Badge label={order.driver_name} tone="brand" icon="car" />

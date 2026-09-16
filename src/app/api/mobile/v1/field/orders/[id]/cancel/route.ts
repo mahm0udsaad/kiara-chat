@@ -48,6 +48,7 @@ export async function POST(
         orderId: order.id,
         customerName: order.customerName,
         specialistId: order.specialistId,
+        secondSpecialistId: order.secondSpecialistId,
         driverId: order.driverId,
         specialistCopy: { title: "إلغاء الطلب", body: notification },
         driverCopy: { title: "إلغاء الطلب", body: notification },

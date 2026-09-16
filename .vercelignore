@@ -1,0 +1,14 @@
+/apps/mobile
+/node_modules
+/.next
+/.git
+/docs
+/scripts
+/supabase
+/.env*
+/.agents
+/.claude
+/.playwright-cli
+/.maestro
+/output
+/tsconfig.tsbuildinfo

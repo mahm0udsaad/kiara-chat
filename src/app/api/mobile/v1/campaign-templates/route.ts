@@ -6,7 +6,7 @@ import {
   isContentApiConfigured,
   type ContentType,
   type TemplateCategory,
-} from "@/lib/transport/twilio-content";
+} from "@/lib/transport/content";
 
 export const maxDuration = 60;
 const TYPES: ContentType[] = ["text", "media", "quick_reply", "call_to_action"];
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   if (!body) return mobileError(400, "EMPTY_BODY", "نص الرسالة مطلوب.");
   try {
     const created = await createTemplate({
-      name, language: typeof b.language === "string" ? b.language : "ar",
+      name, language: typeof b.language === "string" ? b.language : "ar", category,
       contentType, body,
       variables: (b.variables as Record<string, string>) ?? {},
       mediaUrl: typeof b.mediaUrl === "string" ? b.mediaUrl : undefined,

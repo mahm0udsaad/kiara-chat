@@ -3,32 +3,28 @@ import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from "react
 import { useState } from "react";
 
 import { ErrorState } from "@/components/screen-state";
+import {
+  createReportDateSelection,
+  ReportDateRangeFilter,
+  type ReportDateSelection,
+} from "@/components/reports/report-date-range-filter";
 import { VisitCard } from "@/components/reports/visit-card";
 import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
-import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { dayKeyFromToday } from "@/lib/calendar";
 import {
   completedWorkLabel,
   groupOperationsVisits,
-  REPORT_LOCALE,
   reportDecimal,
   reportInteger,
-  reportRange,
   visitsByDay,
-  type ReportPeriod,
 } from "@/lib/operations-report";
 import { useBootstrap, useOperationsReport } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { OperationsRole } from "@/types/api";
 
-const periodOptions: SegmentOption<ReportPeriod>[] = [
-  { value: "month", label: "هذا الشهر" },
-  { value: "week", label: "هذا الأسبوع" },
-];
-const rangeLabel = new Intl.DateTimeFormat(REPORT_LOCALE, { day: "numeric", month: "short", year: "numeric" });
-const dayLabel = new Intl.DateTimeFormat(REPORT_LOCALE, {
+const dayLabel = new Intl.DateTimeFormat("en-US-u-ca-gregory-nu-latn", {
   timeZone: "Asia/Riyadh",
   weekday: "long",
   day: "numeric",
@@ -59,21 +55,39 @@ function asOne(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
 
+function initialSelection(from: string, to: string): ReportDateSelection {
+  const dayPattern = /^\d{4}-\d{2}-\d{2}$/;
+  const span = Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`);
+  if (dayPattern.test(from) && dayPattern.test(to) && span >= 0 && span <= 30 * 86_400_000) {
+    return { preset: "custom", from, to };
+  }
+  return createReportDateSelection("month", dayKeyFromToday(0));
+}
+
 export default function EmployeeReportScreen() {
-  const params = useLocalSearchParams<{ role?: string | string[]; personId?: string | string[]; name?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    role?: string | string[];
+    personId?: string | string[];
+    name?: string | string[];
+    from?: string | string[];
+    to?: string | string[];
+    startTime?: string | string[];
+    endTime?: string | string[];
+  }>();
   const roleParam = asOne(params.role);
   const role: OperationsRole = roleParam === "driver" ? "driver" : "specialist";
   const personId = asOne(params.personId);
   const fallbackName = asOne(params.name);
   const { colors } = useTheme();
   const bootstrap = useBootstrap();
-  const [period, setPeriod] = useState<ReportPeriod>("month");
-  const range = reportRange(period, dayKeyFromToday(0));
+  const [range, setRange] = useState(() => initialSelection(asOne(params.from), asOne(params.to)));
+  const startTime = asOne(params.startTime) || "08:00";
+  const endTime = asOne(params.endTime) || "22:00";
   const report = useOperationsReport(
     range.from,
     range.to,
-    "08:00",
-    "22:00",
+    startTime,
+    endTime,
     bootstrap.data?.capabilities.canViewReports === true && Boolean(personId),
   );
 
@@ -100,17 +114,12 @@ export default function EmployeeReportScreen() {
         refreshControl={<RefreshControl refreshing={report.isRefetching} onRefresh={() => void report.refetch()} tintColor={colors.brand} />}
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["5xl"], gap: spacing.lg }}
       >
-        <Segmented
-          options={periodOptions}
-          value={period}
-          onChange={setPeriod}
+        <ReportDateRangeFilter
+          value={range}
+          onChange={setRange}
           accessibilityLabel="الفترة الزمنية للتقرير"
           testIDPrefix="employee-report-period"
         />
-
-        <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
-          {rangeLabel.format(new Date(`${range.from}T12:00:00+03:00`))} – {rangeLabel.format(new Date(`${range.to}T12:00:00+03:00`))} · توقيت الرياض
-        </Text>
 
         {report.isLoading ? <ActivityIndicator size="large" color={colors.brand} /> : null}
 
@@ -163,7 +172,7 @@ export default function EmployeeReportScreen() {
               )) : (
                 <Card>
                   <Text style={{ ...type.body, ...rtlText, color: colors.textSecondary }}>
-                    لا توجد زيارات لهذا الموظف خلال {period === "month" ? "هذا الشهر" : "هذا الأسبوع"}.
+                    لا توجد زيارات لهذا الموظف خلال الفترة المختارة.
                   </Text>
                 </Card>
               )}

@@ -10,7 +10,11 @@
  */
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
-import { twilioTransport, isTwilioConfigured } from "@/lib/transport";
+import {
+  customerProvider,
+  isProviderConfigured,
+  transportFor,
+} from "@/lib/transport";
 import { randomUUID } from "crypto";
 import {
   loadAllCustomers,
@@ -141,7 +145,11 @@ export interface DrainSummary {
  * starts.
  */
 export async function drainCampaigns(): Promise<DrainSummary> {
-  if (!isTwilioConfigured()) throw new Error("Twilio is not configured.");
+  const provider = customerProvider();
+  if (!isProviderConfigured(provider)) {
+    throw new Error("The active WhatsApp provider is not configured.");
+  }
+  const transport = transportFor(provider);
   const admin = getAdminSupabaseClient();
 
   const campaigns = await readCampaigns();
@@ -167,7 +175,7 @@ export async function drainCampaigns(): Promise<DrainSummary> {
 
       let mark: BroadcastMark;
       try {
-        const res = await twilioTransport.sendTemplate(phone, campaign.contentSid, {});
+        const res = await transport.sendTemplate(phone, campaign.contentSid, {});
         mark = { status: "sent", sid: res.providerMessageId || null, at: new Date().toISOString() };
         sent += 1;
         totalSent += 1;

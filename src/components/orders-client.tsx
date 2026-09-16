@@ -677,7 +677,9 @@ function OrderCard({
           </div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <UserRound className="size-4" aria-hidden="true" />
-            {order.specialist_name ?? "لم تُحدد الأخصائية بعد"}
+            {[order.specialist_name, order.second_specialist_name]
+              .filter(Boolean)
+              .join(" و ") || "لم تُحدد الأخصائية بعد"}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {driverLate ? <Badge variant="destructive">السائق متأخر</Badge> : null}
@@ -1092,7 +1094,7 @@ function OrderDetailsSheet({
 
             {isAdmin ? (
               <Field>
-                <FieldLabel htmlFor={`price-${order.id}`}>أجرة السائق</FieldLabel>
+                <FieldLabel htmlFor={`price-${order.id}`}>تكلفة المشوار حسب المسافة</FieldLabel>
                 <Input
                   id={`price-${order.id}`}
                   type="number"

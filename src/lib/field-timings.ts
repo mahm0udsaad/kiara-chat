@@ -16,7 +16,8 @@ import type { FieldOrderProgressState } from "@/lib/types";
 
 export type FieldLegKey =
   | "dispatch_to_confirm"
-  | "confirm_to_pickup"
+  | "confirm_to_arrival"
+  | "arrival_to_pickup"
   | "pickup_to_service"
   | "service"
   | "service_to_return";
@@ -49,9 +50,15 @@ const LEGS: {
     to: (p) => p.driverConfirmedAt,
   },
   {
-    key: "confirm_to_pickup",
-    label: "من تأكيد السائق حتى ركوب الأخصائية",
+    key: "confirm_to_arrival",
+    label: "من انطلاق السائق حتى وصوله للأخصائية",
     from: (p) => p.driverConfirmedAt,
+    to: (p) => p.driverArrivedAt,
+  },
+  {
+    key: "arrival_to_pickup",
+    label: "من وصول السائق حتى ركوب الأخصائية",
+    from: (p) => p.driverArrivedAt,
     to: (p) => p.specialistPickupAt,
   },
   {

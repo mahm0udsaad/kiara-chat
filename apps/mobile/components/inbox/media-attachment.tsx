@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Linking, Modal, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Linking, Modal, Platform, Pressable, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 
@@ -36,7 +36,15 @@ export function MediaAttachment({
   outbound: boolean;
 }) {
   const { colors } = useTheme();
-  const media = useMediaUrl(slot.storage_path);
+  // WhatsApp ships every voice note as Opus in an Ogg container. Android's
+  // ExoPlayer demuxes it; AVFoundation — and so `expo-audio` on iOS — cannot,
+  // at any codec, which is why these bubbles rendered as playable voice notes
+  // and then never played. The server remuxes to CAF on request.
+  const wantsCaf =
+    Platform.OS === "ios" &&
+    (messageType === "voice" || messageType === "audio") &&
+    isOggOpus(slot.content_type);
+  const media = useMediaUrl(slot.storage_path, true, wantsCaf ? "caf" : undefined);
   const ink = outbound ? colors.onBrand : colors.text;
   const quiet = outbound ? colors.onBrand : colors.textTertiary;
 
@@ -224,6 +232,12 @@ function Note({ text }: { text: string }) {
       <Text style={{ ...type.footnote, color: colors.onWarningSoft, ...rtlText }}>{text}</Text>
     </View>
   );
+}
+
+/** The container WhatsApp voice notes arrive in, on every transport. */
+function isOggOpus(contentType: string | null | undefined): boolean {
+  const ct = (contentType || "").toLowerCase();
+  return ct.startsWith("audio/ogg") || ct.startsWith("audio/opus");
 }
 
 function formatSeconds(seconds: number): string {

@@ -16,11 +16,13 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
+import { ServiceTimingCard } from "@/components/orders/service-timing-card";
 import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-state";
 import { Badge } from "@/components/ui/badge";
 import { Card, Divider } from "@/components/ui/card";
 import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { Segmented } from "@/components/ui/segmented";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   formatPhone,
@@ -39,6 +41,7 @@ function ProgressRail({ order }: { order: FieldOrder }) {
   const { rowDirection, t } = useFieldI18n();
   const stepLabels = [
     t("stepConfirmRide"),
+    t("stepDriverArrived"),
     t("stepPickup"),
     t("stepStartService"),
     t("stepCompleteService"),
@@ -46,6 +49,7 @@ function ProgressRail({ order }: { order: FieldOrder }) {
   ];
   const done = [
     Boolean(order.progress.driverConfirmedAt),
+    Boolean(order.progress.driverArrivedAt),
     Boolean(order.progress.specialistPickupAt),
     Boolean(order.progress.serviceStartedAt),
     Boolean(order.progress.completedAt),
@@ -214,6 +218,9 @@ export default function FieldOrderDetailScreen() {
   const cancelAction = useCancelAcceptedFieldOrder(id);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  const [completionOpen, setCompletionOpen] = useState(false);
+  const [completionOutcome, setCompletionOutcome] = useState<"done" | "not_done">("done");
+  const [completionNote, setCompletionNote] = useState("");
   if (detail.isLoading) return <LoadingScreen label={t("loadingOrder")} />;
   if (detail.isError || !detail.data) {
     return <ErrorState title={t("orderLoadError")} message={detail.error ? t("orderLoadError") : t("orderNotFound")} onRetry={() => void detail.refetch()} />;
@@ -223,6 +230,10 @@ export default function FieldOrderDetailScreen() {
   const next = order.nextAction;
   const confirm = () => {
     if (!next) return;
+    if (next === "complete_order") {
+      setCompletionOpen(true);
+      return;
+    }
     const copy = confirmation(next);
     Alert.alert(copy.title, copy.body, [
       { text: t("cancel"), style: "cancel" },
@@ -236,13 +247,31 @@ export default function FieldOrderDetailScreen() {
       },
     ]);
   };
-  // The driver's non-blocking "I've arrived" ping — fires straight away and
-  // just notifies the specialist; it never gates her next step.
-  const pingArrival = () =>
+  const closeCompletion = () => {
+    if (action.isPending) return;
+    setCompletionOpen(false);
+    setCompletionOutcome("done");
+    setCompletionNote("");
+    action.reset();
+  };
+  const submitCompletion = () => {
     action.mutate(
-      { action: "driver_arrived", expectedVersion: order.progress.version },
-      { onSuccess: () => successFeedback() },
+      {
+        action: "complete_order",
+        expectedVersion: order.progress.version,
+        completionOutcome,
+        completionNote,
+      },
+      {
+        onSuccess: () => {
+          successFeedback();
+          setCompletionOpen(false);
+          setCompletionOutcome("done");
+          setCompletionNote("");
+        },
+      },
     );
+  };
   const closeCancel = () => {
     if (cancelAction.isPending) return;
     setCancelOpen(false);
@@ -290,6 +319,70 @@ export default function FieldOrderDetailScreen() {
           <Divider />
           <ProgressRail order={order} />
         </Card>
+
+        <ServiceTimingCard
+          scheduledAt={order.arrivalAt}
+          serviceStartedAt={order.progress.serviceStartedAt}
+        />
+
+        <View style={{ gap: spacing.sm }}>
+          <SectionHeader title={t("servicesSection")} />
+          <Card style={{ gap: spacing.md }}>
+            {order.services?.length ? (
+              order.services.map((service, index) => (
+                <View
+                  key={service.id}
+                  style={{ flexDirection: rowDirection, alignItems: "center", gap: spacing.sm }}
+                >
+                  <View
+                    style={{
+                      width: 28,
+                      height: 28,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: radius.full,
+                      backgroundColor: colors.brandSoft,
+                    }}
+                  >
+                    <Text style={{ ...type.footnote, color: colors.onBrandSoft }}>{index + 1}</Text>
+                  </View>
+                  <Text selectable style={{ flex: 1, ...type.body, color: colors.text, ...textStyle }}>
+                    {service.name}
+                  </Text>
+                  <Text style={{ ...type.footnote, color: colors.textSecondary, ...textStyle }}>
+                    {duration(service.minutes)}
+                  </Text>
+                </View>
+              ))
+            ) : (
+              <Text style={{ ...type.body, color: colors.textSecondary, ...textStyle }}>
+                {t("noServices")}
+              </Text>
+            )}
+          </Card>
+        </View>
+
+        {order.progress.completedAt ? (
+          <View style={{ gap: spacing.sm }}>
+            <SectionHeader title={t("completionResultTitle")} />
+            <Card style={{ gap: spacing.sm }}>
+              <Badge
+                label={
+                  order.progress.completionOutcome === "not_done"
+                    ? t("notCompleted")
+                    : t("completedAsPlanned")
+                }
+                tone={order.progress.completionOutcome === "not_done" ? "danger" : "success"}
+                icon={order.progress.completionOutcome === "not_done" ? "xmark.circle" : "checkmark.circle"}
+              />
+              {order.progress.completionNote ? (
+                <Text selectable style={{ ...type.body, color: colors.text, ...textStyle }}>
+                  {order.progress.completionNote}
+                </Text>
+              ) : null}
+            </Card>
+          </View>
+        ) : null}
 
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title={t("orderDetailsSection")} />
@@ -351,14 +444,6 @@ export default function FieldOrderDetailScreen() {
             onPress={() => setCancelOpen(true)}
           />
         ) : null}
-        {order.canPingArrival ? (
-          <PrimaryButton
-            label={t("driverArrived")}
-            icon="mappin.and.ellipse"
-            loading={action.isPending}
-            onPress={pingArrival}
-          />
-        ) : null}
         {cancelled ? (
           <PrimaryButton label="تم إلغاء الطلب" icon="xmark.circle" tone="danger" variant="tinted" disabled onPress={() => undefined} />
         ) : next && order.canAct ? (
@@ -369,6 +454,119 @@ export default function FieldOrderDetailScreen() {
           <PrimaryButton label={t("orderFinished")} icon="checkmark.circle" tone="success" variant="tinted" disabled onPress={() => undefined} />
         )}
       </ActionBar>
+
+      <Modal
+        visible={completionOpen}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closeCompletion}
+      >
+        <KeyboardAvoidingView
+          behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
+          onLayout={keyboard.onLayout}
+          style={{ flex: 1, backgroundColor: colors.background, paddingBottom: keyboard.paddingBottom }}
+        >
+          <View
+            style={{
+              flexDirection: rowDirection,
+              alignItems: "center",
+              justifyContent: "space-between",
+              paddingHorizontal: spacing.lg,
+              paddingVertical: spacing.md,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+              backgroundColor: colors.surface,
+            }}
+          >
+            <Text style={{ ...type.title3, color: colors.text, ...textStyle }}>
+              {t("completionResultTitle")}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("cancel")}
+              disabled={action.isPending}
+              onPress={closeCompletion}
+              style={({ pressed }) => ({
+                width: hitSize.min,
+                height: hitSize.min,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: radius.full,
+                backgroundColor: colors.surfaceSunken,
+                opacity: pressed ? 0.6 : 1,
+              })}
+            >
+              <IconSymbol name="xmark" color={colors.textSecondary} size={18} />
+            </Pressable>
+          </View>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: spacing["3xl"] }}
+          >
+            <View style={{ gap: spacing.xs }}>
+              <Text style={{ ...type.title2, color: colors.text, ...textStyle }}>
+                {t("completionResultTitle")}
+              </Text>
+              <Text style={{ ...type.body, color: colors.textSecondary, ...textStyle }}>
+                {t("completionResultBody")}
+              </Text>
+            </View>
+            <Segmented
+              options={[
+                { value: "done", label: t("completedAsPlanned") },
+                { value: "not_done", label: t("notCompleted") },
+              ]}
+              value={completionOutcome}
+              onChange={setCompletionOutcome}
+              accessibilityLabel={t("completionResultTitle")}
+            />
+            <View style={{ gap: spacing.sm }}>
+              <Text style={{ ...type.calloutStrong, color: colors.text, ...textStyle }}>
+                {t("completionNoteLabel")}
+              </Text>
+              <TextInput
+                multiline
+                maxLength={500}
+                value={completionNote}
+                onChangeText={setCompletionNote}
+                editable={!action.isPending}
+                placeholder={t("completionNotePlaceholder")}
+                placeholderTextColor={colors.textTertiary}
+                accessibilityLabel={t("completionNoteLabel")}
+                style={{
+                  minHeight: 120,
+                  padding: spacing.md,
+                  borderRadius: radius.md,
+                  borderWidth: 1,
+                  borderColor: colors.borderStrong,
+                  backgroundColor: colors.surface,
+                  color: colors.text,
+                  ...type.body,
+                  ...textStyle,
+                  textAlignVertical: "top",
+                }}
+              />
+              <Text style={{ ...type.caption, color: colors.textTertiary, fontVariant: ["tabular-nums"] }}>
+                {completionNote.length}/500
+              </Text>
+            </View>
+            {action.error ? <InlineAlert message={t("actionFailed")} /> : null}
+            <PrimaryButton
+              label={t("confirmCompletion")}
+              icon="checkmark.circle"
+              tone={completionOutcome === "not_done" ? "danger" : "success"}
+              loading={action.isPending}
+              onPress={submitCompletion}
+            />
+            <PrimaryButton
+              label={t("cancel")}
+              variant="plain"
+              disabled={action.isPending}
+              onPress={closeCompletion}
+            />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <Modal
         visible={cancelOpen}

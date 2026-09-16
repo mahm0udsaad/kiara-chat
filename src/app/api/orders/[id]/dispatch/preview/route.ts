@@ -20,6 +20,7 @@ export async function POST(
     return NextResponse.json({ error: "البيانات غير صحيحة" }, { status: 400 });
   }
   const specialistId = String(body.specialistId ?? "").trim();
+  const secondSpecialistId = String(body.secondSpecialistId ?? "").trim() || undefined;
   const driverId = String(body.driverId ?? "").trim();
   const specialistNote = String(body.specialistNote ?? "").trim().slice(0, 500);
   // The preview must quote the address that is about to be committed, not the
@@ -36,6 +37,9 @@ export async function POST(
       { status: 400 },
     );
   }
+  if (secondSpecialistId === specialistId) {
+    return NextResponse.json({ error: "اختاري أخصائيتين مختلفتين" }, { status: 400 });
+  }
 
   const { id } = await params;
   try {
@@ -47,6 +51,7 @@ export async function POST(
 
     const preview = await previewBookingDispatch(id, {
       specialistId,
+      secondSpecialistId,
       driverId,
       customerLocation,
       specialistNote,

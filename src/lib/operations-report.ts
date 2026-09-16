@@ -367,6 +367,8 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
             specialistPickupAt: row.specialist_pickup_at,
             serviceStartedAt: row.service_started_at,
             completedAt: row.completed_at,
+            completionOutcome: row.completed_at ? "done" : null,
+            completionNote: null,
             driverReturnedAt: row.driver_returned_at,
             lastActivityAt: "",
             lastReminderAt: null,

@@ -11,6 +11,7 @@ import {
 } from "react-native";
 
 import { PrimaryButton } from "@/components/primary-button";
+import { ServiceTimingCard } from "@/components/orders/service-timing-card";
 import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -467,6 +468,11 @@ export default function OrderStatusScreen() {
           ))}
         </Card>
       </View>
+
+      <ServiceTimingCard
+        scheduledAt={order.arrival_at}
+        serviceStartedAt={order.field_progress?.serviceStartedAt ?? order.specialist_session?.started_at}
+      />
 
       {/* What each leg actually cost. Only shown once something has been
           measured, so an order that has not started does not display a table

@@ -20,7 +20,9 @@ export async function POST(request: Request) {
   const templateName = typeof b.templateName === "string" ? b.templateName : "";
   const category = typeof b.category === "string" ? b.category : "MARKETING";
   const segment: Segment = typeof b.segment === "string" && isSegment(b.segment) ? b.segment : "all";
-  if (!contentSid.startsWith("HX")) return mobileError(400, "BAD_TEMPLATE", "قالب غير صالح.");
+  if (!contentSid.startsWith("HX") && !contentSid.startsWith("meta:")) {
+    return mobileError(400, "BAD_TEMPLATE", "قالب غير صالح.");
+  }
   const campaign = await createCampaign({
     contentSid, templateName, category, segment, createdBy: auth.session.email ?? null,
   });

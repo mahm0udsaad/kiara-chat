@@ -15,8 +15,8 @@ standalone Next.js app that reuses the **shared whatsapp-cs Supabase project**
   / `is_restaurant_admin` helpers, keyed off `team_members`) plus a **pinned
   Kiara tenant id** (`src/lib/tenant.ts`). The client never supplies a tenant id.
 - **Transport:** WhatsApp via **two numbers with different jobs** — a Twilio
-  sender on Meta's Business Platform (`+966508421748`) for all customer chats,
-  and a linked-device engine (`+966595532435`) that pushes staff-only outbound
+  sender on Meta's Business Platform (`+966508421748`) preserved for later reactivation,
+  and a linked-device engine that temporarily handles inbox traffic plus staff outbound
   notifications for dispatch and field reminders. See the section below.
 
 ## Roles
@@ -55,52 +55,42 @@ Sign in with a Supabase-auth user that is Kiara's owner or an active
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Shared Supabase project (RLS client). |
 | `SUPABASE_SERVICE_ROLE_KEY` | Admin tasks only (create/suspend agents). Optional for read-only phases. |
 | `KIARA_RESTAURANT_ID` | Pinned tenant (defaults to the Kiara id in code). |
-| `OPENWA_URL` / `OPENWA_SEND_TOKEN` / `OPENWA_INGEST_TOKEN` | Persistent OpenWA service on the VPS — the salon's staff-outbound number `+966595532435`. Only reaches drivers and specialists; never touches customer conversations. |
+| `OPENWA_URL` / `OPENWA_SEND_TOKEN` / `OPENWA_INGEST_TOKEN` | Persistent linked-device service for driver and specialist order notifications. See setup below. |
 | `FIELD_SESSION_SECRET` | Signs field-staff links. Set it explicitly: it otherwise falls back to `OPENWA_SEND_TOKEN`, so a future retirement of that variable would silently invalidate every outstanding link. |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | Twilio account. The auth token signs inbound webhooks and fetches inbound media — an API key cannot do either. |
 | `TWILIO_API_KEY_SID` / `TWILIO_API_KEY_SECRET` | Optional, preferred for sending: revocable without rotating the auth token. |
 | `TWILIO_WHATSAPP_FROM` | The Business Platform sender, e.g. `whatsapp:+966508421748`. |
 | `TWILIO_WEBHOOK_BASE_URL` | Public origin Twilio calls. Signature validation hashes this, not the request URL, which behind Vercel reports an internal host. |
 | `TWILIO_STATUS_CALLBACK_URL` | Delivery-receipt endpoint (`/api/webhooks/twilio/status`). |
-| `TWILIO_CONTENT_SID_BOOKING_FOLLOWUP` | Approved template sid (`HXbb5e5dbfc42600f2678e55b38445cdac`). Without it, nobody outside the 24-hour window is reachable. |
+| `TWILIO_CONTENT_SID_BOOKING_FOLLOWUP` | Approved template sid (`HXbb5e5dbfc42600f2678e55b38445cdac`). Required for booking follow-up templates on the Business Platform. |
 | `TWILIO_CONTENT_SID_CONVERSATION_OPENER` | The general opener — logo header, greeting by name (`HX21822b343fb1d89bed64aa0ef27fcd6c`). Marketing category, so Meta's per-customer marketing cap applies. |
-| `WHATSAPP_DEFAULT_PROVIDER` | Effectively fixed at `twilio` — customer conversations only ever go through the Business Platform now. Setting it to `openwa` breaks sends. |
+| `WHATSAPP_INBOX_PROVIDER` | Customer inbox provider. Defaults to `twilio`; OpenWA order notifications are independent. |
+| `WHATSAPP_CUSTOMER_PROVIDER` | Business Platform provider for campaigns and template management (`twilio` or `meta`). |
 
-### Two WhatsApp numbers, two jobs
+### Twilio inbox and OpenWA order notifications
 
-Kiara answered on two numbers as a matter of course, then briefly on one, and
-now on two again with a cleaner split. The abstraction that lives in
-`src/lib/transport/index.ts` codifies which does what.
+The customer inbox defaults to Twilio. Keep
+`WHATSAPP_INBOX_PROVIDER=twilio` in the deployment environment so incoming
+messages, agent replies, media, voice notes, and the bot use the Twilio number.
+`openwa` and `meta` remain explicit supported inbox settings for a future
+cutover, but they are not required for field-team dispatch.
 
-- **Twilio — `+966508421748`, on Meta's Business Platform.** Every customer
-  conversation lives here: inbound, agent replies, and the approved templates
-  that open a chat outside the 24-hour window. `transportForConversation()`
-  always resolves here.
-- **OpenWA — `+966595532435`, a linked device on the VPS engine.** Staff-only
-  outbound. Dispatch notes to drivers and specialists, field reminders, the
-  specialist voice note, the door photo. Called directly from `dispatch.ts`
-  and `field-reminders.ts` — never through `transportForConversation`, because
-  staff are not customer conversations.
+`WHATSAPP_CUSTOMER_PROVIDER` still selects the Business Platform provider for
+campaigns and approved template management. Campaigns and staff dispatch keep
+their existing routing. Approved templates are hidden and rejected in the
+OpenWA inbox; send ordinary text instead, without a 24-hour service window.
 
-What that split leaves behind, and why the code still reads the way it does:
+The OpenWA engine must be running and paired to the field-team WhatsApp account.
+`OPENWA_URL` and `OPENWA_SEND_TOKEN` control driver and specialist order
+notifications, including dispatch, reminders, voice notes, and photos. No phone
+number is hardcoded for OpenWA sends. Check the linked number and connection
+state on the Connect page before rollout. Twilio keeps handling the inbox.
 
-- `TransportProvider` keeps its `"openwa"` member because history still has
-  rows tagged that way, but nothing new gets that value on a customer
-  conversation. `transportForConversation` no longer consults
-  `conversations.metadata.transport` — honouring the stored marker would route
-  a customer reply into a number that is now staff-outbound only.
-- Any customer who wrote in on the old number `+966593695614` (retired
-  2026-09-03) is now outside the 24-hour window on a Twilio number she has
-  never seen, so first contact must be an approved template. That is what
-  `kiara_conversation_opener` exists for, and a successful template send
-  migrates her thread onto the Business number.
-- `/api/webhooks/openwa` answers **410**, not 404. Customer ingest is a
-  Twilio-only responsibility now, and a hand-started engine forwarding its
-  fromMe backlog into that endpoint would double-write history. The 410 is a
-  loud, named refusal rather than a silent 404 that reads like a bad deploy.
-- Typing indicators are gone — WhatsApp presence is a linked-device capability
-  and the Business Platform exposes none for customer chats. The presence
-  routes stay as no-ops so shipped mobile builds keep parsing them.
-- The linked device does **not** receive customer messages. If a customer ever
-  writes to `+966595532435` directly, her message is dropped by the 410. That
-  number is not published to customers.
+Inbound and phone-app replies populate the existing chat list, including group
+chats. Message IDs deduplicate retries. History preserves its original time
+and does not trigger unread increments, notifications, or bot replies. Typing
+subscriptions work again for visible conversations. After rollback, the OpenWA
+webhook acknowledges message/presence events without ingesting them; delivery
+acks for previously sent messages still update history. Business Platform
+webhooks continue to store incoming messages, but only trigger the bot when
+the inbox uses that same provider.

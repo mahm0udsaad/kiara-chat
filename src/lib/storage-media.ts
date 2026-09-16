@@ -87,6 +87,15 @@ export interface StoredMediaSlot {
   size_bytes: number | null;
   original_filename?: string | null;
   delivery_status: "stored" | "too_large" | "failed";
+  /**
+   * The provider URL the bytes were meant to come from, kept only when the
+   * fetch failed. Twilio holds inbound media until the account deletes it, so
+   * a failure here is recoverable — but only if the address survives the
+   * failure. Without it a lost receipt can never be fetched again.
+   */
+  source_url?: string | null;
+  /** Why the fetch failed, for the backfill and for the logs. */
+  fetch_error?: string | null;
 }
 
 /** Upload one base64 media blob into the bucket. Never throws — returns a slot. */
@@ -123,10 +132,15 @@ export async function uploadBase64Media(params: {
         upsert: false,
         cacheControl: "3600",
       });
-    if (error) return base;
+    if (error) {
+      console.error("[media] upload failed", params.contentType, error.message);
+      return { ...base, fetch_error: `upload: ${error.message}` };
+    }
     return { ...base, storage_path: path, delivery_status: "stored" };
-  } catch {
-    return base;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[media] upload threw", params.contentType, message);
+    return { ...base, fetch_error: `upload: ${message}` };
   }
 }
 
@@ -155,11 +169,26 @@ export async function signMediaUrl(
 }
 
 /**
+ * Twilio answers a media URL with 404 or 5xx for a moment after the webhook
+ * fires — the message is delivered before the media finishes landing in its
+ * own store — so roughly one inbound file in twenty was being dropped by a
+ * single-shot fetch. Three attempts spread over ~1.6s cover that window while
+ * staying well inside Twilio's own webhook timeout.
+ */
+const MEDIA_FETCH_ATTEMPTS = 3;
+const MEDIA_FETCH_BACKOFF_MS = [400, 1200];
+
+/** 404 included: the object exists, it is just not readable yet. */
+function isRetryableStatus(status: number): boolean {
+  return status === 404 || status === 408 || status === 429 || status >= 500;
+}
+
+/**
  * Pull one inbound media file from a provider URL into our own bucket.
  *
- * Twilio hosts inbound media behind the account credentials and deletes it a
- * few hours later, so the webhook has to fetch and persist it while it still
- * exists — the thread must still render the photo next week.
+ * Twilio hosts inbound media behind the account credentials, so the webhook
+ * fetches and persists it now — the thread must still render the receipt next
+ * week. A failure keeps the URL on the slot so the backfill can retry it.
  */
 export async function storeMediaFromUrl(params: {
   restaurantId: string;
@@ -177,25 +206,49 @@ export async function storeMediaFromUrl(params: {
     original_filename: params.originalFilename ?? null,
     delivery_status: "failed",
   };
-  try {
-    const headers: Record<string, string> = {};
-    if (params.auth) {
-      const token = Buffer.from(
-        `${params.auth.username}:${params.auth.password}`,
-      ).toString("base64");
-      headers.Authorization = `Basic ${token}`;
-    }
-    const res = await fetch(params.url, { headers, cache: "no-store" });
-    if (!res.ok) return base;
-    const buffer = Buffer.from(await res.arrayBuffer());
-    return await uploadBase64Media({
-      restaurantId: params.restaurantId,
-      conversationId: params.conversationId,
-      contentType: params.contentType,
-      base64: buffer.toString("base64"),
-      originalFilename: params.originalFilename ?? null,
-    });
-  } catch {
-    return base;
+  const headers: Record<string, string> = {};
+  if (params.auth) {
+    const token = Buffer.from(
+      `${params.auth.username}:${params.auth.password}`,
+    ).toString("base64");
+    headers.Authorization = `Basic ${token}`;
   }
+
+  let lastError = "unknown";
+  for (let attempt = 0; attempt < MEDIA_FETCH_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, MEDIA_FETCH_BACKOFF_MS[attempt - 1] ?? 1200),
+      );
+    }
+    try {
+      const res = await fetch(params.url, { headers, cache: "no-store" });
+      if (res.ok) {
+        const buffer = Buffer.from(await res.arrayBuffer());
+        return await uploadBase64Media({
+          restaurantId: params.restaurantId,
+          conversationId: params.conversationId,
+          contentType: params.contentType,
+          base64: buffer.toString("base64"),
+          originalFilename: params.originalFilename ?? null,
+        });
+      }
+      lastError = `HTTP ${res.status}`;
+      console.warn(
+        `[media] fetch ${lastError} (attempt ${attempt + 1}/${MEDIA_FETCH_ATTEMPTS})`,
+        params.contentType,
+      );
+      if (!isRetryableStatus(res.status)) break;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[media] fetch threw (attempt ${attempt + 1}/${MEDIA_FETCH_ATTEMPTS})`,
+        params.contentType,
+        lastError,
+      );
+    }
+  }
+
+  console.error("[media] fetch gave up", params.contentType, lastError);
+  return { ...base, source_url: params.url, fetch_error: lastError };
 }

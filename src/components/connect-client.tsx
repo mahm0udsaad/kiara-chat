@@ -30,6 +30,7 @@ interface TwilioState {
 interface WhatsappState {
   openwa: EngineState;
   twilio: TwilioState;
+  inboxProvider?: "openwa" | "twilio" | "meta";
 }
 
 const ACTIVE_POLL = ["awaiting_qr", "authenticated", "initializing", "unknown"];
@@ -38,6 +39,7 @@ const FALLBACK_MAX_AGE_MS = 45000;
 export function ConnectClient() {
   const [data, setData] = useState<WhatsappState | null>(null);
   const [error, setError] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // Ticks once a second purely to drive the countdown re-render.
   const [now, setNow] = useState(() => Date.now());
@@ -72,12 +74,17 @@ export function ConnectClient() {
 
   const requestFreshQr = useCallback(async () => {
     setRefreshing(true);
+    setRefreshError(null);
     try {
-      await fetch("/api/whatsapp/refresh", { method: "POST" });
+      const res = await fetch("/api/whatsapp/refresh", { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `تعذّر إعادة ربط واتساب (${res.status})`);
+      }
       // The engine restarts its browser to mint a new code; poll picks it up.
       await poll();
-    } catch {
-      setError(true);
+    } catch (cause) {
+      setRefreshError(cause instanceof Error ? cause.message : "تعذّر إعادة ربط واتساب");
     } finally {
       setRefreshing(false);
     }
@@ -85,6 +92,7 @@ export function ConnectClient() {
 
   const engine = data?.openwa;
   const twilio = data?.twilio;
+  const openWaInbox = data?.inboxProvider === "openwa";
   const state = engine?.state ?? "loading";
   const maxAge = engine?.qrMaxAgeMs ?? FALLBACK_MAX_AGE_MS;
   const secondsLeft = engine?.qrUpdatedAt
@@ -97,11 +105,10 @@ export function ConnectClient() {
       <div className="dashboard-page-header">
         <div>
           <h1>أرقام واتساب</h1>
-          {/* Two numbers, two jobs. Twilio talks to customers; the linked device
-              only pushes notes to the salon's own drivers and specialists. */}
           <p>
-            كيّارا تعمل على رقمين، لكل واحد دوره. رقم واتساب الأعمال
-            للأعمال يخدم العميلات، والرقم المرتبط بجهاز يُستخدم للتنبيهات الداخلية للسائق والأخصائية فقط.
+            {openWaInbox
+              ? "رقم واتساب المرتبط يُستخدم للمحادثات وتنبيهات الطلبات معًا. إعدادات واتساب الأعمال محفوظة لإعادة تفعيله لاحقًا."
+              : "صندوق الوارد يعمل عبر واتساب الأعمال، والرقم المرتبط يُستخدم لتنبيهات الفريق."}
           </p>
         </div>
       </div>
@@ -133,8 +140,8 @@ export function ConnectClient() {
           <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800">
             <BadgeCheck className="size-5 shrink-0" />
             <span className="text-sm font-medium">
-              جاهز{twilio.number ? ` — ‎${twilio.number}` : ""}. الاستقبال
-              والإرسال يعملان.
+              البيانات مُهيّأة{twilio.number ? ` — ‎${twilio.number}` : ""}.
+              {openWaInbox ? " استخدامه لصندوق الوارد متوقف مؤقتًا." : " مُتاح لواتساب الأعمال."}
             </span>
           </div>
         )}
@@ -152,12 +159,14 @@ export function ConnectClient() {
         </p>
       </section>
 
-      {/* ---------- Staff-outbound linked device (OpenWA) ---------- */}
+      {/* ---------- Linked device (OpenWA) ---------- */}
       <section className="mt-6 rounded-2xl border bg-[var(--surface)] p-6">
         <header className="mb-4">
-          <h2 className="text-base font-semibold">رقم التنبيهات الداخلية</h2>
+          <h2 className="text-base font-semibold">{openWaInbox ? "رقم المحادثات والطلبات" : "رقم التنبيهات الداخلية"}</h2>
           <p className="text-sm text-muted-foreground">
-            رقم يُرسل ملاحظات الطلبات وتنبيهات الفريق للسائق والأخصائية. يحتاج إعادة ربط إذا انقطعت الجلسة.
+            {openWaInbox
+              ? "اربطي الرقم الجديد لاستخدامه في المحادثات والردود وتنبيهات الطلبات للسائق والأخصائية. يحتاج إعادة ربط إذا انقطعت الجلسة."
+              : "رقم يُرسل ملاحظات الطلبات وتنبيهات الفريق للسائق والأخصائية. يحتاج إعادة ربط إذا انقطعت الجلسة."}
           </p>
         </header>
 
@@ -174,11 +183,25 @@ export function ConnectClient() {
             </p>
           </div>
         ) : state === "ready" ? (
-          <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800">
-            <CheckCircle2 className="size-5" />
-            <span className="text-sm font-medium">
-              متصل{engine.number ? ` كـ ‎+${engine.number}` : ""} — الرسائل تعمل الآن.
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="size-5" />
+              <span className="text-sm font-medium">
+                متصل{engine.number ? ` كـ ‎+${engine.number}` : ""} — الرسائل تعمل الآن.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={requestFreshQr}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-lg border border-green-300 bg-white px-3 py-2 text-sm font-medium text-green-800 transition hover:bg-green-50 disabled:opacity-60"
+            >
+              <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+              ربط رقم آخر
+            </button>
+            {refreshError && (
+              <p className="basis-full text-sm text-red-700">{refreshError}</p>
+            )}
           </div>
         ) : error || state === "unreachable" ? (
           <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">

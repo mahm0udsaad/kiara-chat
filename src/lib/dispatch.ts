@@ -85,6 +85,8 @@ const ORDER_COLS_WITH_REKAZ = `${ORDER_COLS_WITH_EDITOR}, rekaz_source_id`;
 const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_WITH_REKAZ}, driver_note, specialist_note, specialist_voice_path`;
 /** Adds the door photo. Falls back until 20260903090000 runs. */
 const ORDER_COLS_WITH_DOOR = `${ORDER_COLS_WITH_NOTES}, door_photo_path`;
+/** Adds the optional second specialist. Falls back until its migration runs. */
+const ORDER_COLS_WITH_SECOND_SPECIALIST = `${ORDER_COLS_WITH_DOOR}, second_specialist_id`;
 const operationalOrderScore = (row: Partial<DriverOrder>) =>
   (row.status === "sent" ? 8 : 0) +
   (row.driver_id ? 4 : 0) +
@@ -96,6 +98,8 @@ const missingRekazLink = (err: { message: string } | null) =>
   Boolean(err?.message.includes("rekaz_source_id"));
 const missingDoorPhoto = (err: { message: string } | null) =>
   Boolean(err?.message.includes("door_photo_path"));
+const missingSecondSpecialist = (err: { message: string } | null) =>
+  Boolean(err?.message.includes("second_specialist_id"));
 const missingDispatchNotes = (err: { message: string } | null) =>
   Boolean(
     err?.message.includes("driver_note") ||
@@ -175,23 +179,6 @@ export async function saveDispatchSettings(
     fullTripPrice: Number(data.full_trip_price),
     halfTripPrice: Number(data.half_trip_price),
   };
-}
-
-/**
- * Price for a leg, read with the service-role client so an *agent* creating an
- * order still snapshots the correct amount even though RLS hides prices from
- * them. The number is never returned to a non-admin caller.
- */
-async function priceForTrip(tripType: TripType): Promise<number | null> {
-  const { data } = await getAdminSupabaseClient()
-    .from("dispatch_settings")
-    .select("full_trip_price, half_trip_price")
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .maybeSingle();
-  if (!data) return null;
-  const raw =
-    tripType === "round_trip" ? data.full_trip_price : data.half_trip_price;
-  return raw == null ? null : Number(raw);
 }
 
 // ------------------------------------------------------------ specialists
@@ -948,6 +935,7 @@ function rekazLocationValue(
 
 export interface DispatchBookingInput {
   specialistId: string;
+  secondSpecialistId?: string | null;
   driverId: string;
   /**
    * The customer's address, settled here rather than left to the edit sheet.
@@ -988,6 +976,7 @@ export interface DispatchBookingInput {
 
 export interface DispatchPreviewInput {
   specialistId: string;
+  secondSpecialistId?: string | null;
   driverId: string;
   /** The address as it stands in the form, so the preview quotes what will send. */
   customerLocation?: string;
@@ -1058,6 +1047,13 @@ type DispatchContext = {
     nationality?: string | null;
     preferred_language?: string | null;
   };
+  secondSpecialist: {
+    id: string;
+    full_name: string;
+    phone: string | null;
+    nationality?: string | null;
+    preferred_language?: string | null;
+  } | null;
   driver: { id: string; full_name: string; phone: string | null };
   customerName: string | null;
 };
@@ -1066,7 +1062,7 @@ async function loadDispatchContext(
   id: string,
   input: Pick<
     DispatchPreviewInput,
-    "specialistId" | "driverId" | "tripType" | "customerLocation"
+    "specialistId" | "secondSpecialistId" | "driverId" | "tripType" | "customerLocation"
   >,
 ): Promise<DispatchContext> {
   const supabase = await createServerSupabaseClient();
@@ -1092,26 +1088,30 @@ async function loadDispatchContext(
     nationality?: string | null;
     preferred_language?: string | null;
   };
-  const fetchSpecialist = async (cols: string) => {
+  if (input.secondSpecialistId && input.secondSpecialistId === input.specialistId) {
+    throw new Error("اختاري أخصائيتين مختلفتين");
+  }
+  const fetchSpecialist = async (id: string, cols: string) => {
     const { data, error } = await supabase
       .from("specialists")
       .select(cols)
-      .eq("id", input.specialistId)
+      .eq("id", id)
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .maybeSingle();
     return { data: data as SpecialistContact | null, error };
   };
-  const specialistPromise = fetchSpecialist(
+  const specialistFor = (id: string) => fetchSpecialist(id,
     "id, full_name, phone, nationality, preferred_language"
   ).then(async (result) =>
     missingPreferredLanguage(result.error)
-      ? (await fetchSpecialist("id, full_name, phone, nationality")).data
+      ? (await fetchSpecialist(id, "id, full_name, phone, nationality")).data
       : missingNationality(result.error)
-        ? (await fetchSpecialist("id, full_name, phone")).data
+        ? (await fetchSpecialist(id, "id, full_name, phone")).data
         : result.data
   );
-  const [specialist, { data: driver }, { data: conv }, price, services] = await Promise.all([
-    specialistPromise,
+  const [specialist, secondSpecialist, { data: driver }, { data: conv }, services] = await Promise.all([
+    specialistFor(input.specialistId),
+    input.secondSpecialistId ? specialistFor(input.secondSpecialistId) : Promise.resolve(null),
     supabase
       .from("drivers")
       .select("id, full_name, phone")
@@ -1124,10 +1124,10 @@ async function loadDispatchContext(
       .eq("id", order.conversation_id)
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .maybeSingle(),
-    priceForTrip(tripType),
     servicesForOrder(order).catch(() => [] as VisitService[]),
   ]);
   if (!specialist) throw new Error("Specialist not found");
+  if (input.secondSpecialistId && !secondSpecialist) throw new Error("Second specialist not found");
   // A phone is the driver's app login, not a delivery address any more, so a
   // roster row without one still dispatches.
   if (!driver) throw new Error("Driver not found");
@@ -1138,8 +1138,12 @@ async function loadDispatchContext(
     tripType,
     services,
     customerLocation: input.customerLocation?.trim() || order.customer_location,
-    price,
+    // Trip cost is now entered manually by the owner from the order detail.
+    // Preserve an amount she entered before dispatch; never replace it with
+    // the old one-way/round-trip tariff.
+    price: order.price,
     specialist,
+    secondSpecialist,
     driver: driver as { id: string; full_name: string; phone: string | null },
     customerName: (conv.customer_name as string | null) ?? null,
   };
@@ -1151,7 +1155,9 @@ export async function previewBookingDispatch(
 ): Promise<DispatchPreview> {
   const context = await loadDispatchContext(id, input);
   const orderDetails = {
-    specialistName: context.specialist.full_name,
+    specialistName: [context.specialist.full_name, context.secondSpecialist?.full_name]
+      .filter(Boolean)
+      .join(" و "),
     arrivalAt: context.order.arrival_at,
     durationMinutes: context.order.duration_minutes,
     customerLocation: context.customerLocation,
@@ -1259,6 +1265,7 @@ export async function dispatchBooking(
   /** The WhatsApp copy to the driver. The order is assigned either way. */
   sent: boolean;
   specialistSent: boolean | null;
+  secondSpecialistSent: boolean | null;
   /** Did at least one device accept the push? Reported, never fatal. */
   notified: boolean;
 }> {
@@ -1291,6 +1298,7 @@ export async function dispatchBooking(
     idempotencyKey: input.idempotencyKey,
     actor: input.actor,
     specialistId: input.specialistId,
+    secondSpecialistId: input.secondSpecialistId ?? null,
     driverId: input.driverId,
     tripType: context.tripType,
     price: context.price,
@@ -1300,6 +1308,7 @@ export async function dispatchBooking(
     specialistVoicePath,
     driverPhone: context.driver.phone,
     specialistPhone: context.specialist.phone,
+    secondSpecialistPhone: context.secondSpecialist?.phone ?? null,
     doorPhotoPath,
   });
   const commandId = String(prepared.commandId);
@@ -1309,18 +1318,25 @@ export async function dispatchBooking(
     typeof prepared.specialistOutboxId === "string"
       ? prepared.specialistOutboxId
       : null;
+  const secondSpecialistOutboxId =
+    typeof prepared.secondSpecialistOutboxId === "string"
+      ? prepared.secondSpecialistOutboxId
+      : null;
 
   await ensureFieldOrderProgress(id).catch(() => undefined);
 
-  const [push, driverDelivery, specialistDelivery] = await Promise.all([
+  const [push, driverDelivery, specialistDelivery, secondSpecialistDelivery] = await Promise.all([
     notifyFieldOrderAssigned({
       orderId: id,
       customerName: context.customerName,
-      specialistId: input.specialistId,
+      specialistIds: [input.specialistId, input.secondSpecialistId].filter(
+        (value): value is string => Boolean(value),
+      ),
       driverId: input.driverId,
     }).catch(() => null),
     deliverOutboxText({ commandId, eventId: driverOutboxId }),
     deliverOutboxText({ commandId, eventId: specialistOutboxId }),
+    deliverOutboxText({ commandId, eventId: secondSpecialistOutboxId }),
   ]);
 
   // Attachments follow their written copy on WhatsApp, and are stored on the
@@ -1329,6 +1345,20 @@ export async function dispatchBooking(
   if (specialistDelivery.sent && input.specialistVoice && context.specialist.phone) {
     await openWaTransport
       .sendMedia(context.specialist.phone, {
+        base64: input.specialistVoice.base64,
+        contentType: input.specialistVoice.contentType,
+        filename: input.specialistVoice.filename ?? undefined,
+        ptt: true,
+      })
+      .catch(() => undefined);
+  }
+  if (
+    secondSpecialistDelivery.sent &&
+    input.specialistVoice &&
+    context.secondSpecialist?.phone
+  ) {
+    await openWaTransport
+      .sendMedia(context.secondSpecialist.phone, {
         base64: input.specialistVoice.base64,
         contentType: input.specialistVoice.contentType,
         filename: input.specialistVoice.filename ?? undefined,
@@ -1353,8 +1383,10 @@ export async function dispatchBooking(
     commandId,
     driverSent: driverDelivery.sent,
     specialistSent: specialistDelivery.sent,
+    secondSpecialistSent: secondSpecialistDelivery.sent,
     driverError: driverDelivery.error,
     specialistError: specialistDelivery.error,
+    secondSpecialistError: secondSpecialistDelivery.error,
   });
   const raw = finished.order;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -1367,6 +1399,9 @@ export async function dispatchBooking(
     order: enriched,
     sent: driverDelivery.sent,
     specialistSent: specialistOutboxId ? specialistDelivery.sent : null,
+    secondSpecialistSent: secondSpecialistOutboxId
+      ? secondSpecialistDelivery.sent
+      : null,
     notified: Boolean(push && push.accepted > 0),
   };
 }
@@ -1419,7 +1454,10 @@ async function readOrders(
   supabase: AuthedClient,
   build: (cols: string) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
 ): Promise<DriverOrderRow[]> {
-  let { data, error } = await build(ORDER_COLS_WITH_DOOR);
+  let { data, error } = await build(ORDER_COLS_WITH_SECOND_SPECIALIST);
+  if (error && missingSecondSpecialist(error)) {
+    ({ data, error } = await build(ORDER_COLS_WITH_DOOR));
+  }
   if (error && missingDoorPhoto(error)) {
     ({ data, error } = await build(ORDER_COLS_WITH_NOTES));
   }
@@ -1534,6 +1572,10 @@ export async function updateDriverOrder(
 
   const [row] = await withNames(supabase, [data as unknown as DriverOrder]);
 
+  // A trip-cost correction is private bookkeeping. It must remain audited,
+  // but it is not an operational change and should not notify the field team.
+  if (Object.keys(patch).every((key) => key === "price")) return row;
+
   const customerName = row.customer_name;
   const specialistId = row.specialist_id;
   const driverId = row.driver_id;
@@ -1566,6 +1608,7 @@ export async function updateDriverOrder(
     orderId: id,
     customerName,
     specialistId,
+    secondSpecialistId: row.second_specialist_id,
     driverId,
     specialistCopy: specialistCopy
       ? { title: specialistCopy.pushTitle, body: specialistCopy.pushBody }
@@ -1690,6 +1733,7 @@ export async function cancelDriverOrder(
     orderId: id,
     customerName,
     specialistId,
+    secondSpecialistId: row.second_specialist_id,
     driverId,
     specialistCopy: specialistCopy
       ? { title: specialistCopy.pushTitle, body: specialistCopy.pushBody }
@@ -1764,7 +1808,9 @@ export async function resendDriverOrder(
     notifyFieldOrderAssigned({
       orderId: row.id,
       customerName: row.customer_name ?? null,
-      specialistId: row.specialist_id,
+      specialistIds: [row.specialist_id, row.second_specialist_id].filter(
+        (value): value is string => Boolean(value),
+      ),
       driverId: row.driver_id,
       repeat: true,
     }).catch(() => null),
@@ -1798,8 +1844,11 @@ async function withNames(
     ...new Set(values.filter((v): v is string => Boolean(v))),
   ];
 
+  const specialistIds = uniq(
+    orders.flatMap((order) => [order.specialist_id, order.second_specialist_id]),
+  );
   const [specialists, drivers, customers, editors, progress, services] = await Promise.all([
-    rosterNames(supabase, "specialists", uniq(orders.map((o) => o.specialist_id))),
+    rosterNames(supabase, "specialists", specialistIds),
     rosterNames(supabase, "drivers", uniq(orders.map((o) => o.driver_id))),
     customerDetails(supabase, uniq(orders.map((o) => o.conversation_id))),
     teamMemberNames(supabase, uniq(orders.map((o) => o.updated_by))),
@@ -1823,6 +1872,8 @@ async function withNames(
     return {
       ...o,
       specialist_name: (o.specialist_id && specialists.get(o.specialist_id)?.fullName) || null,
+      second_specialist_name:
+        (o.second_specialist_id && specialists.get(o.second_specialist_id)?.fullName) || null,
       driver_name: driver?.fullName ?? null,
       driver_phone: driver?.phone ?? null,
       customer_name: customer?.name ?? null,
@@ -1895,6 +1946,13 @@ async function fieldProgressFor(
       specialistPickupAt: (row.specialist_pickup_at as string | null) ?? null,
       serviceStartedAt: (row.service_started_at as string | null) ?? null,
       completedAt: (row.completed_at as string | null) ?? null,
+      completionOutcome:
+        row.completion_outcome === "not_done"
+          ? "not_done"
+          : row.completion_outcome === "done" || row.completed_at
+            ? "done"
+            : null,
+      completionNote: (row.completion_note as string | null) ?? null,
       driverReturnedAt: (row.driver_returned_at as string | null) ?? null,
       lastActivityAt:
         (row.last_activity_at as string | null) ?? new Date().toISOString(),

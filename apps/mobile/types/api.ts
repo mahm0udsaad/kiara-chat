@@ -289,8 +289,10 @@ export type OrderSummary = {
   trip_type: TripType;
   status: OrderStatus;
   specialist_id: string | null;
+  second_specialist_id?: string | null;
   driver_id: string | null;
   specialist_name: string | null;
+  second_specialist_name?: string | null;
   driver_name: string | null;
   driver_phone: string | null;
   price: number | null;
@@ -357,17 +359,20 @@ export type DispatchOptionsResponse = {
 };
 
 export type OrderPatch = {
-  arrivalAt: string;
-  customerLocation: string;
-  durationMinutes: number;
-  tripType: TripType;
-  specialistId: string | null;
-  driverId: string | null;
+  arrivalAt?: string;
+  customerLocation?: string;
+  durationMinutes?: number;
+  tripType?: TripType;
+  specialistId?: string | null;
+  driverId?: string | null;
+  /** Owner-entered driver fare based on the customer's distance. */
+  price?: number | null;
   expectedVersion: number;
 };
 
 export type DispatchInput = {
   specialistId: string;
+  secondSpecialistId?: string | null;
   driverId: string;
   /** Settled at dispatch — the server refuses a blank or placeholder address. */
   customerLocation: string;
@@ -499,10 +504,48 @@ export type OrdersReportDay = {
   day: string;
   total: number;
   completed: number;
+  notDone: number;
   active: number;
   cancelled: number;
   edited: number;
   revenue: number;
+};
+
+export type OrderProblemKind = "late" | "service_overrun" | "missing_trip_cost" | "not_done";
+
+export type OrderProblem = {
+  orderId: string;
+  customerName: string | null;
+  customerPhone: string;
+  driverName: string | null;
+  arrivalAt: string;
+  bookedServiceMinutes: number;
+  actualServiceMinutes: number | null;
+  lateMinutes: number;
+  overrunMinutes: number;
+  tripCost: number | null;
+  completionNote: string | null;
+  kinds: OrderProblemKind[];
+};
+
+export type OrderOutcomeAudit = {
+  orderId: string;
+  customerName: string | null;
+  customerPhone: string;
+  arrivalAt: string;
+  completedAt: string;
+  outcome: "done" | "not_done";
+  note: string | null;
+  specialistName: string | null;
+};
+
+export type DriverSettlement = {
+  driverId: string;
+  driverName: string;
+  orders: number;
+  recordedCosts: number;
+  missingCosts: number;
+  totalTripCost: number;
 };
 
 export type OrdersReport = {
@@ -513,6 +556,7 @@ export type OrdersReport = {
   totals: {
     total: number;
     completed: number;
+    notDone: number;
     rekazDone: number;
     fieldCompleted: number;
     active: number;
@@ -524,8 +568,21 @@ export type OrdersReport = {
     transportRevenue: number;
     refunded: number;
     totalRevenue: number;
+    problemOrders: number;
+    lateOrders: number;
+    serviceOverruns: number;
+    missingTripCosts: number;
+    timedOrders: number;
+    bookedServiceMinutes: number;
+    actualServiceMinutes: number;
+    serviceVarianceMinutes: number;
+    tripCosts: number;
+    netAfterTripCosts: number;
   };
   daily: OrdersReportDay[];
+  problems: OrderProblem[];
+  outcomes: OrderOutcomeAudit[];
+  driverSettlements: DriverSettlement[];
 };
 
 export type CustomerServiceActionKind =
@@ -810,6 +867,8 @@ export type FieldOrderProgress = {
   specialistPickupAt: string | null;
   serviceStartedAt: string | null;
   completedAt: string | null;
+  completionOutcome: "done" | "not_done" | null;
+  completionNote: string | null;
   driverReturnedAt: string | null;
   lastActivityAt: string;
   lastReminderAt: string | null;
@@ -880,6 +939,7 @@ export type FieldOrder = {
   id: string;
   status: OrderStatus;
   specialistId: string | null;
+  secondSpecialistId: string | null;
   driverId: string | null;
   arrivalAt: string;
   durationMinutes: number;
@@ -888,13 +948,14 @@ export type FieldOrder = {
   customerPhone: string;
   customerLocation: string;
   specialistName: string | null;
+  secondSpecialistName: string | null;
   driverName: string | null;
+  /** Approved visit services in the order the specialist should perform them. */
+  services: { id: string; name: string; minutes: number }[];
   progress: FieldOrderProgress;
   nextAction: FieldOrderAction | null;
   nextActionLabel: string | null;
   canAct: boolean;
-  /** The driver's non-blocking "I've arrived at the specialist" ping is offered. */
-  canPingArrival: boolean;
   /** Driver may cancel after accepting, until the specialist confirms pickup. */
   canCancel: boolean;
   /**

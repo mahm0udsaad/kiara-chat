@@ -17,7 +17,11 @@
  */
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
-import { twilioTransport, isTwilioConfigured } from "@/lib/transport";
+import {
+  customerProvider,
+  isProviderConfigured,
+  transportFor,
+} from "@/lib/transport";
 import {
   contentSidFor,
   templateSpec,
@@ -297,7 +301,11 @@ export async function sendBroadcastBatch(
   segment: Segment,
 ): Promise<DrainResult> {
   const admin = getAdminSupabaseClient();
-  if (!isTwilioConfigured()) throw new Error("Twilio is not configured.");
+  const provider = customerProvider();
+  if (!isProviderConfigured(provider)) {
+    throw new Error("The active WhatsApp provider is not configured.");
+  }
+  const transport = transportFor(provider);
   const contentSid = contentSidFor(templateKey);
   if (!contentSid) {
     throw new Error(
@@ -339,7 +347,7 @@ export async function sendBroadcastBatch(
 
     let mark: BroadcastMark;
     try {
-      const res = await twilioTransport.sendTemplate(phone, contentSid, vars);
+      const res = await transport.sendTemplate(phone, contentSid, vars);
       mark = { status: "sent", sid: res.providerMessageId || null, at: new Date().toISOString() };
       sent += 1;
     } catch (error) {

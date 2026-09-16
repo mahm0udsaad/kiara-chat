@@ -4,6 +4,7 @@ import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { WHATSAPP_MEDIA_BUCKET } from "@/lib/storage-media";
+import { normalizePhone } from "@/lib/phone";
 import {
   cancelAcceptedFieldOrderCommand,
   fieldOrderStepCommand,
@@ -47,6 +48,7 @@ export interface FieldOrder {
   id: string;
   status: DriverOrderStatus;
   specialistId: string | null;
+  secondSpecialistId: string | null;
   driverId: string | null;
   arrivalAt: string;
   durationMinutes: number;
@@ -55,17 +57,18 @@ export interface FieldOrder {
   customerPhone: string;
   customerLocation: string;
   specialistName: string | null;
+  secondSpecialistName: string | null;
   driverName: string | null;
+  /** Approved visit services in the order the specialist should perform them. */
+  services: Array<{
+    id: string;
+    name: string;
+    minutes: number;
+  }>;
   progress: FieldOrderProgress;
   nextAction: FieldOrderAction | null;
   nextActionLabel: string | null;
   canAct: boolean;
-  /**
-   * The driver's non-blocking "I've arrived at the specialist" ping is offered
-   * only to the driver, only after he has confirmed the ride and before she is
-   * in the car, and only until he taps it once.
-   */
-  canPingArrival: boolean;
   /** Available only to the assigned driver after acceptance and before pickup. */
   canCancel: boolean;
   /**
@@ -94,6 +97,44 @@ export interface FieldStaffAccountSummary {
 
 const E164 = /^\+[1-9]\d{7,14}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RIYADH_DAY = new Intl.DateTimeFormat("en-CA", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  timeZone: "Asia/Riyadh",
+});
+
+async function rekazServicesForFieldOrder(
+  admin: ReturnType<typeof getAdminSupabaseClient>,
+  row: Record<string, unknown>,
+): Promise<FieldOrder["services"]> {
+  const phone = normalizePhone(String(row.customer_phone ?? ""));
+  const arrivalAt = String(row.arrival_at ?? "");
+  if (!phone || !Number.isFinite(Date.parse(arrivalAt))) return [];
+  const day = RIYADH_DAY.format(new Date(arrivalAt));
+  const { data, error } = await admin
+    .from("rekaz_reservations")
+    .select("source_id, arrival_at, payload, status")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .ilike("customer_phone", `%${phone}%`)
+    .is("removed_at", null)
+    .gte("arrival_at", `${day}T00:00:00+03:00`)
+    .lte("arrival_at", `${day}T23:59:59+03:00`)
+    .order("arrival_at");
+  if (error) throw new Error(error.message);
+  return (data ?? [])
+    .filter((service) => service.status !== "Cancelled")
+    .map((service) => {
+      const payload = service.payload as
+        | { service?: string; durationMinutes?: number }
+        | null;
+      return {
+        id: String(service.source_id),
+        name: payload?.service?.trim() || "خدمة",
+        minutes: Math.max(Number(payload?.durationMinutes) || 0, 0),
+      };
+    });
+}
 
 export function normalizeLoginPhone(value: string): string {
   const trimmed = value.trim();
@@ -297,6 +338,13 @@ function progressOf(row: Record<string, unknown> | null | undefined): FieldOrder
     specialistPickupAt: (row?.specialist_pickup_at as string | null) ?? null,
     serviceStartedAt: (row?.service_started_at as string | null) ?? null,
     completedAt: (row?.completed_at as string | null) ?? null,
+    completionOutcome:
+      row?.completion_outcome === "done" || row?.completion_outcome === "not_done"
+        ? row.completion_outcome
+        : row?.completed_at
+          ? "done"
+          : null,
+    completionNote: (row?.completion_note as string | null) ?? null,
     driverReturnedAt: (row?.driver_returned_at as string | null) ?? null,
     lastActivityAt: (row?.last_activity_at as string | null) ?? now,
     lastReminderAt: (row?.last_reminder_at as string | null) ?? null,
@@ -309,6 +357,9 @@ export function nextFieldAction(
 ): { action: FieldOrderAction | null; role: FieldStaffRole | null; label: string | null } {
   if (!progress.driverConfirmedAt) {
     return { action: "confirm_ride", role: "driver", label: "تأكيد الرحلة والانطلاق" };
+  }
+  if (!progress.driverArrivedAt) {
+    return { action: "driver_arrived", role: "driver", label: "وصلتُ لمقر الأخصائية" };
   }
   if (!progress.specialistPickupAt) {
     return { action: "confirm_pickup", role: "specialist", label: "ركبتُ مع السائق" };
@@ -325,22 +376,10 @@ export function nextFieldAction(
   return { action: null, role: null, label: null };
 }
 
-/**
- * Whether the driver may fire the non-blocking "I reached the specialist" ping
- * for a given progress state. Kept beside {@link nextFieldAction} so the linear
- * chain and this side event stay defined in one place.
- */
-export function driverArrivalPingAvailable(progress: FieldOrderProgress): boolean {
-  return Boolean(
-    progress.driverConfirmedAt &&
-      !progress.driverArrivedAt &&
-      !progress.specialistPickupAt,
-  );
-}
-
 const ORDER_COLS_BASE =
   "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type, status";
-const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_BASE}, driver_note, specialist_note, specialist_voice_path, door_photo_path`;
+const ORDER_COLS_WITH_SECOND = `${ORDER_COLS_BASE}, second_specialist_id`;
+const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_WITH_SECOND}, driver_note, specialist_note, specialist_voice_path, door_photo_path`;
 
 /** Long enough to open the order, play the note and study the photo. */
 const ATTACHMENT_URL_TTL_SECONDS = 3600;
@@ -350,13 +389,16 @@ async function loadOrdersForSession(
   options: FieldOrderListOptions & { orderId?: string } = {},
 ) {
   const admin = getAdminSupabaseClient();
-  const rosterColumn = session.role === "specialist" ? "specialist_id" : "driver_id";
   const build = (cols: string) => {
     let query = admin
       .from("driver_orders")
       .select(cols)
-      .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .eq(rosterColumn, session.rosterId);
+      .eq("restaurant_id", KIARA_RESTAURANT_ID);
+    query = session.role === "specialist"
+      ? query.or(
+          `specialist_id.eq.${session.rosterId},second_specialist_id.eq.${session.rosterId}`,
+        )
+      : query.eq("driver_id", session.rosterId);
     if (options.orderId) {
       query = query.eq("id", options.orderId);
     } else if (options.view && options.dayStart && options.dayEnd) {
@@ -394,11 +436,14 @@ async function loadOrdersForSession(
   if (error) throw new Error(error.message);
   const rows = (orders ?? []) as unknown as Record<string, unknown>[];
   const conversationIds = [...new Set(rows.map((row) => row.conversation_id as string))];
-  const specialistIds = [...new Set(rows.map((row) => row.specialist_id as string).filter(Boolean))];
+  const specialistIds = [...new Set(rows.flatMap((row) => [
+    row.specialist_id as string,
+    row.second_specialist_id as string,
+  ]).filter(Boolean))];
   const driverIds = [...new Set(rows.map((row) => row.driver_id as string).filter(Boolean))];
   const orderIds = rows.map((row) => row.id as string);
 
-  const [conversationResult, specialistResult, driverResult, progressResult] = await Promise.all([
+  const [conversationResult, specialistResult, driverResult, progressResult, servicesResult] = await Promise.all([
     conversationIds.length
       ? admin.from("conversations").select("id, customer_name").in("id", conversationIds)
       : Promise.resolve({ data: [] }),
@@ -411,7 +456,23 @@ async function loadOrdersForSession(
     orderIds.length
       ? admin.from("field_order_progress").select("*").in("order_id", orderIds)
       : Promise.resolve({ data: [] }),
+    options.orderId && orderIds.length
+      ? admin
+          .from("order_visit_services")
+          .select("id, order_id, name, minutes, starts_at")
+          .eq("restaurant_id", KIARA_RESTAURANT_ID)
+          .in("order_id", orderIds)
+          .order("starts_at")
+      : Promise.resolve({ data: [], error: null }),
   ]);
+
+  if (
+    servicesResult.error &&
+    servicesResult.error.code !== "PGRST205" &&
+    !/order_visit_services|schema cache/i.test(servicesResult.error.message)
+  ) {
+    throw new Error(servicesResult.error.message);
+  }
 
   const conversations = new Map(
     (conversationResult.data ?? []).map((row) => [row.id as string, row.customer_name as string | null])
@@ -425,6 +486,23 @@ async function loadOrdersForSession(
   const progressRows = new Map(
     (progressResult.data ?? []).map((row) => [row.order_id as string, row as Record<string, unknown>])
   );
+  const servicesByOrder = new Map<string, FieldOrder["services"]>();
+  for (const row of servicesResult.data ?? []) {
+    const orderId = row.order_id as string;
+    const services = servicesByOrder.get(orderId) ?? [];
+    services.push({
+      id: row.id as string,
+      name: row.name as string,
+      minutes: Number(row.minutes),
+    });
+    servicesByOrder.set(orderId, services);
+  }
+  if (options.orderId && rows[0] && !servicesByOrder.has(options.orderId)) {
+    servicesByOrder.set(
+      options.orderId,
+      await rekazServicesForFieldOrder(admin, rows[0]),
+    );
+  }
 
   // Signed here rather than exposed as a path: the field app has no media route
   // of its own, and a raw bucket path is useless to it anyway.
@@ -459,6 +537,7 @@ async function loadOrdersForSession(
       id: row.id as string,
       status,
       specialistId: (row.specialist_id as string | null) ?? null,
+      secondSpecialistId: (row.second_specialist_id as string | null) ?? null,
       driverId: (row.driver_id as string | null) ?? null,
       arrivalAt: row.arrival_at as string,
       durationMinutes: Number(row.duration_minutes),
@@ -469,13 +548,15 @@ async function loadOrdersForSession(
       specialistName: row.specialist_id
         ? specialists.get(row.specialist_id as string) ?? null
         : null,
+      secondSpecialistName: row.second_specialist_id
+        ? specialists.get(row.second_specialist_id as string) ?? null
+        : null,
       driverName: row.driver_id ? drivers.get(row.driver_id as string) ?? null : null,
+      services: servicesByOrder.get(row.id as string) ?? [],
       progress,
       nextAction: cancelled ? null : next.action,
       nextActionLabel: cancelled ? null : next.label,
       canAct: !cancelled && next.role === session.role,
-      canPingArrival:
-        !cancelled && session.role === "driver" && driverArrivalPingAvailable(progress),
       canCancel:
         !cancelled &&
         session.role === "driver" &&
@@ -523,22 +604,29 @@ export async function updateFieldOrder(
     expectedVersion: number;
     idempotencyKey: string;
     location: FieldLocationEvidence | null;
+    completionOutcome?: "done" | "not_done" | null;
+    completionNote?: string | null;
   },
 ): Promise<FieldOrder> {
   const currentOrder = await getFieldOrder(session, orderId);
   if (!currentOrder) throw new Error("الطلب غير موجود أو غير مخصص لك");
-  if (action === "driver_arrived") {
-    // A side event, not part of the linear chain — validated on its own terms.
-    if (session.role !== "driver") {
-      throw new Error("هذه الخطوة تخص عضو الفريق الآخر");
+  const expected = nextFieldAction(currentOrder.progress);
+  if (expected.action !== action) throw new Error("هذه الخطوة غير متاحة الآن");
+  if (expected.role !== session.role) throw new Error("هذه الخطوة تخص عضو الفريق الآخر");
+
+  const completionNote = command.completionNote?.trim() || null;
+  if (action === "complete_order") {
+    if (
+      command.completionOutcome !== "done" &&
+      command.completionOutcome !== "not_done"
+    ) {
+      throw new Error("اختاري هل تم تنفيذ الخدمة أم لا");
     }
-    if (!driverArrivalPingAvailable(currentOrder.progress)) {
-      throw new Error("هذه الخطوة غير متاحة الآن");
+    if (completionNote && completionNote.length > 500) {
+      throw new Error("الملاحظة يجب ألا تزيد عن 500 حرف");
     }
-  } else {
-    const expected = nextFieldAction(currentOrder.progress);
-    if (expected.action !== action) throw new Error("هذه الخطوة غير متاحة الآن");
-    if (expected.role !== session.role) throw new Error("هذه الخطوة تخص عضو الفريق الآخر");
+  } else if (command.completionOutcome || completionNote) {
+    throw new Error("ملاحظة النتيجة متاحة عند إنهاء الخدمة فقط");
   }
 
   const result = await fieldOrderStepCommand({
@@ -552,6 +640,8 @@ export async function updateFieldOrder(
     rosterId: session.rosterId,
     action,
     location: command.location,
+    completionOutcome: command.completionOutcome ?? null,
+    completionNote,
   });
   const progress = result.progress as Record<string, unknown> | undefined;
   const actionTime =

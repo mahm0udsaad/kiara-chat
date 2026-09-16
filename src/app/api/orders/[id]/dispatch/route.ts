@@ -32,6 +32,7 @@ export async function POST(
   // A written note comes as JSON; a recorded one needs multipart so the audio
   // streams up instead of being inflated to base64 in the browser.
   let specialistId: string | undefined;
+  let secondSpecialistId: string | undefined;
   let driverId: string | undefined;
   let customerLocation: string | undefined;
   let specialistNote: string | undefined;
@@ -51,6 +52,7 @@ export async function POST(
       return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
     }
     specialistId = (form.get("specialistId") as string | null)?.trim();
+    secondSpecialistId = (form.get("secondSpecialistId") as string | null)?.trim() || undefined;
     driverId = (form.get("driverId") as string | null)?.trim();
     customerLocation = (form.get("customerLocation") as string | null)?.trim().slice(0, 500);
     specialistNote = (form.get("specialistNote") as string | null)?.trim().slice(0, 500);
@@ -100,6 +102,7 @@ export async function POST(
   } else {
     const body = await request.json().catch(() => ({}));
     specialistId = (body?.specialistId as string | undefined)?.trim();
+    secondSpecialistId = (body?.secondSpecialistId as string | undefined)?.trim() || undefined;
     driverId = (body?.driverId as string | undefined)?.trim();
     customerLocation = (body?.customerLocation as string | undefined)?.trim().slice(0, 500);
     specialistNote = (body?.specialistNote as string | undefined)?.trim().slice(0, 500);
@@ -121,6 +124,9 @@ export async function POST(
   }
   if (!specialistId) {
     return NextResponse.json({ error: "اختاري الأخصائية" }, { status: 400 });
+  }
+  if (secondSpecialistId === specialistId) {
+    return NextResponse.json({ error: "اختاري أخصائيتين مختلفتين" }, { status: 400 });
   }
   if (!driverId) {
     return NextResponse.json({ error: "اختاري السائق" }, { status: 400 });
@@ -147,6 +153,7 @@ export async function POST(
 
     const result = await dispatchBooking(id, {
       specialistId,
+      secondSpecialistId,
       driverId,
       customerLocation: customerLocation as string,
       specialistNote: specialistNote || undefined,

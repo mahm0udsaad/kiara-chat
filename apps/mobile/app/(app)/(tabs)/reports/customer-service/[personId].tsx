@@ -5,6 +5,11 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } 
 import { ErrorState } from "@/components/screen-state";
 import { PrimaryButton } from "@/components/primary-button";
 import { BulletList, Score } from "@/components/customer-analysis-view";
+import {
+  createReportDateSelection,
+  ReportDateRangeFilter,
+  type ReportDateSelection,
+} from "@/components/reports/report-date-range-filter";
 import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
@@ -26,6 +31,15 @@ const dateLabel = new Intl.DateTimeFormat(REPORT_LOCALE, {
 
 function one(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
+
+function initialSelection(from: string, to: string): ReportDateSelection {
+  const dayPattern = /^\d{4}-\d{2}-\d{2}$/;
+  const span = Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`);
+  if (dayPattern.test(from) && dayPattern.test(to) && span >= 0 && span <= 30 * 86_400_000) {
+    return { preset: "custom", from, to };
+  }
+  return createReportDateSelection("month");
 }
 
 function Metric({ icon, label, value }: { icon: IconName; label: string; value: number | string }) {
@@ -61,8 +75,8 @@ export default function CustomerServiceEmployeeReportScreen() {
   }>();
   const personId = one(params.personId);
   const fallbackName = one(params.name) || "موظفة خدمة العملاء";
-  const from = one(params.from);
-  const to = one(params.to);
+  const [range, setRange] = useState(() => initialSelection(one(params.from), one(params.to)));
+  const { from, to } = range;
   const startTime = one(params.startTime) || "08:00";
   const endTime = one(params.endTime) || "22:00";
   const bootstrap = useBootstrap();
@@ -93,6 +107,11 @@ export default function CustomerServiceEmployeeReportScreen() {
     startTime,
     endTime,
   );
+
+  function changeRange(next: ReportDateSelection) {
+    agentAnalysis.reset();
+    setRange(next);
+  }
 
   if (bootstrap.isSuccess && !bootstrap.data.capabilities.canViewReports) {
     return <Redirect href="/inbox" />;
@@ -138,6 +157,21 @@ export default function CustomerServiceEmployeeReportScreen() {
         }
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["5xl"], gap: spacing.lg }}
       >
+        <Card>
+          <View style={{ gap: spacing.xs }}>
+            <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>فترة التقرير</Text>
+            <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
+              كل الأرقام والمحادثات والتحليل أدناه تتبع الفترة المختارة.
+            </Text>
+          </View>
+          <ReportDateRangeFilter
+            value={range}
+            onChange={changeRange}
+            accessibilityLabel="الفترة الزمنية لتقرير خدمة العملاء"
+            testIDPrefix="customer-service-employee-period"
+          />
+        </Card>
+
         {report.isLoading ? <ActivityIndicator size="large" color={colors.brand} /> : null}
 
         {report.data && employee ? (

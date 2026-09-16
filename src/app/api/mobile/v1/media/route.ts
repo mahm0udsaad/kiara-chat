@@ -28,6 +28,7 @@ import {
   mobileServerError,
 } from "@/lib/mobile/http";
 import { WHATSAPP_MEDIA_BUCKET } from "@/lib/storage-media";
+import { ensureCafCompanion } from "@/lib/audio/voice-caf";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +39,11 @@ export async function GET(request: Request) {
   const auth = await authorizeMobileRequest(request);
   if (auth.response) return auth.response;
 
-  const path = new URL(request.url).searchParams.get("path") ?? "";
+  const params = new URL(request.url).searchParams;
+  const path = params.get("path") ?? "";
+  // iOS asks for `caf`: AVFoundation cannot demux the Ogg container WhatsApp
+  // sends every voice note in. See lib/audio/opus-caf.
+  const wantsCaf = params.get("format") === "caf";
   if (!path) {
     return mobileError(400, "MISSING_PATH", "path is required");
   }
@@ -58,14 +63,18 @@ export async function GET(request: Request) {
     if (!conversation) {
       return mobileError(404, "CONVERSATION_NOT_FOUND", "Conversation not found");
     }
+    // Falls back to the original when there is nothing to remux, so a caller
+    // that asks for CAF and gets an Ogg is never left with no audio at all.
+    const objectPath = (wantsCaf ? await ensureCafCompanion(path) : null) ?? path;
+
     const supabase = getAdminSupabaseClient();
     const { data, error } = await supabase.storage
       .from(WHATSAPP_MEDIA_BUCKET)
-      .createSignedUrl(path, TTL_SECONDS);
+      .createSignedUrl(objectPath, TTL_SECONDS);
     if (error || !data?.signedUrl) {
       // Deliberately not `error.message`: that is where "Object not found"
       // came from, in English, inside an Arabic conversation.
-      console.error("[media] sign failed", { path, error });
+      console.error("[media] sign failed", { path: objectPath, error });
       return mobileError(502, "SIGN_FAILED", "تعذّر تحميل الملف");
     }
     return mobileData({ url: data.signedUrl, expiresIn: TTL_SECONDS });

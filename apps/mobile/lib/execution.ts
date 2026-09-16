@@ -8,9 +8,8 @@ import type {
 /**
  * Reading an order's execution the way the office needs it.
  *
- * The field app advances a five-link chain — confirm_ride → confirm_pickup →
- * start_service → complete_order → driver_return — and the driver's
- * "I've reached the specialist" ping sits beside it. The office screens only
+ * The field app advances a six-link chain — confirm_ride → driver_arrived →
+ * confirm_pickup → start_service → complete_order → driver_return. The office screens only
  * ever ask two things of that chain: how far has it got, and who is holding it
  * up. Both answers live here so the orders list, the order detail and the
  * status screen never disagree about a visit.
@@ -23,6 +22,7 @@ import type {
 
 export type ExecutionStepId =
   | "confirm_ride"
+  | "driver_arrived"
   | "confirm_pickup"
   | "start_service"
   | "complete_order"
@@ -93,6 +93,7 @@ const STAGE_TONE: Record<ExecutionStage, ExecutionState["tone"]> = {
 /** Wording matches the field app's own buttons, so both sides say the same thing. */
 const STEP_LABEL: Record<ExecutionStepId, string> = {
   confirm_ride: "تأكيد الرحلة",
+  driver_arrived: "الوصول للأخصائية",
   confirm_pickup: "ركوب الأخصائية",
   start_service: "بدء الخدمة",
   complete_order: "إنهاء الخدمة",
@@ -101,6 +102,7 @@ const STEP_LABEL: Record<ExecutionStepId, string> = {
 
 const STEP_ACTION_LABEL: Record<ExecutionStepId, string> = {
   confirm_ride: "تأكيد الرحلة والانطلاق",
+  driver_arrived: "الوصول لمقر الأخصائية",
   confirm_pickup: "ركوب الأخصائية مع السائق",
   start_service: "بدء الخدمة عند العميلة",
   complete_order: "إنهاء الخدمة والمغادرة",
@@ -109,6 +111,7 @@ const STEP_ACTION_LABEL: Record<ExecutionStepId, string> = {
 
 const STEP_OWNER: Record<ExecutionStepId, FieldSessionRole> = {
   confirm_ride: "driver",
+  driver_arrived: "driver",
   confirm_pickup: "specialist",
   start_service: "specialist",
   complete_order: "specialist",
@@ -117,6 +120,7 @@ const STEP_OWNER: Record<ExecutionStepId, FieldSessionRole> = {
 
 const STEP_ORDER: ExecutionStepId[] = [
   "confirm_ride",
+  "driver_arrived",
   "confirm_pickup",
   "start_service",
   "complete_order",
@@ -139,10 +143,12 @@ function progressFromSessions(
   if (!driver?.started_at && !specialist?.started_at) return null;
   return {
     driverConfirmedAt: driver?.started_at ?? null,
-    driverArrivedAt: null,
+    driverArrivedAt: specialist?.started_at ?? null,
     specialistPickupAt: specialist?.started_at ?? null,
     serviceStartedAt: specialist?.started_at ?? null,
     completedAt: specialist?.completed_at ?? null,
+    completionOutcome: specialist?.completed_at ? "done" : null,
+    completionNote: null,
     driverReturnedAt: driver?.completed_at ?? null,
     lastActivityAt:
       specialist?.completed_at ??
@@ -162,6 +168,8 @@ function stampOf(
   switch (step) {
     case "confirm_ride":
       return progress.driverConfirmedAt;
+    case "driver_arrived":
+      return progress.driverArrivedAt;
     case "confirm_pickup":
       return progress.specialistPickupAt;
     case "start_service":
@@ -181,8 +189,10 @@ function stageOf(
   switch (current) {
     case "confirm_ride":
       return "awaiting_driver";
+    case "driver_arrived":
+      return "driver_on_the_way";
     case "confirm_pickup":
-      return progress.driverArrivedAt ? "driver_waiting" : "driver_on_the_way";
+      return "driver_waiting";
     case "start_service":
       return "on_the_way_to_customer";
     case "complete_order":

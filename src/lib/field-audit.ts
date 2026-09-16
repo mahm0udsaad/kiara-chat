@@ -156,6 +156,13 @@ export async function getFieldAudit(orderId: string): Promise<FieldAudit | null>
     specialistPickupAt: (row.specialist_pickup_at as string | null) ?? null,
     serviceStartedAt: (row.service_started_at as string | null) ?? null,
     completedAt: (row.completed_at as string | null) ?? null,
+    completionOutcome:
+      row.completion_outcome === "not_done"
+        ? "not_done"
+        : row.completion_outcome === "done" || row.completed_at
+          ? "done"
+          : null,
+    completionNote: (row.completion_note as string | null) ?? null,
     driverReturnedAt: (row.driver_returned_at as string | null) ?? null,
     lastActivityAt: (row.last_activity_at as string | null) ?? "",
     lastReminderAt: (row.last_reminder_at as string | null) ?? null,

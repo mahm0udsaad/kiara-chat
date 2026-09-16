@@ -5,5 +5,5 @@ export const dynamic = "force-dynamic";
 
 export default async function BroadcastPage() {
   await requireAdmin();
-  return <BroadcastClient templateKey="number_notice" />;
+  return <BroadcastClient initialTemplateKey="open_conversation" />;
 }

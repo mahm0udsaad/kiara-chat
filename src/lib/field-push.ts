@@ -273,23 +273,25 @@ export async function fieldStaffHasPushTokens(
 export async function notifyFieldOrderAssigned(input: {
   orderId: string;
   customerName: string | null;
-  specialistId: string;
+  specialistIds: string[];
   driverId: string;
   /** A re-nudge from the orders screen, not the first time they are told. */
   repeat?: boolean;
 }): Promise<FieldPushDeliverySummary> {
   const [specialistTokens, driverTokens] = await Promise.all([
-    activeTokensForRoster("specialist", [input.specialistId]),
+    activeTokensForRoster("specialist", input.specialistIds),
     activeTokensForRoster("driver", [input.driverId]),
   ]);
   const name = input.customerName || "العميلة";
   const data = { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` };
   const messages: PushMessage[] = [
-    ...(specialistTokens.get(input.specialistId) ?? []).map((to) => fieldMessage(to, {
+    ...input.specialistIds.flatMap((specialistId) =>
+      (specialistTokens.get(specialistId) ?? []).map((to) => fieldMessage(to, {
       title: input.repeat ? "تذكير بطلبكِ" : "طلب جديد لكِ",
       body: `افتحي تفاصيل طلب ${name} وتابعي خطوات التنفيذ.`,
       data,
-    })),
+      })),
+    ),
     ...(driverTokens.get(input.driverId) ?? []).map((to) => fieldMessage(to, {
       title: input.repeat ? "تذكير برحلتك" : "رحلة جديدة لك",
       body: `افتح تفاصيل طلب ${name} وأكّد الرحلة.`,
@@ -300,43 +302,55 @@ export async function notifyFieldOrderAssigned(input: {
 }
 
 /**
- * The driver's non-blocking "I've arrived at the specialist" ping. Notifies
- * only the specialist so she knows her ride is waiting; it does not advance the
- * step machine, so it is sent instead of — not alongside — the next-step nudge.
+ * The driver's required "I've arrived at the specialist" step. Notifies only
+ * the specialist so she knows her ride is waiting and can confirm pickup.
  */
 export async function notifyFieldDriverArrived(input: {
   orderId: string;
   specialistId: string | null;
+  secondSpecialistId?: string | null;
   customerName: string | null;
 }): Promise<FieldPushDeliverySummary> {
-  if (!input.specialistId) return sendExpoMessages([]);
-  const tokens = await activeTokensForRoster("specialist", [input.specialistId]);
+  const specialistIds = [input.specialistId, input.secondSpecialistId].filter(
+    (value): value is string => Boolean(value),
+  );
+  if (!specialistIds.length) return sendExpoMessages([]);
+  const tokens = await activeTokensForRoster("specialist", specialistIds);
   const name = input.customerName || "العميلة";
   return sendExpoMessages(
-    (tokens.get(input.specialistId) ?? []).map((to) => fieldMessage(to, {
+    specialistIds.flatMap((specialistId) =>
+      (tokens.get(specialistId) ?? []).map((to) => fieldMessage(to, {
       title: "وصل السائق",
       body: `السائق في انتظاركِ للتوجه إلى ${name}.`,
       data: { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` },
-    }))
+      })),
+    )
   );
 }
 
 export async function notifyNextFieldStep(input: {
   orderId: string;
   specialistId: string | null;
+  secondSpecialistId?: string | null;
   driverId: string | null;
   progress: FieldOrderProgress;
 }): Promise<FieldPushDeliverySummary> {
   const next = nextFieldAction(input.progress);
-  const rosterId = next.role === "specialist" ? input.specialistId : input.driverId;
-  if (!next.role || !next.label || !rosterId) return sendExpoMessages([]);
-  const tokens = await activeTokensForRoster(next.role, [rosterId]);
+  const rosterIds = next.role === "specialist"
+    ? [input.specialistId, input.secondSpecialistId].filter(
+        (value): value is string => Boolean(value),
+      )
+    : input.driverId ? [input.driverId] : [];
+  if (!next.role || !next.label || !rosterIds.length) return sendExpoMessages([]);
+  const tokens = await activeTokensForRoster(next.role, rosterIds);
   return sendExpoMessages(
-    (tokens.get(rosterId) ?? []).map((to) => fieldMessage(to, {
+    rosterIds.flatMap((rosterId) =>
+      (tokens.get(rosterId) ?? []).map((to) => fieldMessage(to, {
       title: "الخطوة التالية جاهزة",
       body: next.label!,
       data: { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` },
-    }))
+      })),
+    )
   );
 }
 
@@ -426,6 +440,7 @@ export async function notifyFieldOrderUpdated(input: {
   orderId: string;
   customerName: string | null;
   specialistId: string | null;
+  secondSpecialistId?: string | null;
   driverId: string | null;
   changesSummary?: string;
   /**
@@ -435,7 +450,9 @@ export async function notifyFieldOrderUpdated(input: {
    */
   specialistCopy?: { title: string; body: string };
 }): Promise<FieldPushDeliverySummary> {
-  const specialistIds = input.specialistId ? [input.specialistId] : [];
+  const specialistIds = [input.specialistId, input.secondSpecialistId].filter(
+    (value): value is string => Boolean(value),
+  );
   const driverIds = input.driverId ? [input.driverId] : [];
   const [specialistTokens, driverTokens] = await Promise.all([
     specialistIds.length ? activeTokensForRoster("specialist", specialistIds) : Promise.resolve(new Map<string, string[]>()),
@@ -445,12 +462,12 @@ export async function notifyFieldOrderUpdated(input: {
   const bodyText = input.changesSummary || `تم تعديل تفاصيل طلب ${name}. يرجى المراجعة.`;
   const data = { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` };
   const messages: PushMessage[] = [
-    ...(input.specialistId ? (specialistTokens.get(input.specialistId) ?? []) : []).map((to) =>
-      fieldMessage(to, {
+    ...specialistIds.flatMap((specialistId) =>
+      (specialistTokens.get(specialistId) ?? []).map((to) => fieldMessage(to, {
         title: input.specialistCopy?.title ?? "تعديل في طلبكِ",
         body: input.specialistCopy?.body ?? bodyText,
         data,
-      }),
+      })),
     ),
     ...(input.driverId ? (driverTokens.get(input.driverId) ?? []) : []).map((to) =>
       fieldMessage(to, {
@@ -467,6 +484,7 @@ export async function notifyFieldOrderCancelled(input: {
   orderId: string;
   customerName: string | null;
   specialistId: string | null;
+  secondSpecialistId?: string | null;
   driverId: string | null;
   /**
    * Copy already localised to the specialist's language. When omitted the
@@ -476,7 +494,9 @@ export async function notifyFieldOrderCancelled(input: {
   specialistCopy?: { title: string; body: string };
   driverCopy?: { title: string; body: string };
 }): Promise<FieldPushDeliverySummary> {
-  const specialistIds = input.specialistId ? [input.specialistId] : [];
+  const specialistIds = [input.specialistId, input.secondSpecialistId].filter(
+    (value): value is string => Boolean(value),
+  );
   const driverIds = input.driverId ? [input.driverId] : [];
   const [specialistTokens, driverTokens] = await Promise.all([
     specialistIds.length ? activeTokensForRoster("specialist", specialistIds) : Promise.resolve(new Map<string, string[]>()),
@@ -485,12 +505,12 @@ export async function notifyFieldOrderCancelled(input: {
   const name = input.customerName || "العميلة";
   const data = { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` };
   const messages: PushMessage[] = [
-    ...(input.specialistId ? (specialistTokens.get(input.specialistId) ?? []) : []).map((to) =>
-      fieldMessage(to, {
+    ...specialistIds.flatMap((specialistId) =>
+      (specialistTokens.get(specialistId) ?? []).map((to) => fieldMessage(to, {
         title: input.specialistCopy?.title ?? "إلغاء الطلب",
         body: input.specialistCopy?.body ?? `تم إلغاء طلب ${name}.`,
         data,
-      }),
+      })),
     ),
     ...(input.driverId ? (driverTokens.get(input.driverId) ?? []) : []).map((to) =>
       fieldMessage(to, {

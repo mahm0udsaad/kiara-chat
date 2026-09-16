@@ -26,7 +26,8 @@ function usableCustomerName(
 export async function findOrCreateConversation(
   customerPhone: string,
   /** The sender's WhatsApp display name, when the engine forwarded one. */
-  customerName?: string | null
+  customerName?: string | null,
+  startedAt?: string,
 ): Promise<{ id: string; is_new: boolean }> {
   const canonical = canonicalPhone(customerPhone);
   if (!canonical) throw new Error("Invalid customer phone");
@@ -54,7 +55,7 @@ export async function findOrCreateConversation(
     return { id: existing.id as string, is_new: false };
   }
 
-  const now = new Date().toISOString();
+  const now = startedAt ?? new Date().toISOString();
   const { data: created, error } = await admin
     .from("conversations")
     .insert({
@@ -87,7 +88,8 @@ export async function findOrCreateConversation(
  */
 export async function findOrCreateGroupConversation(
   chatJid: string,
-  subject?: string | null
+  subject?: string | null,
+  startedAt?: string,
 ): Promise<{ id: string; is_new: boolean }> {
   const admin = getAdminSupabaseClient();
   const name = (subject ?? "").trim().slice(0, 80) || null;
@@ -119,7 +121,7 @@ export async function findOrCreateGroupConversation(
     return { id: existing.id as string, is_new: false };
   }
 
-  const now = new Date().toISOString();
+  const now = startedAt ?? new Date().toISOString();
   const { data: created, error } = await admin
     .from("conversations")
     .insert({
@@ -256,21 +258,27 @@ export async function saveMessage(params: {
 /** Bump activity after a message lands. Increments unread for inbound. */
 export async function bumpConversationActivity(
   conversationId: string,
-  opts: { inbound: boolean }
+  opts: { inbound: boolean; occurredAt?: string; incrementUnread?: boolean }
 ): Promise<void> {
   const admin = getAdminSupabaseClient();
-  const now = new Date().toISOString();
-  const patch: Record<string, unknown> = { last_message_at: now };
+  const now = opts.occurredAt ?? new Date().toISOString();
+  const { data, error } = await admin
+    .from("conversations")
+    .select("last_message_at, last_inbound_at, unread_count")
+    .eq("id", conversationId)
+    .maybeSingle();
+  if (error) throw new Error(`Unable to read conversation activity: ${error.message}`);
+  const patch: Record<string, unknown> = {};
+  if (!data?.last_message_at || Date.parse(now) > Date.parse(data.last_message_at)) patch.last_message_at = now;
   if (opts.inbound) {
-    patch.last_inbound_at = now;
-    const { data } = await admin
-      .from("conversations")
-      .select("unread_count")
-      .eq("id", conversationId)
-      .maybeSingle();
-    patch.unread_count = ((data?.unread_count as number) ?? 0) + 1;
+    if (!data?.last_inbound_at || Date.parse(now) > Date.parse(data.last_inbound_at)) patch.last_inbound_at = now;
+    if (opts.incrementUnread !== false) {
+      patch.unread_count = ((data?.unread_count as number) ?? 0) + 1;
+    }
   }
-  await admin.from("conversations").update(patch).eq("id", conversationId);
+  if (!Object.keys(patch).length) return;
+  const { error: updateError } = await admin.from("conversations").update(patch).eq("id", conversationId);
+  if (updateError) throw new Error(`Unable to update conversation activity: ${updateError.message}`);
 }
 
 /**
@@ -305,7 +313,7 @@ export async function markHandledOnWhatsApp(
  */
 export async function rememberConversationTransport(
   conversationId: string,
-  transport: "openwa" | "twilio",
+  transport: "openwa" | "twilio" | "meta",
   waNumber?: string | null,
 ): Promise<void> {
   const admin = getAdminSupabaseClient();

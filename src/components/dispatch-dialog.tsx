@@ -135,6 +135,7 @@ export function DispatchDialog({
   const [specialists, setSpecialists] = useState<Specialist[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [specialistId, setSpecialistId] = useState("");
+  const [secondSpecialistId, setSecondSpecialistId] = useState("");
   const [pendingSpecialistId, setPendingSpecialistId] = useState<string | null>(null);
   const [driverId, setDriverId] = useState("");
   const [tripType, setTripType] = useState<TripType>(order.trip_type);
@@ -166,6 +167,7 @@ export function DispatchDialog({
     sent: boolean;
     /** Null when she has no number and only the app copy was made. */
     specialistSent: boolean | null;
+    secondSpecialistSent: boolean | null;
     notified: boolean;
   } | null>(null);
 
@@ -189,12 +191,18 @@ export function DispatchDialog({
           (item) => item.id === nextSpecialistId
         );
         setSpecialistId(nextSpecialistId);
+        setSecondSpecialistId(order.second_specialist_id || "");
         setDriverId(order.driver_id || options.drivers[0]?.id || "");
         setTripType(order.trip_type);
         setDriverMessage(
           initialDriverMessage(
             order,
-            nextSpecialist?.full_name ?? null,
+            [
+              nextSpecialist?.full_name,
+              options.specialists.find(
+                (item) => item.id === order.second_specialist_id
+              )?.full_name,
+            ].filter(Boolean).join(" و ") || null,
             order.trip_type,
             isLocationUnset(order.customer_location) ? "" : order.customer_location
           )
@@ -215,6 +223,13 @@ export function DispatchDialog({
 
   const locationMissing = isLocationUnset(customerLocation);
   const selectedSpecialist = specialists.find((item) => item.id === specialistId);
+  const selectedSecondSpecialist = specialists.find(
+    (item) => item.id === secondSpecialistId
+  );
+  const selectedSpecialistNames = [
+    selectedSpecialist?.full_name,
+    selectedSecondSpecialist?.full_name,
+  ].filter(Boolean).join(" و ");
   const selectedDriver = drivers.find((item) => item.id === driverId);
   const language =
     nationalityOf(selectedSpecialist?.nationality)?.languageLabel ?? "العربية";
@@ -231,10 +246,16 @@ export function DispatchDialog({
     (value: string) => {
       const specialist = specialists.find((item) => item.id === value);
       setSpecialistId(value);
+      if (value === secondSpecialistId) setSecondSpecialistId("");
       setDriverMessage(
         initialDriverMessage(
           order,
-          specialist?.full_name ?? null,
+          [
+            specialist?.full_name,
+            value === secondSpecialistId
+              ? null
+              : selectedSecondSpecialist?.full_name,
+          ].filter(Boolean).join(" و ") || null,
           tripType,
           customerLocation
         )
@@ -242,7 +263,24 @@ export function DispatchDialog({
       setConfirmed(false);
       setReviewing(false);
     },
-    [customerLocation, order, specialists, tripType]
+    [customerLocation, order, secondSpecialistId, selectedSecondSpecialist?.full_name, specialists, tripType]
+  );
+  const applySecondSpecialist = useCallback(
+    (value: string) => {
+      setSecondSpecialistId(value === "none" ? "" : value);
+      const second = specialists.find((item) => item.id === value);
+      setDriverMessage(
+        initialDriverMessage(
+          order,
+          [selectedSpecialist?.full_name, second?.full_name].filter(Boolean).join(" و ") || null,
+          tripType,
+          customerLocation
+        )
+      );
+      setConfirmed(false);
+      setReviewing(false);
+    },
+    [customerLocation, order, selectedSpecialist?.full_name, specialists, tripType]
   );
   const requestSpecialistChange = useCallback(
     (value: string) => {
@@ -256,6 +294,7 @@ export function DispatchDialog({
   );
   const reset = useCallback(() => {
     setSpecialistId("");
+    setSecondSpecialistId("");
     setPendingSpecialistId(null);
     setDriverId("");
     setTripType(order.trip_type);
@@ -312,6 +351,7 @@ export function DispatchDialog({
       if (voiceFile || photoFile) {
         const form = new FormData();
         form.append("specialistId", specialistId);
+        if (secondSpecialistId) form.append("secondSpecialistId", secondSpecialistId);
         form.append("driverId", driverId);
         form.append("tripType", tripType);
         form.append("customerLocation", customerLocation.trim());
@@ -327,6 +367,7 @@ export function DispatchDialog({
         headers = { "Content-Type": "application/json" };
         body = JSON.stringify({
           specialistId,
+          secondSpecialistId: secondSpecialistId || null,
           driverId,
           tripType,
           customerLocation: customerLocation.trim(),
@@ -352,6 +393,10 @@ export function DispatchDialog({
         sent: Boolean(data.sent),
         specialistSent:
           typeof data.specialistSent === "boolean" ? data.specialistSent : null,
+        secondSpecialistSent:
+          typeof data.secondSpecialistSent === "boolean"
+            ? data.secondSpecialistSent
+            : null,
         notified: Boolean(data.notified),
       });
     } catch {
@@ -372,6 +417,7 @@ export function DispatchDialog({
     reviewing,
     specialistMessage,
     specialistId,
+    secondSpecialistId,
     specialistNote,
     tripType,
     voiceNote,
@@ -391,6 +437,7 @@ export function DispatchDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           specialistId,
+          secondSpecialistId: secondSpecialistId || null,
           driverId,
           tripType,
           customerLocation: customerLocation.trim(),
@@ -422,6 +469,7 @@ export function DispatchDialog({
     noteMode,
     order.id,
     specialistId,
+    secondSpecialistId,
     specialistNote,
     tripType,
   ]);
@@ -467,6 +515,15 @@ export function DispatchDialog({
                 <AlertTitle>لم تصل نسخة واتساب للأخصائية</AlertTitle>
                 <AlertDescription>
                   الطلب وملاحظتها ظاهران في تطبيقها؛ راجعي رقمها وربط واتساب.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {result.secondSpecialistSent === false ? (
+              <Alert variant="destructive">
+                <AlertTriangle />
+                <AlertTitle>لم تصل نسخة واتساب للأخصائية الثانية</AlertTitle>
+                <AlertDescription>
+                  الطلب ظاهر في تطبيقها، لكن رسالة واتساب لم تُرسل.
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -521,7 +578,7 @@ export function DispatchDialog({
                     setDriverMessage(
                       initialDriverMessage(
                         order,
-                        selectedSpecialist?.full_name ?? null,
+                        selectedSpecialistNames || null,
                         tripType,
                         event.target.value
                       )
@@ -613,6 +670,44 @@ export function DispatchDialog({
                 </FieldDescription>
               </Field>
 
+              <Field>
+                <FieldLabel htmlFor={`dispatch-second-specialist-${order.id}`}>
+                  الأخصائية الثانية (اختياري)
+                </FieldLabel>
+                <Select
+                  value={secondSpecialistId || "none"}
+                  onValueChange={applySecondSpecialist}
+                >
+                  <SelectTrigger
+                    id={`dispatch-second-specialist-${order.id}`}
+                    className="min-h-11 w-full"
+                    disabled={locationMissing || !specialistId}
+                  >
+                    <SelectValue placeholder="اختاري أخصائية ثانية" />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    <SelectGroup>
+                      <SelectItem value="none">بدون أخصائية ثانية</SelectItem>
+                      {specialists
+                        .filter((specialist) => specialist.id !== specialistId)
+                        .map((specialist) => (
+                          <SelectItem key={specialist.id} value={specialist.id}>
+                            {specialist.full_name}
+                            {specialist.phone
+                              ? ` · ${isolateLtr(specialist.phone)}`
+                              : " · بدون رقم"}
+                          </SelectItem>
+                        ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  {selectedSecondSpecialist
+                    ? `سيظهر الطلب للأخصائيتين ${selectedSpecialistNames}، وستصل لهما نفس الرسالة التي ستراجعينها.`
+                    : "أضيفي أخصائية ثانية عندما تنفذان الطلب معًا."}
+                </FieldDescription>
+              </Field>
+
               {preferredSpecialistName && selectedSpecialist && !specialistMatchesRekaz ? (
                 <Alert variant="destructive">
                   <AlertTriangle />
@@ -684,7 +779,7 @@ export function DispatchDialog({
                     setDriverMessage(
                       initialDriverMessage(
                         order,
-                        selectedSpecialist?.full_name ?? null,
+                        selectedSpecialistNames || null,
                         nextTripType,
                         customerLocation
                       )
@@ -791,7 +886,8 @@ export function DispatchDialog({
 
                   <Field data-invalid={!specialistMessage.trim() && Boolean(error)}>
                     <FieldLabel htmlFor={`final-specialist-message-${order.id}`}>
-                      ملاحظة الأخصائية النهائية · {previewLanguage}
+                      {secondSpecialistId ? "ملاحظة الأخصائيتين النهائية" : "ملاحظة الأخصائية النهائية"}
+                      {" · "}{previewLanguage}
                     </FieldLabel>
                     <Textarea
                       id={`final-specialist-message-${order.id}`}

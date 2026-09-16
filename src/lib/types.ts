@@ -146,8 +146,8 @@ export interface FieldSessionState {
  * Distinct from {@link FieldSessionState}, which is the older two-timestamp
  * mirror kept on the conversation for the magic-link flow. This is the real
  * chain the driver and specialist advance through in the app:
- *   confirm_ride → confirm_pickup → start_service → complete_order →
- *   driver_return, with driver_arrived sitting beside it as a side event.
+ *   confirm_ride → driver_arrived → confirm_pickup → start_service →
+ *   complete_order → driver_return.
  */
 export interface FieldOrderProgressState {
   driverConfirmedAt: string | null;
@@ -155,6 +155,10 @@ export interface FieldOrderProgressState {
   specialistPickupAt: string | null;
   serviceStartedAt: string | null;
   completedAt: string | null;
+  /** What the specialist reported when closing the service. */
+  completionOutcome: "done" | "not_done" | null;
+  /** Optional close-out context shown to the owner in reports. */
+  completionNote: string | null;
   driverReturnedAt: string | null;
   lastActivityAt: string;
   lastReminderAt: string | null;
@@ -165,8 +169,7 @@ export interface FieldOrderProgressState {
  * How far the driver goes. "round_trip" is the full there-and-back and is what
  * a visit defaults to, because that is the normal shape of the work; "one_way"
  * is the exception, where he drops her off and does not bring her back on this
- * order. Each is priced separately (see DispatchSettings), so the default is
- * also a pricing decision: a round trip bills the full-trip price.
+ * order. The trip cost is entered separately by the owner based on distance.
  */
 export type TripType = "one_way" | "round_trip";
 
@@ -176,13 +179,15 @@ export interface DriverOrder {
   id: string;
   conversation_id: string;
   specialist_id: string | null;
+  /** Optional second specialist assigned to the same visit. */
+  second_specialist_id?: string | null;
   driver_id: string | null;
   arrival_at: string; // ISO
   customer_location: string;
   customer_phone: string;
   duration_minutes: number;
   trip_type: TripType;
-  /** Snapshotted from DispatchSettings at creation; null until prices are set. */
+  /** Owner-entered trip cost based on distance; null until Hanan records it. */
   price: number | null;
   status: DriverOrderStatus;
   sent_at: string | null;
@@ -225,6 +230,7 @@ export interface DriverOrder {
  */
 export interface DriverOrderRow extends DriverOrder {
   specialist_name: string | null;
+  second_specialist_name?: string | null;
   driver_name: string | null;
   driver_phone: string | null;
   customer_name: string | null;
@@ -253,4 +259,7 @@ export interface MediaSlot {
   original_filename?: string | null;
   delivery_status?: string;
   caption?: string | null;
+  /** Provider URL kept when the ingest fetch failed, so it can be retried. */
+  source_url?: string | null;
+  fetch_error?: string | null;
 }

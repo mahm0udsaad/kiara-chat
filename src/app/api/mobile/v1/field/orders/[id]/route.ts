@@ -52,6 +52,11 @@ export async function POST(
   }
   const expectedVersion = Number(body?.expectedVersion);
   const idempotencyKey = String(body?.idempotencyKey ?? "").trim();
+  const completionOutcome =
+    body?.completionOutcome === "done" || body?.completionOutcome === "not_done"
+      ? body.completionOutcome
+      : null;
+  const completionNote = String(body?.completionNote ?? "").trim() || null;
   if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
     return mobileError(
       400,
@@ -66,6 +71,20 @@ export async function POST(
       "idempotencyKey must be a UUID",
     );
   }
+  if (action === "complete_order" && !completionOutcome) {
+    return mobileError(
+      400,
+      "FIELD_COMPLETION_OUTCOME_REQUIRED",
+      "Choose whether the service was completed",
+    );
+  }
+  if (completionNote && completionNote.length > 500) {
+    return mobileError(
+      400,
+      "FIELD_COMPLETION_NOTE_INVALID",
+      "Completion note must be 500 characters or fewer",
+    );
+  }
   const { id } = await params;
   try {
     const order = await updateFieldOrder(auth.session, id, action, {
@@ -75,14 +94,17 @@ export async function POST(
         body?.location && typeof body.location === "object"
           ? body.location
           : null,
+      completionOutcome,
+      completionNote,
     });
     try {
       if (action === "driver_arrived") {
-        // A side ping, not a step advance: tell the specialist her ride is here
-        // rather than nudging her with the generic next-step reminder.
+        // The required arrival step hands the order to the specialist. Use the
+        // more useful "your ride is here" notification for that hand-off.
         const delivery = await notifyFieldDriverArrived({
           orderId: order.id,
           specialistId: order.specialistId,
+          secondSpecialistId: order.secondSpecialistId,
           customerName: order.customerName,
         });
         if (delivery.failed) {
@@ -92,6 +114,7 @@ export async function POST(
         const delivery = await notifyNextFieldStep({
           orderId: order.id,
           specialistId: order.specialistId,
+          secondSpecialistId: order.secondSpecialistId,
           driverId: order.driverId,
           progress: order.progress,
         });

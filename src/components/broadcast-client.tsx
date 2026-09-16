@@ -1,7 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Send, Square } from "lucide-react";
+import {
+  AlertTriangle,
+  BarChart3,
+  CheckCircle2,
+  ChevronDown,
+  FileText,
+  Loader2,
+  Megaphone,
+  RefreshCw,
+  Send,
+  Square,
+  Users,
+} from "lucide-react";
+import { BroadcastAnalyticsView } from "@/components/broadcast-analytics-view";
 
 type Segment = "all" | "week" | "month" | "upcoming" | "dormant";
 
@@ -11,6 +24,24 @@ const SEGMENTS: { key: Segment; label: string; hint: string }[] = [
   { key: "month", label: "حجزوا هذا الشهر", hint: "آخر حجز خلال ٣٠ يومًا" },
   { key: "upcoming", label: "لديهم حجز قادم", hint: "موعد قادم لم يحن بعد" },
   { key: "dormant", label: "بدون حجز حديث", hint: "لا حجز في الفترة المسجّلة" },
+];
+
+const TEMPLATE_OPTIONS = [
+  {
+    key: "open_conversation",
+    label: "open_conversation (تنويه الرقم)",
+    desc: "تنبيه لحفظ رقم الواتساب الخاص بكيارا سبا",
+  },
+  {
+    key: "conversation_opener",
+    label: "بدء محادثة (conversation_opener)",
+    desc: "افتتاحية المحادثة والترحيب بالاسم",
+  },
+  {
+    key: "number_notice",
+    label: "تنويه الرقم (number_notice)",
+    desc: "رسالة توجيهية لحفظ رقم كيارا الجديد",
+  },
 ];
 
 interface Status {
@@ -36,7 +67,9 @@ interface DrainResult {
   lastError: string | null;
 }
 
-export function BroadcastClient({ templateKey }: { templateKey: string }) {
+export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { initialTemplateKey?: string }) {
+  const [activeTemplate, setActiveTemplate] = useState<string>(initialTemplateKey);
+  const [activeTab, setActiveTab] = useState<"analytics" | "send">("analytics");
   const [segment, setSegment] = useState<Segment>("all");
   const [status, setStatus] = useState<Status | null>(null);
   const [running, setRunning] = useState(false);
@@ -46,7 +79,7 @@ export function BroadcastClient({ templateKey }: { templateKey: string }) {
   const runningRef = useRef(false);
 
   const load = useCallback(
-    async (seg: Segment) => {
+    async (templateKey: string, seg: Segment) => {
       try {
         const res = await fetch(`/api/broadcasts/${templateKey}?segment=${seg}`);
         if (res.ok) setStatus(await res.json());
@@ -54,20 +87,19 @@ export function BroadcastClient({ templateKey }: { templateKey: string }) {
         /* transient */
       }
     },
-    [templateKey],
+    [],
   );
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load(segment);
-  }, [load, segment]);
+    void load(activeTemplate, segment);
+  }, [load, activeTemplate, segment]);
 
   const sync = useCallback(async () => {
     setSyncing(true);
     setError(null);
     setNote(null);
     try {
-      const res = await fetch(`/api/broadcasts/${templateKey}`, {
+      const res = await fetch(`/api/broadcasts/${activeTemplate}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "sync", segment }),
@@ -83,7 +115,7 @@ export function BroadcastClient({ templateKey }: { templateKey: string }) {
     } finally {
       setSyncing(false);
     }
-  }, [templateKey, segment]);
+  }, [activeTemplate, segment]);
 
   const stop = useCallback(() => {
     runningRef.current = false;
@@ -99,7 +131,7 @@ export function BroadcastClient({ templateKey }: { templateKey: string }) {
     while (runningRef.current) {
       let result: DrainResult;
       try {
-        const res = await fetch(`/api/broadcasts/${templateKey}`, {
+        const res = await fetch(`/api/broadcasts/${activeTemplate}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ segment }),
@@ -137,141 +169,201 @@ export function BroadcastClient({ templateKey }: { templateKey: string }) {
     }
     runningRef.current = false;
     setRunning(false);
-  }, [templateKey, segment]);
+  }, [activeTemplate, segment]);
 
   const pct = status && status.total ? Math.round((status.sent / status.total) * 100) : 0;
   const counts = status?.segmentCounts;
 
   return (
-    <div className="dashboard-page max-w-2xl">
+    <div className="dashboard-page max-w-4xl">
+      {/* Header */}
       <div className="dashboard-page-header">
         <div>
-          <h1>إرسال جماعي — تنويه الرقم</h1>
+          <h1 className="flex items-center gap-2">
+            <Megaphone className="size-6 text-[var(--brand)] inline-block" />
+            <span>حملات وإرسال الرسائل المعتمدة</span>
+          </h1>
           <p>
-            اختاري فئة العملاء ثم أرسلي القالب المعتمد. يُرسل على دفعات، ويحترم
-            الحد اليومي، ويمكن إيقافه ومتابعته في أي وقت.
+            تتبع أداء الحملات ومعرفة من شاهد الرسالة (Seen) ومن أرسلت ردًا لقياس مدى نجاح الحملة، مع إمكانية التحكم والإرسال على دفعات.
           </p>
+        </div>
+
+        {/* Template Selector */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-muted-foreground whitespace-nowrap">
+            القالب:
+          </label>
+          <select
+            value={activeTemplate}
+            onChange={(e) => setActiveTemplate(e.target.value)}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 shadow-2xs focus:border-[var(--brand)] focus:outline-hidden"
+          >
+            {TEMPLATE_OPTIONS.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.label}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
-      {!status ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" /> جارٍ التحميل…
-        </div>
-      ) : (
-        <div className="flex flex-col gap-4">
-          {!status.approvedConfigured && (
-            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800">
-              <AlertTriangle className="mt-0.5 size-5 shrink-0" />
-              <p className="text-sm">
-                القالب غير جاهز للإرسال بعد. يجب اعتماده من واتساب أولًا.
-              </p>
+      {/* Main Tabs (Analytics & Results vs. Send & Control) */}
+      <div className="mb-6 flex items-center border-b border-slate-200">
+        <button
+          type="button"
+          onClick={() => setActiveTab("analytics")}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-bold transition ${
+            activeTab === "analytics"
+              ? "border-[var(--brand)] text-[var(--brand)]"
+              : "border-transparent text-muted-foreground hover:text-slate-900"
+          }`}
+        >
+          <BarChart3 className="size-4" />
+          <span>النتائج وتفاعل العميلات (Seen & Replies)</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("send")}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-bold transition ${
+            activeTab === "send"
+              ? "border-[var(--brand)] text-[var(--brand)]"
+              : "border-transparent text-muted-foreground hover:text-slate-900"
+          }`}
+        >
+          <Send className="size-4" />
+          <span>الإرسال والتحكم بالفئات</span>
+        </button>
+      </div>
+
+      {/* Analytics Tab */}
+      {activeTab === "analytics" && (
+        <BroadcastAnalyticsView templateKey={activeTemplate} />
+      )}
+
+      {/* Send & Control Tab */}
+      {activeTab === "send" && (
+        <>
+          {!status ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> جارٍ التحميل…
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {!status.approvedConfigured && (
+                <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800">
+                  <AlertTriangle className="mt-0.5 size-5 shrink-0" />
+                  <p className="text-sm">
+                    القالب غير جاهز للإرسال بعد. يجب اعتماده من واتساب أولًا.
+                  </p>
+                </div>
+              )}
+
+              {/* Segment picker */}
+              <div className="rounded-2xl border bg-[var(--surface)] p-4 shadow-xs">
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-sm font-bold text-slate-900">فئة العملاء المستهدفة</span>
+                  <button
+                    type="button"
+                    onClick={sync}
+                    disabled={syncing || running}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`size-3.5 ${syncing ? "animate-spin" : ""}`} />
+                    تحديث القائمة من الحجوزات
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {SEGMENTS.map((s) => {
+                    const active = segment === s.key;
+                    const n = counts?.[s.key];
+                    return (
+                      <button
+                        key={s.key}
+                        type="button"
+                        disabled={running}
+                        onClick={() => setSegment(s.key)}
+                        className={`flex flex-col gap-0.5 rounded-lg border p-3 text-right transition disabled:opacity-60 ${
+                          active
+                            ? "border-[var(--brand,#12505c)] bg-[var(--brand-soft,#edf0ff)]"
+                            : "border-slate-200 bg-white hover:bg-slate-50"
+                        }`}
+                      >
+                        <span className="flex items-center justify-between">
+                          <span className="text-sm font-semibold">{s.label}</span>
+                          <span className="text-sm font-bold tabular-nums text-[var(--brand)]">
+                            {n ?? "…"}
+                          </span>
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">{s.hint}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Progress + send for the chosen segment */}
+              <div className="rounded-2xl border bg-[var(--surface)] p-6 shadow-xs">
+                <div className="mb-4 grid grid-cols-3 gap-4 text-center">
+                  <Stat label="في الفئة" value={status.total} />
+                  <Stat label="تم الإرسال" value={status.sent} tone="good" />
+                  <Stat label="المتبقّي" value={status.remaining} />
+                </div>
+
+                <div className="mb-2 h-2.5 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <p className="mb-4 text-xs text-muted-foreground">
+                  {status.sent} / {status.total} ({pct}%) — الحد اليومي (لكل الفئات):{" "}
+                  {status.sentLast24h}/{status.dailyCap}، المتبقّي اليوم{" "}
+                  {status.dailyRemaining}
+                  {status.failed ? ` — فشل ${status.failed} (سيُعاد إرساله)` : ""}
+                </p>
+
+                {error && (
+                  <div className="mb-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                    <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {error}
+                  </div>
+                )}
+                {note && (
+                  <div className="mb-3 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+                    <CheckCircle2 className="mt-0.5 size-4 shrink-0" /> {note}
+                  </div>
+                )}
+
+                {running ? (
+                  <button
+                    type="button"
+                    onClick={stop}
+                    className="inline-flex items-center gap-2 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-bold text-red-700 transition hover:bg-red-50"
+                  >
+                    <Square className="size-4" /> إيقاف الإرسال
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={run}
+                    disabled={!status.approvedConfigured || status.remaining <= 0}
+                    className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand)] px-5 py-2.5 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50 shadow-xs"
+                  >
+                    <Send className="size-4" />
+                    {status.remaining <= 0
+                      ? "لا يوجد متبقٍّ في هذه الفئة"
+                      : `بدء إرسال الدفعة إلى ${status.remaining} عميلة`}
+                  </button>
+                )}
+                {running && (
+                  <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" /> جارٍ الإرسال… لا تغلقي الصفحة.
+                  </p>
+                )}
+              </div>
             </div>
           )}
-
-          {/* Segment picker */}
-          <div className="rounded-2xl border bg-[var(--surface)] p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-sm font-medium">فئة العملاء</span>
-              <button
-                type="button"
-                onClick={sync}
-                disabled={syncing || running}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-              >
-                <RefreshCw className={`size-3.5 ${syncing ? "animate-spin" : ""}`} />
-                تحديث من الحجوزات
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {SEGMENTS.map((s) => {
-                const active = segment === s.key;
-                const n = counts?.[s.key];
-                return (
-                  <button
-                    key={s.key}
-                    type="button"
-                    disabled={running}
-                    onClick={() => setSegment(s.key)}
-                    className={`flex flex-col gap-0.5 rounded-lg border p-3 text-right transition disabled:opacity-60 ${
-                      active
-                        ? "border-[var(--brand,#12505c)] bg-[var(--accent-wash,#e2eff1)]"
-                        : "border-slate-200 bg-white hover:bg-slate-50"
-                    }`}
-                  >
-                    <span className="flex items-center justify-between">
-                      <span className="text-sm font-medium">{s.label}</span>
-                      <span className="text-sm font-bold tabular-nums text-[var(--brand,#12505c)]">
-                        {n ?? "…"}
-                      </span>
-                    </span>
-                    <span className="text-[11px] text-muted-foreground">{s.hint}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Progress + send for the chosen segment */}
-          <div className="rounded-2xl border bg-[var(--surface)] p-6">
-            <div className="mb-4 grid grid-cols-3 gap-4 text-center">
-              <Stat label="في الفئة" value={status.total} />
-              <Stat label="تم الإرسال" value={status.sent} tone="good" />
-              <Stat label="المتبقّي" value={status.remaining} />
-            </div>
-
-            <div className="mb-2 h-2 overflow-hidden rounded-full bg-[var(--muted)]">
-              <div
-                className="h-full rounded-full bg-emerald-500 transition-all"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <p className="mb-4 text-xs text-muted-foreground">
-              {status.sent} / {status.total} ({pct}%) — الحد اليومي (لكل الفئات):{" "}
-              {status.sentLast24h}/{status.dailyCap}، المتبقّي اليوم{" "}
-              {status.dailyRemaining}
-              {status.failed ? ` — فشل ${status.failed} (سيُعاد إرساله)` : ""}
-            </p>
-
-            {error && (
-              <div className="mb-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {error}
-              </div>
-            )}
-            {note && (
-              <div className="mb-3 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-                <CheckCircle2 className="mt-0.5 size-4 shrink-0" /> {note}
-              </div>
-            )}
-
-            {running ? (
-              <button
-                type="button"
-                onClick={stop}
-                className="inline-flex items-center gap-2 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50"
-              >
-                <Square className="size-4" /> إيقاف
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={run}
-                disabled={!status.approvedConfigured || status.remaining <= 0}
-                className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand,#12505c)] px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-              >
-                <Send className="size-4" />
-                {status.remaining <= 0
-                  ? "لا يوجد متبقٍّ في هذه الفئة"
-                  : `إرسال إلى ${status.remaining} عميلة`}
-              </button>
-            )}
-            {running && (
-              <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" /> جارٍ الإرسال… لا تغلقي الصفحة.
-              </p>
-            )}
-          </div>
-        </div>
+        </>
       )}
     </div>
   );
@@ -282,7 +374,7 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: "go
     <div>
       <div
         className={`text-2xl font-bold tabular-nums ${
-          tone === "good" ? "text-emerald-600" : "text-[var(--ink,#16201f)]"
+          tone === "good" ? "text-emerald-600" : "text-slate-900"
         }`}
       >
         {value}

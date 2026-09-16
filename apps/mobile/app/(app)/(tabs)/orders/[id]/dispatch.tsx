@@ -201,6 +201,7 @@ function DispatchForm({
   >(null);
   const [doorPhotoError, setDoorPhotoError] = useState<string | null>(null);
   const [specialistId, setSpecialistId] = useState<string | null>(null);
+  const [secondSpecialistId, setSecondSpecialistId] = useState<string | null>(null);
   const [editingSpecialist, setEditingSpecialist] = useState(false);
   const [driverId, setDriverId] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -245,6 +246,7 @@ function DispatchForm({
           )
         : null;
       setSpecialistId(order.data.order.specialist_id ?? preferred?.id ?? null);
+      setSecondSpecialistId(order.data.order.second_specialist_id ?? null);
       setDriverId(order.data.order.driver_id);
       initializedAssignments.current = true;
     }
@@ -280,6 +282,8 @@ function DispatchForm({
     options.data.specialists.find((person) => person.id === specialistId)?.full_name ?? null;
   const selectedSpecialist =
     options.data.specialists.find((person) => person.id === specialistId) ?? null;
+  const selectedSecondSpecialist =
+    options.data.specialists.find((person) => person.id === secondSpecialistId) ?? null;
   const specialistMatchesRekaz = Boolean(
     preferredSpecialistName &&
       selectedSpecialist &&
@@ -307,6 +311,7 @@ function DispatchForm({
 
   const applySpecialist = (value: string | null) => {
     setSpecialistId(value);
+    if (value === secondSpecialistId) setSecondSpecialistId(null);
     setEditingSpecialist(false);
     clearFieldError("specialist");
   };
@@ -374,6 +379,7 @@ function DispatchForm({
     preparePreview.mutate(
       {
         specialistId,
+        secondSpecialistId,
         driverId,
         customerLocation: location.trim(),
         // The preview writes the booking copy in her language; in voice mode
@@ -445,6 +451,7 @@ function DispatchForm({
     dispatch.mutate(
       {
         specialistId,
+        secondSpecialistId,
         driverId,
         customerLocation: location.trim(),
         driverMessage: driverMessage.trim(),
@@ -688,6 +695,24 @@ function DispatchForm({
                     />
                   )}
                 </View>
+                <View style={{ gap: spacing.xs }}>
+                  <RosterPicker
+                    label="الأخصائية الثانية (اختياري)"
+                    options={options.data.specialists.filter(
+                      (person) => person.id !== specialistId,
+                    )}
+                    value={secondSpecialistId}
+                    onChange={(value) => {
+                      setSecondSpecialistId(value);
+                      setReviewing(false);
+                    }}
+                  />
+                  <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
+                    {selectedSecondSpecialist
+                      ? `سيظهر الطلب للأخصائيتين ${specialistName} و ${selectedSecondSpecialist.full_name}، وستصل لهما نفس الرسالة.`
+                      : "أضيفي أخصائية ثانية عندما تنفذان الطلب معًا."}
+                  </Text>
+                </View>
                 <View onLayout={rememberFieldPosition("driver")}>
                   <RosterPicker
                     label="السائق"
@@ -839,7 +864,7 @@ function DispatchForm({
             </View>
             <View onLayout={rememberFieldPosition("specialistMessage")}>
               <TextAreaField
-                label={`رسالة الأخصائية النهائية · ${specialistLanguage}`}
+                label={`${secondSpecialistId ? "رسالة الأخصائيتين النهائية" : "رسالة الأخصائية النهائية"} · ${specialistLanguage}`}
                 value={specialistMessage}
                 onChangeText={(value) => {
                   setSpecialistMessage(value);

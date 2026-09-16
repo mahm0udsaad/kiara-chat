@@ -118,7 +118,7 @@ export const queryKeys = {
   conversationAudit: (id: string) => ["conversation-audit", id] as const,
   orderAudit: (id: string) => ["order-audit", id] as const,
   catalog: ["catalog"] as const,
-  mediaUrl: (path: string) => ["media-url", path] as const,
+  mediaUrl: (path: string, format = "") => ["media-url", path, format] as const,
 };
 
 export function useBootstrap(enabled = true) {
@@ -407,13 +407,22 @@ export function useCatalog(enabled = true) {
  * A signed URL for one stored attachment. The signature lasts an hour, so the
  * cache is held just under that and never refetched in the background — a
  * thread being re-read should not re-sign every photo in it.
+ *
+ * `format: "caf"` asks the server for an iOS-playable remux of a WhatsApp
+ * voice note instead of the stored Ogg. It is part of the cache key, so the
+ * two containers never serve each other's signed URL.
  */
-export function useMediaUrl(path: string | null, enabled = true) {
+export function useMediaUrl(
+  path: string | null,
+  enabled = true,
+  format?: "caf",
+) {
   return useQuery({
-    queryKey: queryKeys.mediaUrl(path ?? ""),
+    queryKey: queryKeys.mediaUrl(path ?? "", format ?? ""),
     queryFn: () =>
       apiRequest<{ url: string; expiresIn: number }>(
-        `/media?path=${encodeURIComponent(path!)}`,
+        `/media?path=${encodeURIComponent(path!)}` +
+          (format ? `&format=${format}` : ""),
       ),
     enabled: Boolean(path) && enabled,
     staleTime: 50 * 60_000,
@@ -889,6 +898,7 @@ export function useUpdateOrder(id: string) {
       // "طلب سائق" for a minute after a driver had been assigned.
       void queryClient.invalidateQueries({ queryKey: ["orders-calendar"] });
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
+      void queryClient.invalidateQueries({ queryKey: ["orders-report"] });
       await queryClient.invalidateQueries({ queryKey: queryKeys.order(id) });
     },
   });
@@ -930,6 +940,9 @@ export function useDispatchOrder(id: string) {
           `/orders/${id}/dispatch`,
           {
             specialistId: input.specialistId,
+            ...(input.secondSpecialistId
+              ? { secondSpecialistId: input.secondSpecialistId }
+              : {}),
             driverId: input.driverId,
             customerLocation: input.customerLocation,
             driverMessage: input.driverMessage,
@@ -1002,6 +1015,7 @@ export function useDispatchPreview(id: string) {
   return useMutation({
     mutationFn: (input: {
       specialistId: string;
+      secondSpecialistId?: string | null;
       driverId: string;
       /** So the preview quotes the address about to be committed. */
       customerLocation: string;
@@ -1085,6 +1099,8 @@ export function useFieldOrderAction(id: string) {
       expectedVersion: number;
       /** Typed by the person when a position could not be fixed. */
       exceptionReason?: string;
+      completionOutcome?: "done" | "not_done";
+      completionNote?: string;
     }) => {
       // Evidence is gathered here rather than in the screen so every caller of
       // this mutation records a position — a step confirmed from a screen that
@@ -1100,6 +1116,8 @@ export function useFieldOrderAction(id: string) {
           expectedVersion: input.expectedVersion,
           idempotencyKey: Crypto.randomUUID(),
           location,
+          completionOutcome: input.completionOutcome,
+          completionNote: input.completionNote?.trim() || undefined,
         }),
       });
     },

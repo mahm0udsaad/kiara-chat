@@ -123,6 +123,8 @@ const EMPTY_PROGRESS: FieldOrderProgressState = {
   specialistPickupAt: null,
   serviceStartedAt: null,
   completedAt: null,
+  completionOutcome: null,
+  completionNote: null,
   driverReturnedAt: null,
   lastActivityAt: "",
   lastReminderAt: null,
@@ -139,6 +141,13 @@ function progressOf(
     specialistPickupAt: (row.specialist_pickup_at as string | null) ?? null,
     serviceStartedAt: (row.service_started_at as string | null) ?? null,
     completedAt: (row.completed_at as string | null) ?? null,
+    completionOutcome:
+      row.completion_outcome === "not_done"
+        ? "not_done"
+        : row.completion_outcome === "done" || row.completed_at
+          ? "done"
+          : null,
+    completionNote: (row.completion_note as string | null) ?? null,
     driverReturnedAt: (row.driver_returned_at as string | null) ?? null,
     lastActivityAt:
       (row.last_activity_at as string | null) ?? new Date().toISOString(),

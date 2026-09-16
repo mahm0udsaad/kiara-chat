@@ -103,6 +103,7 @@ export async function prepareOrderDispatchCommand(input: {
   idempotencyKey: string;
   actor: OperationsActor;
   specialistId: string;
+  secondSpecialistId: string | null;
   driverId: string;
   tripType: TripType;
   price: number | null;
@@ -116,10 +117,11 @@ export async function prepareOrderDispatchCommand(input: {
   /** Absent numbers are not an error — that recipient gets the app copy only. */
   driverPhone: string | null;
   specialistPhone: string | null;
+  secondSpecialistPhone: string | null;
   /** Null keeps the photo already on the order rather than clearing it. */
   doorPhotoPath: string | null;
 }): Promise<Record<string, unknown>> {
-  return rpc("kiara_command_prepare_order_dispatch", {
+  return rpc("kiara_command_prepare_order_dispatch_v2", {
     p_restaurant_id: input.restaurantId,
     p_order_id: input.orderId,
     p_expected_version: input.expectedVersion,
@@ -128,6 +130,7 @@ export async function prepareOrderDispatchCommand(input: {
     p_actor_team_member_id: input.actor.teamMemberId,
     p_actor_role: input.actor.role,
     p_specialist_id: input.specialistId,
+    p_second_specialist_id: input.secondSpecialistId,
     p_driver_id: input.driverId,
     p_trip_type: input.tripType,
     p_price: input.price,
@@ -137,6 +140,7 @@ export async function prepareOrderDispatchCommand(input: {
     p_specialist_voice_path: input.specialistVoicePath,
     p_driver_phone: input.driverPhone,
     p_specialist_phone: input.specialistPhone,
+    p_second_specialist_phone: input.secondSpecialistPhone,
     p_door_photo_path: input.doorPhotoPath,
   });
 }
@@ -180,17 +184,21 @@ export async function finishOrderDispatchCommand(input: {
   /** WhatsApp results only — the order is `sent` because it was assigned. */
   driverSent: boolean;
   specialistSent: boolean;
+  secondSpecialistSent: boolean;
   driverError: string | null;
   specialistError: string | null;
+  secondSpecialistError: string | null;
 }): Promise<Record<string, unknown>> {
-  return rpc("kiara_command_finish_order_dispatch", {
+  return rpc("kiara_command_finish_order_dispatch_v2", {
     p_restaurant_id: input.restaurantId,
     p_order_id: input.orderId,
     p_command_id: input.commandId,
     p_driver_sent: input.driverSent,
     p_specialist_sent: input.specialistSent,
+    p_second_specialist_sent: input.secondSpecialistSent,
     p_driver_error: input.driverError,
     p_specialist_error: input.specialistError,
+    p_second_specialist_error: input.secondSpecialistError,
   });
 }
 
@@ -215,8 +223,10 @@ export async function fieldOrderStepCommand(input: {
   rosterId: string;
   action: FieldOrderAction;
   location: FieldLocationEvidence | null;
+  completionOutcome?: "done" | "not_done" | null;
+  completionNote?: string | null;
 }): Promise<Record<string, unknown>> {
-  return rpc("kiara_command_field_order_step", {
+  return rpc("kiara_command_field_order_step_v2", {
     p_restaurant_id: input.restaurantId,
     p_order_id: input.orderId,
     p_expected_version: input.expectedVersion,
@@ -227,6 +237,8 @@ export async function fieldOrderStepCommand(input: {
     p_roster_id: input.rosterId,
     p_action: input.action,
     p_location: input.location,
+    p_completion_outcome: input.completionOutcome ?? null,
+    p_completion_note: input.completionNote ?? null,
   });
 }
 

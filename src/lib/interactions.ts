@@ -10,10 +10,13 @@ import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { KIARA_RESTAURANT_ID, type KiaraSession } from "@/lib/tenant";
 import {
+  customerProvider,
+  inboxProvider,
+  getCustomerSenderStatus,
   isProviderConfigured,
+  transportErrorCode,
+  transportFor,
   transportForConversation,
-  twilioTransport,
-  isTwilioConfigured,
 } from "@/lib/transport";
 import type { MessageTransport, SendResult } from "@/lib/transport/types";
 import { getServiceWindow, isWindowClosedError } from "@/lib/transport/window";
@@ -24,7 +27,6 @@ import {
   resolveComposerTemplate,
   templateVariable,
 } from "@/lib/templates";
-import { twilioErrorCode, getTwilioSenderStatus } from "@/lib/transport/twilio";
 import {
   uploadBase64Media,
   messageTypeFromContentType,
@@ -86,7 +88,7 @@ function deliverInBackground(
       } catch (error) {
         sent = false;
         failureMessage = error instanceof Error ? error.message : String(error);
-        failureCode = twilioErrorCode(error);
+        failureCode = transportErrorCode(error);
         console.error(
           `[send] ${transport.provider} media failed: ${failureMessage}`,
         );
@@ -506,7 +508,7 @@ function deliverTextReply(params: {
         extra.reengagement_sent = false;
         extra.reason = "TEMPLATE_SEND_FAILED";
         failureMessage = error instanceof Error ? error.message : String(error);
-        failureCode = twilioErrorCode(error);
+        failureCode = transportErrorCode(error);
         return false;
       }
     };
@@ -514,7 +516,7 @@ function deliverTextReply(params: {
     if (configured) {
       // Only the Business Platform enforces a window; a linked device does not.
       const windowOpen =
-        transport.provider !== "twilio" ||
+        transport.provider === "openwa" ||
         (await getServiceWindow(params.conversationId)).open;
 
       if (!windowOpen) {
@@ -538,7 +540,7 @@ function deliverTextReply(params: {
             status = "failed";
             failureMessage =
               error instanceof Error ? error.message : String(error);
-            failureCode = twilioErrorCode(error);
+            failureCode = transportErrorCode(error);
             console.error(
               `[send] ${transport.provider} reply failed: ${failureMessage}`,
             );
@@ -665,6 +667,9 @@ export async function sendTemplateReply(
   key: string,
   variables: Record<string, string>,
 ): Promise<{ messageId: string | null; sent: boolean; error: string | null }> {
+  if (inboxProvider() === "openwa") {
+    throw new Error("القوالب المعتمدة متوقفة مؤقتًا. يمكنك إرسال رسالة نصية مباشرة عبر واتساب المرتبط.");
+  }
   const admin = getAdminSupabaseClient();
   const { data: conv } = await admin
     .from("conversations")
@@ -689,16 +694,14 @@ export async function sendTemplateReply(
     clean[variable.key] = value;
   }
 
-  // A template is a Business-Platform capability, full stop — OpenWA cannot
-  // send one. So this never uses the conversation's transport: a customer with
-  // history on the old linked-device number would resolve to OpenWA and the
-  // send would throw TEMPLATES_NOT_SUPPORTED. Sending it over Twilio is exactly
-  // how such a customer is re-engaged onto the new number; when she replies,
-  // her inbound flips the conversation to twilio for good.
-  if (!isTwilioConfigured()) {
-    throw new Error("قوالب الواتساب تحتاج رقم الأعمال (Twilio) وهو غير مُهيّأ.");
+  // Templates always use the currently selected Business Platform provider.
+  // The feature flag changes only after the Meta path has been verified, so a
+  // deployment can contain both adapters without moving live traffic.
+  const provider = customerProvider();
+  if (!isProviderConfigured(provider)) {
+    throw new Error("رقم واتساب الأعمال غير مُهيّأ للإرسال.");
   }
-  const transport = twilioTransport;
+  const transport = transportFor(provider);
   // Deliberately no `from`: a template comes from the Business number itself
   // (TWILIO_WHATSAPP_FROM). The conversation's stored wa_number is only ever the
   // old linked-device number for these threads, which is not a Twilio sender.
@@ -740,25 +743,24 @@ export async function sendTemplateReply(
         ? { twilio_message_sid: providerId }
         : {}),
       error_message: failure ? failure.slice(0, 500) : null,
-      external_error_code: twilioErrorCode(failure ? new Error(failure) : null),
+      external_error_code: transportErrorCode(failure ? new Error(failure) : null),
     })
     .select("id")
     .single();
 
   if (!failure) {
     // A template just went out over the Business number, so this thread is now
-    // on Twilio — mark it, so a follow-up free-form reply resolves to Twilio
-    // (and its 24h-window handling) rather than the old linked device. Her own
-    // reply would set this too, but staff should not have to wait for it.
+    // on the selected Business Platform provider. Her own reply will confirm
+    // this too, but staff should not have to wait for it.
     const meta = (conv.metadata as Record<string, unknown> | null) ?? {};
-    const senderNumber = getTwilioSenderStatus().number;
+    const senderNumber = getCustomerSenderStatus().number;
     await admin
       .from("conversations")
       .update({
         last_message_at: new Date().toISOString(),
         metadata: {
           ...meta,
-          transport: "twilio",
+          transport: provider,
           ...(senderNumber ? { wa_number: senderNumber } : {}),
         },
       })

@@ -5,6 +5,8 @@ import { Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
+import { TripCostEditor } from "@/components/orders/trip-cost-editor";
+import { ServiceTimingCard } from "@/components/orders/service-timing-card";
 import { ErrorState, LoadingScreen } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -115,7 +117,7 @@ function QuickAction({
   );
 }
 
-/** Five dots and their labels — the whole chain at a glance. */
+/** Six dots and their labels — the whole chain at a glance. */
 function StepRail({ steps }: { steps: ExecutionStep[] }) {
   const { colors } = useTheme();
   return (
@@ -235,6 +237,7 @@ export default function OrderDetailScreen() {
   const edited = wasEdited(order.created_at, order.updated_at);
   const canViewPrice = bootstrap.data?.capabilities.canViewOrderPrices === true;
   const isAdmin = bootstrap.data?.session.role === "admin";
+  const isOwner = bootstrap.data?.session.isOwner === true;
   const locationMissing = isLocationMissing(order.customer_location);
 
   return (
@@ -369,6 +372,54 @@ export default function OrderDetailScreen() {
               value={durationLabel(order.duration_minutes)}
             />
             <Divider inset={46} />
+            <View
+              style={{
+                paddingVertical: spacing.md,
+                gap: spacing.sm,
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  gap: spacing.sm,
+                }}
+              >
+                <IconSymbol name="sparkles" color={colors.textTertiary} size={18} />
+                <Text
+                  selectable
+                  style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}
+                >
+                  الخدمات بالترتيب
+                </Text>
+              </View>
+              {order.approved_services?.length ? (
+                <View style={{ gap: spacing.xs, paddingStart: 26 }}>
+                  {order.approved_services.map((service, index) => (
+                    <Text
+                      key={`${service.sourceId ?? "manual"}-${index}`}
+                      selectable
+                      style={{ ...type.callout, color: colors.text, ...rtlText }}
+                    >
+                      {index + 1}. {service.name} ({durationLabel(service.minutes)})
+                    </Text>
+                  ))}
+                </View>
+              ) : (
+                <Text
+                  selectable
+                  style={{
+                    ...type.footnote,
+                    color: colors.textTertiary,
+                    paddingStart: 26,
+                    ...rtlText,
+                  }}
+                >
+                  لا توجد خدمات مرتبطة بهذا الطلب
+                </Text>
+              )}
+            </View>
+            <Divider inset={46} />
             <DetailRow
               icon="car"
               label="نوع الرحلة"
@@ -401,7 +452,13 @@ export default function OrderDetailScreen() {
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title="فريق التنفيذ" />
           <View style={{ flexDirection: "row-reverse", gap: spacing.md }}>
-            <AssignmentCard role="الأخصائية" icon="sparkles" name={order.specialist_name} />
+            <AssignmentCard
+              role={order.second_specialist_name ? "الأخصائيتان" : "الأخصائية"}
+              icon="sparkles"
+              name={[order.specialist_name, order.second_specialist_name]
+                .filter(Boolean)
+                .join(" و ") || null}
+            />
             <AssignmentCard role="السائق" icon="car" name={order.driver_name} />
           </View>
           {!ready ? (
@@ -514,15 +571,30 @@ export default function OrderDetailScreen() {
           </Card>
         </View>
 
+        <ServiceTimingCard
+          scheduledAt={order.arrival_at}
+          serviceStartedAt={order.field_progress?.serviceStartedAt ?? order.specialist_session?.started_at}
+        />
+
+        {isOwner ? (
+          <TripCostEditor
+            key={`${order.version}-${order.price ?? "unset"}`}
+            orderId={order.id}
+            expectedVersion={order.version}
+            price={order.price}
+            driverName={order.driver_name}
+          />
+        ) : null}
+
         {/* Commercial and audit fields returned by the web order enrichment. */}
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title="بيانات الطلب" />
           <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
-            {canViewPrice ? (
+            {canViewPrice && !isOwner ? (
               <>
                 <DetailRow
                   icon="banknote"
-                  label="أجرة السائق"
+                  label="تكلفة المشوار"
                   value={order.price == null ? "غير محددة" : priceFormatter.format(order.price)}
                   monospacedValue
                 />

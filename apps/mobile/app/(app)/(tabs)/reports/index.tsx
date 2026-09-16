@@ -6,6 +6,10 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, T
 import { PrimaryButton } from "@/components/primary-button";
 import { CustomerServiceTeam } from "@/components/reports/customer-service-team";
 import { OrdersSummary } from "@/components/reports/orders-summary";
+import {
+  createReportDateSelection,
+  ReportDateRangeFilter,
+} from "@/components/reports/report-date-range-filter";
 import { ErrorState } from "@/components/screen-state";
 import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
@@ -16,8 +20,6 @@ import {
   REPORT_LOCALE,
   reportDecimal,
   reportInteger,
-  reportRange,
-  type ReportPeriod,
 } from "@/lib/operations-report";
 import { useBootstrap, useCustomerServiceReport, useOperationsReport, useOrdersReport } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
@@ -31,12 +33,6 @@ const roleOptions: SegmentOption<ReportTeam>[] = [
   { value: "specialist", label: "الأخصائيات" },
   { value: "driver", label: "السائقون" },
 ];
-const summaryPeriods: SegmentOption<ReportPeriod>[] = [
-  { value: "today", label: "اليوم" },
-  { value: "week", label: "هذا الأسبوع" },
-  { value: "month", label: "هذا الشهر" },
-];
-
 type PickerField = "from" | "to" | "startTime" | "endTime";
 const dateLabel = new Intl.DateTimeFormat(REPORT_LOCALE, { day: "numeric", month: "short", year: "numeric" });
 const timeLabel = new Intl.DateTimeFormat(REPORT_LOCALE, { hour: "numeric", minute: "2-digit" });
@@ -95,12 +91,13 @@ export default function ReportsScreen() {
   const { colors } = useTheme();
   const bootstrap = useBootstrap();
   const today = dayKeyFromToday(0);
-  const [role, setRole] = useState<ReportTeam>("customer-service");
-  const [summaryPeriod, setSummaryPeriod] = useState<ReportPeriod>("today");
+  // Hanan opens reports to find operational exceptions first; people metrics
+  // remain one tap away, but the owner dashboard starts with orders.
+  const [role, setRole] = useState<ReportTeam>("orders");
+  const [summaryRange, setSummaryRange] = useState(() => createReportDateSelection("today", today));
   const [draft, setDraft] = useState({ from: today, to: addDays(today, 6), startTime: "08:00", endTime: "22:00" });
   const [applied, setApplied] = useState(draft);
   const [picker, setPicker] = useState<PickerField | null>(null);
-  const summaryRange = reportRange(summaryPeriod, today);
   const canViewReports = bootstrap.data?.capabilities.canViewReports === true;
   const operationsReport = useOperationsReport(
     applied.from,
@@ -175,24 +172,20 @@ export default function ReportsScreen() {
         <Card>
           <View style={{ gap: spacing.xs }}>
             <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>
-              {role === "orders" ? "ملخص الطلبات" : "المحادثات التي تم التعامل معها"}
+              {role === "orders" ? "صحة الطلبات والمشاكل" : "المحادثات التي تم التعامل معها"}
             </Text>
             <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
               {role === "orders"
-                ? "الطلبات مجمعة حسب موعد الزيارة، وتشمل طلبات ركاز والطلبات المنشأة من واتساب."
+                ? "ابدئي بالطلبات المتأخرة، تجاوز وقت الخدمة، وتكاليف المشاوير الناقصة."
                 : "يعتمد التقرير على الرد أو الاستلام أو أي إجراء داخل المحادثة، بغض النظر عمّن استلمها أولاً."}
             </Text>
           </View>
-          <Segmented
-            options={summaryPeriods}
-            value={summaryPeriod}
-            onChange={setSummaryPeriod}
+          <ReportDateRangeFilter
+            value={summaryRange}
+            onChange={setSummaryRange}
             accessibilityLabel={role === "orders" ? "فترة تقرير الطلبات" : "فترة تقرير خدمة العملاء"}
             testIDPrefix={`${role}-period`}
           />
-          <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
-            {dateLabel.format(dayToDate(summaryRange.from))} – {dateLabel.format(dayToDate(summaryRange.to))} · توقيت الرياض
-          </Text>
         </Card>
       ) : (
       <Card>
@@ -267,7 +260,15 @@ export default function ReportsScreen() {
                   <Link
                     href={{
                       pathname: "/reports/[role]/[personId]",
-                      params: { role: operationsRole, personId: person.id, name: person.name },
+                      params: {
+                        role: operationsRole,
+                        personId: person.id,
+                        name: person.name,
+                        from: applied.from,
+                        to: applied.to,
+                        startTime: applied.startTime,
+                        endTime: applied.endTime,
+                      },
                     }}
                     asChild
                   >

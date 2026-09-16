@@ -21,7 +21,7 @@ import {
 import { customerProvider } from "@/lib/transport";
 import { META_TEMPLATE_PREFIX } from "@/lib/transport/meta-content";
 
-export type TemplateKey = "booking_followup" | "conversation_opener" | "number_notice";
+export type TemplateKey = "booking_followup" | "conversation_opener" | "number_notice" | "open_conversation";
 
 export interface TemplateVariableSpec {
   /** Positional key as Twilio wants it: "1", "2", … */
@@ -95,6 +95,19 @@ const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
     metaEnv: "META_TEMPLATE_NAME_NUMBER_NOTICE",
     metaName: "kiara_number_notice_hx9ed2953b5f75cadc488e2cd0add1292b",
     label: "تنويه الرقم",
+    description:
+      "تنبيه جماعي يطلب من العميلة حذف الرقم وإعادة حفظه ليظهر حساب واتساب الأعمال بشكل صحيح.",
+    category: "marketing",
+    body:
+      "📢 تنويه مهم لعملائنا الكرام 🤍\n\nفي حال كان رقم الواتساب الخاص بكيارا لا يظهر لديكم أو لا يعمل بشكل صحيح، نرجو منكم حذف الرقم من جهات الاتصال في جوالكم ثم إعادة حفظه من جديد.\n\n📱 رقم كيارا سبا:\n966508421748\n\nبعد إعادة حفظ الرقم، افتحوا الواتساب من جديد وسيظهر لكم الحساب بإذن الله 🤍\n\nشاكرين لكم تفهّمكم وصبركم، ونسعد دائمًا بخدمتكم 🌿\nKiara Spa | كيارا سبا",
+    buttons: [],
+    variables: [],
+  },
+  open_conversation: {
+    env: "TWILIO_CONTENT_SID_NUMBER_NOTICE",
+    metaEnv: "META_TEMPLATE_NAME_NUMBER_NOTICE",
+    metaName: "kiara_number_notice_hx9ed2953b5f75cadc488e2cd0add1292b",
+    label: "open_conversation (تنويه الرقم)",
     description:
       "تنبيه جماعي يطلب من العميلة حذف الرقم وإعادة حفظه ليظهر حساب واتساب الأعمال بشكل صحيح.",
     category: "marketing",

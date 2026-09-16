@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   const category = typeof b.category === "string" ? b.category : "MARKETING";
   const segment: Segment =
     typeof b.segment === "string" && isSegment(b.segment) ? b.segment : "all";
-  if (!contentSid.startsWith("HX")) {
+  if (!contentSid.startsWith("HX") && !contentSid.startsWith("meta:")) {
     return NextResponse.json({ error: "قالب غير صالح." }, { status: 400 });
   }
 

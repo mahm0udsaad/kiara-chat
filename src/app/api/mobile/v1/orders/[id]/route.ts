@@ -172,11 +172,11 @@ export async function PATCH(
   }
 
   if (body.price !== undefined) {
-    if (auth.session.role !== "admin") {
+    if (!auth.session.isOwner) {
       return mobileError(
         403,
         "PRICE_FORBIDDEN",
-        "Only an admin can edit the driver price"
+        "Only the owner can edit the trip cost"
       );
     }
     const price =

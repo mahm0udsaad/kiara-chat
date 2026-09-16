@@ -17,7 +17,7 @@ import {
   isContentApiConfigured,
   type ContentType,
   type TemplateCategory,
-} from "@/lib/transport/twilio-content";
+} from "@/lib/transport/content";
 
 export const maxDuration = 60;
 
@@ -72,6 +72,7 @@ export async function POST(request: Request) {
     const created = await createTemplate({
       name,
       language,
+      category,
       contentType,
       body,
       variables: (b.variables as Record<string, string>) ?? {},

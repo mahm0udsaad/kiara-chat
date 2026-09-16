@@ -88,6 +88,8 @@ export async function POST(
     typeof body.customerLocation === "string"
       ? body.customerLocation.trim().slice(0, 500)
       : "";
+  const secondSpecialistId =
+    typeof body.secondSpecialistId === "string" ? body.secondSpecialistId.trim() : "";
   const driverMessage =
     typeof body.driverMessage === "string" ? body.driverMessage.trim() : "";
   const specialistMessage =
@@ -107,6 +109,9 @@ export async function POST(
   }
   if (!specialistId) {
     return mobileError(400, "SPECIALIST_REQUIRED", "specialistId is required");
+  }
+  if (secondSpecialistId === specialistId) {
+    return mobileError(400, "SPECIALISTS_MUST_DIFFER", "Choose two different specialists");
   }
   if (!driverId) {
     return mobileError(400, "DRIVER_REQUIRED", "driverId is required");
@@ -143,6 +148,7 @@ export async function POST(
 
     const result = await dispatchBooking(id, {
       specialistId,
+      secondSpecialistId: secondSpecialistId || null,
       driverId,
       customerLocation,
       doorPhoto,
