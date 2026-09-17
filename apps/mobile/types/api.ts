@@ -1105,3 +1105,52 @@ export type CallPermission = {
   requestChannel: "free_form" | "template";
   requestAvailable: boolean;
 };
+
+/** One ICE server, as `RTCPeerConnection` wants it. */
+export type IceServer = {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+};
+
+/**
+ * ICE configuration for a call about to be placed.
+ *
+ * `relayAvailable` is false when only STUN is configured. The call still goes
+ * ahead — refusing to dial would be worse — but on a carrier-grade NAT it can
+ * ring, connect, and carry no audio, so the screen warns rather than pretending.
+ */
+export type CallIceConfig = {
+  iceServers: IceServer[];
+  relayAvailable: boolean;
+};
+
+export type CallStatus =
+  | "initiated"
+  | "ringing"
+  | "accepted"
+  | "connected"
+  | "rejected"
+  | "completed"
+  | "failed";
+
+/**
+ * A call row as the API returns it.
+ *
+ * `remoteSdp` is Meta's answer to our offer, and it is nulled once the call
+ * ends — a finished call's SDP is a spent handshake artefact, not history.
+ */
+export type CallRecord = {
+  id: string;
+  waCallId: string;
+  conversationId: string | null;
+  customerPhone: string;
+  direction: "business_initiated" | "user_initiated";
+  status: CallStatus;
+  remoteSdp: string | null;
+  remoteSdpType: "offer" | "answer" | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationSeconds: number | null;
+  error: string | null;
+};

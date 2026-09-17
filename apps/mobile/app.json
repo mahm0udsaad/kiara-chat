@@ -2,7 +2,7 @@
   "expo": {
     "name": "كيارا للعمليات",
     "slug": "kiara-operations",
-    "version": "1.0.9",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "kiara",
@@ -18,6 +18,11 @@
       "backgroundColor": "#F4F6FB",
       "config": {
         "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
@@ -32,7 +37,10 @@
       "predictiveBackGestureEnabled": false,
       "package": "com.kiara.operations",
       "versionCode": 1,
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -73,7 +81,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "يستخدم كيارا الميكروفون لتسجيل الملاحظات الصوتية التي ترسلينها للعميلات."
+          "microphonePermission": "يستخدم كيارا الميكروفون لتسجيل الملاحظات الصوتية وللمكالمات الصوتية مع العميلات عبر واتساب."
         }
       ],
       [
@@ -108,7 +116,14 @@
         }
       ],
       "expo-system-ui",
-      "expo-asset"
+      "expo-asset",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "microphonePermission": "يستخدم كيارا الميكروفون لتسجيل الملاحظات الصوتية وللمكالمات الصوتية مع العميلات عبر واتساب.",
+          "cameraPermission": "يستخدم كيارا الكاميرا لالتقاط صورة وإرسالها في المحادثة."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

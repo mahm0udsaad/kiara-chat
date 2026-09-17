@@ -11,6 +11,13 @@ type Props = {
   conversationId: string;
   /** Groups carry a jid in `customer_phone`; there is nobody to call. */
   enabled: boolean;
+  /**
+   * Place the call. Given only when the device can actually carry one — the
+   * permission badge stays passive without it, so a build whose native WebRTC
+   * module is missing says "calling is allowed" without offering a button that
+   * cannot work.
+   */
+  onCall?: () => void;
 };
 
 /** Days left on a temporary grant, floored — "ينتهي اليوم" below one. */
@@ -34,7 +41,7 @@ function expiryLabel(expiresAt: string | null): string | null {
  * rate limit has burned a real allowance and the customer sees nothing. The
  * disabled states each say why.
  */
-export function CallPermissionPill({ conversationId, enabled }: Props) {
+export function CallPermissionPill({ conversationId, enabled, onCall }: Props) {
   const { colors } = useTheme();
   const permission = useCallPermission(conversationId, enabled);
   const request = useRequestCallPermission(conversationId);
@@ -50,12 +57,58 @@ export function CallPermissionPill({ conversationId, enabled }: Props) {
 
   if (callable) {
     const remaining = expiryLabel(expiresAt);
+    // The grant is temporary, so the remaining days stay on the control rather
+    // than moving to a tooltip nobody on a phone can open.
+    const label = remaining ? `اتصال · ${remaining}` : "اتصال";
+
+    if (!onCall) {
+      return (
+        <Badge
+          tone="success"
+          icon="phone"
+          label={remaining ? `الاتصال مسموح · ${remaining}` : "الاتصال مسموح"}
+        />
+      );
+    }
+
     return (
-      <Badge
-        tone="success"
-        icon="phone"
-        label={remaining ? `الاتصال مسموح · ${remaining}` : "الاتصال مسموح"}
-      />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="اتصال صوتي عبر واتساب"
+        accessibilityHint="يبدأ مكالمة صوتية مع العميلة الآن"
+        onPress={() => {
+          tapFeedback();
+          onCall();
+        }}
+        style={({ pressed }) => ({
+          flexDirection: "row-reverse",
+          alignItems: "center",
+          gap: spacing.xs,
+          minHeight: hitSize.min - 8,
+          paddingHorizontal: spacing.sm + 2,
+          borderRadius: radius.full,
+          backgroundColor: pressed ? colors.success : colors.successSoft,
+        })}
+      >
+        {({ pressed }) => (
+          <>
+            <IconSymbol
+              name="phone"
+              size={14}
+              color={pressed ? colors.onSuccess : colors.onSuccessSoft}
+            />
+            <Text
+              style={{
+                ...type.caption,
+                color: pressed ? colors.onSuccess : colors.onSuccessSoft,
+                ...rtlText,
+              }}
+            >
+              {label}
+            </Text>
+          </>
+        )}
+      </Pressable>
     );
   }
 

@@ -54,6 +54,8 @@ export type IconName =
   | "xmark.circle"
   | "mic"
   | "mic.fill"
+  | "mic.slash"
+  | "speaker.wave.2"
   | "camera"
   | "photo"
   | "doc"
@@ -111,6 +113,8 @@ const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcon
   "xmark.circle": "cancel",
   mic: "mic-none",
   "mic.fill": "mic",
+  "mic.slash": "mic-off",
+  "speaker.wave.2": "volume-up",
   camera: "photo-camera",
   photo: "image",
   doc: "insert-drive-file",

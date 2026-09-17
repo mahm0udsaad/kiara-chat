@@ -98,6 +98,8 @@ const lightPalette = {
   success: "#0E7355",
   successSoft: "#E2F4EE",
   onSuccessSoft: "#0B5F46",
+  /** 5.5:1 on success — ink for a solid success fill, e.g. a pressed dial button. */
+  onSuccess: "#FFFFFF",
 
   warning: "#8A5600",
   warningSoft: "#FFF2D8",
@@ -106,6 +108,8 @@ const lightPalette = {
   danger: "#BF2F38",
   dangerSoft: "#FDEBED",
   onDangerSoft: "#A5262E",
+  /** 5.1:1 on danger — ink for a solid danger fill, e.g. the hang-up button. */
+  onDanger: "#FFFFFF",
 
   info: "#1A6AAE",
   infoSoft: "#E6F1FA",
@@ -143,6 +147,8 @@ const darkPalette: typeof lightPalette = {
   success: "#4FD3A5",
   successSoft: "#12332A",
   onSuccessSoft: "#7BE3BF",
+  /** Dark ink on the light-in-dark success fill. */
+  onSuccess: "#0B0E1C",
 
   warning: "#F2B950",
   warningSoft: "#372A10",
@@ -151,6 +157,8 @@ const darkPalette: typeof lightPalette = {
   danger: "#FF8892",
   dangerSoft: "#3A1A1F",
   onDangerSoft: "#FFAEB5",
+  /** Dark ink on the light-in-dark danger fill. */
+  onDanger: "#0B0E1C",
 
   info: "#6FB6F2",
   infoSoft: "#122A3D",
