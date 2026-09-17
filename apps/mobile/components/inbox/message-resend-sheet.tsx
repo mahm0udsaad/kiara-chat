@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, Text, TextInput, View } from "react-native";
+import { useMemo, useRef, useState } from "react";
+import { ActivityIndicator, I18nManager, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as Crypto from "expo-crypto";
@@ -8,9 +8,11 @@ import { PrimaryButton } from "@/components/primary-button";
 import { InlineAlert } from "@/components/screen-state";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { formatPhone } from "@/lib/format";
 import { commitFeedback, tapFeedback } from "@/lib/haptics";
-import { useClaimedConversationForPhone, useReply } from "@/lib/queries";
+import { useClaimedConversationForPhone, useConversations, useReply } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
+import type { ConversationSummary } from "@/types/api";
 
 type Destination = "same" | "other";
 
@@ -34,6 +36,32 @@ export function MessageResendSheet({
   const [body, setBody] = useState(originalBody);
   const [phone, setPhone] = useState("");
   const attempt = useRef<{ text: string; idempotencyKey: string } | null>(null);
+  const todayScroller = useRef<ScrollView>(null);
+  // A horizontal ScrollView still opens at its left edge under RTL, which
+  // hides the first (right-most, most-recent) thread behind the fold. Park it
+  // on the right once its width is known, then leave the employee's own
+  // scrolling alone.
+  const parkedToday = useRef(false);
+
+  // Picking who else gets this is almost always "someone I already talked to
+  // today" — the phone field alone means digging her number back out of the
+  // roster. Today's threads, one tap away, cover that without a second trip
+  // out of the sheet.
+  const today = useConversations("today", "", { enabled: open && destination === "other" });
+  const todayCustomers = useMemo(() => {
+    const seen = new Set<string>();
+    const items: ConversationSummary[] = [];
+    for (const page of today.data?.pages ?? []) {
+      for (const conversation of page.conversations.items) {
+        if (conversation.isGroup) continue;
+        if (conversation.id === conversationId) continue;
+        if (seen.has(conversation.customer_phone)) continue;
+        seen.add(conversation.customer_phone);
+        items.push(conversation);
+      }
+    }
+    return items;
+  }, [today.data?.pages, conversationId]);
 
   const busy = reply.isPending || target.isPending;
   const error = reply.error?.message ?? target.error?.message ?? null;
@@ -99,9 +127,55 @@ export function MessageResendSheet({
         </View>
 
         {destination === "other" ? (
-          <View style={{ gap: spacing.xs }}>
-            <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>رقم العميلة</Text>
-            <TextInput accessibilityLabel="رقم العميلة الأخرى" keyboardType="phone-pad" value={phone} onChangeText={setPhone} placeholder="مثال: +9665…" placeholderTextColor={colors.textTertiary} style={{ minHeight: hitSize.comfortable, paddingHorizontal: spacing.lg, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md, backgroundColor: colors.surface, color: colors.text, ...type.body, writingDirection: "ltr", textAlign: "left" }} />
+          <View style={{ gap: spacing.md }}>
+            {todayCustomers.length > 0 ? (
+              <View style={{ gap: spacing.xs }}>
+                <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>محادثات اليوم</Text>
+                <ScrollView
+                  ref={todayScroller}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ flexDirection: "row-reverse", gap: spacing.sm }}
+                  onContentSizeChange={(width) => {
+                    if (parkedToday.current || !I18nManager.isRTL) return;
+                    parkedToday.current = true;
+                    requestAnimationFrame(() => todayScroller.current?.scrollTo({ x: width, animated: false }));
+                  }}
+                >
+                  {todayCustomers.map((customer) => {
+                    const selected = phone.trim() === customer.customer_phone;
+                    const label = customer.customer_name || formatPhone(customer.customer_phone);
+                    return (
+                      <Pressable
+                        key={customer.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={`اختيار ${label}`}
+                        onPress={() => { tapFeedback(); setPhone(customer.customer_phone); }}
+                        style={({ pressed }) => ({
+                          paddingHorizontal: spacing.md,
+                          minHeight: hitSize.comfortable,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          borderRadius: radius.full,
+                          borderWidth: selected ? 1.5 : 1,
+                          borderColor: selected ? colors.brand : colors.border,
+                          backgroundColor: selected ? colors.brandSoft : colors.surface,
+                          opacity: pressed ? 0.7 : 1,
+                        })}
+                      >
+                        <Text style={{ ...type.footnote, color: selected ? colors.onBrandSoft : colors.text, ...rtlText }} numberOfLines={1}>
+                          {label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            ) : null}
+            <View style={{ gap: spacing.xs }}>
+              <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>رقم العميلة</Text>
+              <TextInput accessibilityLabel="رقم العميلة الأخرى" keyboardType="phone-pad" value={phone} onChangeText={setPhone} placeholder="مثال: +9665…" placeholderTextColor={colors.textTertiary} style={{ minHeight: hitSize.comfortable, paddingHorizontal: spacing.lg, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md, backgroundColor: colors.surface, color: colors.text, ...type.body, writingDirection: "ltr", textAlign: "left" }} />
+            </View>
           </View>
         ) : null}
 
