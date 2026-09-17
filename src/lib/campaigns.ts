@@ -36,6 +36,14 @@ export interface Campaign {
   templateName: string;
   category: string;
   segment: Segment;
+  /**
+   * An explicit audience, for a target the recency `Segment` union can't
+   * express (e.g. repeat bookers gone quiet). When set, this replaces
+   * `inSegment` for both drain and the view counts; `segment` is kept as a
+   * label only. IDs, not phones, since a customer row's id is what carries
+   * the per-campaign send mark.
+   */
+  customerIds?: string[] | null;
   status: CampaignStatus;
   createdBy: string | null;
   createdAt: string;
@@ -50,6 +58,11 @@ export interface CampaignView extends Campaign {
 
 const marksOf = (row: CustomerRow) =>
   (row.metadata?.broadcasts as Record<string, BroadcastMark>) ?? {};
+
+function inCampaignTarget(campaign: Campaign, row: CustomerRow): boolean {
+  if (campaign.customerIds) return campaign.customerIds.includes(row.id);
+  return inSegment(row, campaign.segment);
+}
 
 async function readCampaigns(): Promise<Campaign[]> {
   const admin = getAdminSupabaseClient();
@@ -77,7 +90,7 @@ async function writeCampaigns(campaigns: Campaign[]): Promise<void> {
 }
 
 function view(campaign: Campaign, rows: CustomerRow[]): CampaignView {
-  const inSeg = rows.filter((r) => inSegment(r, campaign.segment));
+  const inSeg = rows.filter((r) => inCampaignTarget(campaign, r));
   let sent = 0;
   let failed = 0;
   for (const r of inSeg) {
@@ -106,6 +119,7 @@ export async function createCampaign(input: {
   templateName: string;
   category: string;
   segment: Segment;
+  customerIds?: string[] | null;
   createdBy: string | null;
 }): Promise<Campaign> {
   const campaigns = await readCampaigns();
@@ -115,6 +129,7 @@ export async function createCampaign(input: {
     templateName: input.templateName,
     category: input.category,
     segment: input.segment,
+    customerIds: input.customerIds ?? null,
     status: "active",
     createdBy: input.createdBy,
     createdAt: new Date().toISOString(),
@@ -165,7 +180,7 @@ export async function drainCampaigns(): Promise<DrainSummary> {
   for (const campaign of active) {
     let sent = 0;
     const pending = rows.filter(
-      (r) => inSegment(r, campaign.segment) && marksOf(r)[campaign.id]?.status !== "sent",
+      (r) => inCampaignTarget(campaign, r) && marksOf(r)[campaign.id]?.status !== "sent",
     );
     for (const row of pending) {
       if (budget <= 0 || totalSent >= BATCH_BUDGET) break;

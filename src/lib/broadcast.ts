@@ -228,6 +228,79 @@ export async function syncAudienceFromReservations(): Promise<{ audience: number
   return { audience: existing.length + toInsert.length };
 }
 
+export interface RepeatIdleCustomer {
+  id: string;
+  phone: string;
+  name: string | null;
+  bookingCount: number;
+  lastBookingAt: string;
+  idleDays: number;
+}
+
+/**
+ * Repeat bookers who have gone quiet: at least `minBookings` past reservations
+ * and more than `idleDays` since the most recent one. This is a targeting cut
+ * the `Segment` union can't express (it only knows recency, not repetition),
+ * so it reads `rekaz_reservations` directly rather than the denormalised
+ * `last_booking_at` — counting bookings needs every row, not just the latest.
+ * Matched back to `customers` by phone so the result carries a row id a
+ * campaign can target.
+ */
+export async function repeatIdleCustomers(
+  minBookings: number,
+  idleDays: number,
+): Promise<RepeatIdleCustomer[]> {
+  const admin = getAdminSupabaseClient();
+  const resv: { customer_phone: string | null; customer_name: string | null; arrival_at: string | null }[] = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await admin
+      .from("rekaz_reservations")
+      .select("customer_phone, customer_name, arrival_at")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const batch = data ?? [];
+    resv.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+
+  const now = Date.now();
+  const perPhone = new Map<string, { count: number; last: number; name: string | null }>();
+  for (const r of resv) {
+    const at = r.arrival_at ? new Date(r.arrival_at).getTime() : null;
+    if (at === null || at > now) continue; // only bookings that actually happened
+    const d = digits(r.customer_phone);
+    if (!d) continue;
+    const entry = perPhone.get(d) ?? { count: 0, last: 0, name: null };
+    entry.count += 1;
+    if (at > entry.last) entry.last = at;
+    if (!entry.name && r.customer_name?.trim()) entry.name = r.customer_name.trim();
+    perPhone.set(d, entry);
+  }
+
+  const customers = await loadAllCustomers();
+  const byPhone = new Map(customers.map((c) => [digits(c.phone_number), c]));
+
+  const out: RepeatIdleCustomer[] = [];
+  for (const [phone, entry] of perPhone) {
+    if (entry.count < minBookings) continue;
+    const idle = (now - entry.last) / DAY_MS;
+    if (idle <= idleDays) continue;
+    const customer = byPhone.get(phone);
+    if (!customer) continue; // opted out, or not in the synced audience
+    out.push({
+      id: customer.id,
+      phone: customer.phone_number ?? `+${phone}`,
+      name: entry.name ?? customer.full_name ?? null,
+      bookingCount: entry.count,
+      lastBookingAt: new Date(entry.last).toISOString(),
+      idleDays: Math.floor(idle),
+    });
+  }
+  return out.sort((a, b) => b.bookingCount - a.bookingCount);
+}
+
 export interface BroadcastStatus {
   templateKey: TemplateKey;
   segment: Segment;

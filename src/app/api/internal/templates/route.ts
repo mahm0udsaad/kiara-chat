@@ -10,18 +10,29 @@
  * GET ?action=segment_counts → audience size per recency segment, as the
  *        campaign send path will read it (`customers.metadata.last_booking_at`,
  *        not a live Rekaz query — call sync_audience first if that matters).
+ * GET ?action=repeat_idle&minBookings=2&idleDays=5 → repeat bookers who have
+ *        gone quiet: reads `rekaz_reservations` directly, so it's live and
+ *        needs no prior sync.
  * POST { action: "create_template", name, body, imagePath, category? }
  *        imagePath is an object already in the whatsapp-media bucket.
  * POST { action: "sync_audience" }
  *        folds `rekaz_reservations` into `customers.metadata.last_booking_at`
  *        / `next_booking_at`, same as the broadcast screen's "sync" button.
  *        Segments are only as fresh as the last call of this.
- * POST { action: "start_campaign", templateName, language?, segment? }
+ * POST { action: "start_campaign", templateName, language?, segment?, customerIds? }
  *        refuses unless Meta has approved the template; sends the first batch.
+ *        customerIds, if given, targets exactly that list instead of `segment`
+ *        (segment is then kept only as a label on the campaign).
  */
 import { timingSafeEqual } from "crypto";
 
-import { isSegment, segmentCounts, syncAudienceFromReservations, type Segment } from "@/lib/broadcast";
+import {
+  isSegment,
+  repeatIdleCustomers,
+  segmentCounts,
+  syncAudienceFromReservations,
+  type Segment,
+} from "@/lib/broadcast";
 import { createCampaign, drainCampaigns } from "@/lib/campaigns";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { WHATSAPP_MEDIA_BUCKET } from "@/lib/storage-media";
@@ -56,6 +67,17 @@ export async function GET(request: Request) {
       return Response.json({ segmentCounts: await segmentCounts() });
     } catch (e) {
       return fail(502, e instanceof Error ? e.message : "segment count failed");
+    }
+  }
+  if (action === "repeat_idle") {
+    const url = new URL(request.url);
+    const minBookings = Math.max(1, Number(url.searchParams.get("minBookings") ?? 2) || 2);
+    const idleDays = Math.max(0, Number(url.searchParams.get("idleDays") ?? 5) || 5);
+    try {
+      const customers = await repeatIdleCustomers(minBookings, idleDays);
+      return Response.json({ minBookings, idleDays, count: customers.length, customers });
+    } catch (e) {
+      return fail(502, e instanceof Error ? e.message : "repeat_idle failed");
     }
   }
   try {
@@ -112,6 +134,12 @@ export async function POST(request: Request) {
     const language = typeof b.language === "string" ? b.language : "ar";
     const segment: Segment =
       typeof b.segment === "string" && isSegment(b.segment) ? b.segment : "all";
+    const customerIds = Array.isArray(b.customerIds)
+      ? b.customerIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+      : null;
+    if (Array.isArray(b.customerIds) && (!customerIds || customerIds.length === 0)) {
+      return fail(400, "customerIds must be a non-empty array of strings");
+    }
     const template = (await listTemplatesWithStatus()).find(
       (t) => t.name === templateName && t.language === language,
     );
@@ -124,6 +152,7 @@ export async function POST(request: Request) {
       templateName: template.name,
       category: template.category ?? "MARKETING",
       segment,
+      customerIds,
       createdBy: "ops",
     });
     try {
