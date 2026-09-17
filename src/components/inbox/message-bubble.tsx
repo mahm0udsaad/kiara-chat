@@ -231,6 +231,25 @@ function MediaSlotView({
   );
 }
 
+/**
+ * What an empty message actually was. A customer's emoji reaction used to
+ * render as a blank bubble here and as "رسالة وسائط" on the phone, which staff
+ * read as lost media. Rows stored before the webhook wrote the emoji into the
+ * message are still empty, so they need a label of their own.
+ */
+function emptyMessageLabel(messageType: string): string {
+  switch (messageType) {
+    case "reaction":
+      return "تفاعلت العميلة على رسالة";
+    case "contacts":
+      return "جهة اتصال مُرسلة";
+    case "unsupported":
+      return "⚠️ رسالة غير مدعومة من واتساب — اطلبي من العميلة إعادة إرسالها";
+    default:
+      return MEDIA_TYPES.has(messageType) ? "رسالة وسائط" : "رسالة بدون نص";
+  }
+}
+
 export function MessageBubble({ message }: { message: Message }) {
   const isCustomer = message.role === "customer";
   const isSystem = message.role === "system";
@@ -339,7 +358,13 @@ export function MessageBubble({ message }: { message: Message }) {
         )}
         dir={dir}
       >
-        <p className="whitespace-pre-wrap">{message.content}</p>
+        {message.content ? (
+          <p className="whitespace-pre-wrap">{message.content}</p>
+        ) : (
+          <p className="whitespace-pre-wrap italic opacity-70" dir="rtl">
+            {emptyMessageLabel(message.message_type)}
+          </p>
+        )}
         <MetaFooter message={message} />
       </div>
     </div>

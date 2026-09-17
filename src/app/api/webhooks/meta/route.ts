@@ -23,6 +23,7 @@ import { parseCallPermissionReply } from "@/lib/transport/meta-calling";
 import { applyCallPermissionReply } from "@/lib/call-permissions";
 import { ingestCalls } from "@/lib/calls";
 import { customerProvider } from "@/lib/transport";
+import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -59,6 +60,12 @@ type MetaMessage = {
   audio?: MetaMedia & { voice?: boolean };
   document?: MetaMedia;
   sticker?: MetaMedia;
+  /** An emoji on one of the thread's messages. An empty `emoji` removes it. */
+  reaction?: { message_id?: string; emoji?: string };
+  contacts?: Array<{
+    name?: { formatted_name?: string };
+    phones?: Array<{ phone?: string; wa_id?: string }>;
+  }>;
   /** Present on `type: "unsupported"` — e.g. polls, view-once media past its
    * viewing window, or a message shape this API version doesn't relay. */
   errors?: Array<{ code?: number; title?: string; message?: string }>;
@@ -171,10 +178,49 @@ async function storeInboundMedia(
   }
 }
 
+/**
+ * A reaction as a line staff can read. Stored as the message text so every
+ * surface — web, phone, inbox preview, older app builds — shows it without
+ * knowing about reactions; the bot never sees it, because it reads `content`
+ * from `messageText`, which stays empty.
+ */
+async function reactionText(
+  conversationId: string,
+  reaction: NonNullable<MetaMessage["reaction"]>,
+): Promise<string> {
+  const emoji = reaction.emoji?.trim() || "";
+  let quoted = "";
+  if (reaction.message_id) {
+    const { data } = await getAdminSupabaseClient()
+      .from("messages")
+      .select("content")
+      .eq("conversation_id", conversationId)
+      .eq("external_message_sid", reaction.message_id)
+      .maybeSingle();
+    const text = ((data?.content as string | null) ?? "").replace(/\s+/g, " ").trim();
+    if (text) quoted = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+  }
+  const head = `تفاعلت العميلة بـ ${emoji}`;
+  return quoted ? `${head} على: «${quoted}»` : `${head} على رسالة`;
+}
+
+function contactsText(contacts: NonNullable<MetaMessage["contacts"]>): string {
+  const lines = contacts.map((contact) => {
+    const name = contact.name?.formatted_name?.trim() || "بدون اسم";
+    const phones = (contact.phones ?? [])
+      .map((phone) => phone.phone?.trim() || (phone.wa_id ? `+${phone.wa_id}` : ""))
+      .filter(Boolean);
+    return phones.length ? `${name} — ${phones.join("، ")}` : name;
+  });
+  return `👤 جهة اتصال:\n${lines.join("\n")}`;
+}
+
 async function ingestMessage(value: MetaValue, message: MetaMessage): Promise<void> {
   const messageSid = message.id?.trim();
   const phone = e164(message.from);
   if (!messageSid || !phone || (await hasMessageWithSid(messageSid))) return;
+  // Taking a reaction back is not something to post into the thread.
+  if (message.type === "reaction" && !message.reaction?.emoji?.trim()) return;
 
   const contact = value.contacts?.find(
     (candidate) => e164(candidate.wa_id) === phone,
@@ -195,6 +241,8 @@ async function ingestMessage(value: MetaValue, message: MetaMessage): Promise<vo
   if (message.button) metadata.button = message.button;
   if (message.interactive) metadata.interactive = message.interactive;
   if (message.location) metadata.location = message.location;
+  if (message.reaction) metadata.reaction = message.reaction;
+  if (message.contacts) metadata.contacts = message.contacts;
 
   if (message.type === "unsupported" && message.errors?.length) {
     // Kept on the row, not just in the log. Meta's `errors[]` is the only
@@ -246,6 +294,12 @@ async function ingestMessage(value: MetaValue, message: MetaMessage): Promise<vo
   const permissionReply = parseCallPermissionReply(message);
   const displayContent =
     content ||
+    (message.type === "reaction" && message.reaction
+      ? await reactionText(conversation.id, message.reaction)
+      : null) ||
+    (message.type === "contacts" && message.contacts?.length
+      ? contactsText(message.contacts)
+      : null) ||
     (permissionReply
       ? permissionReply.response === "accept"
         ? "✅ سمحت العميلة باستقبال مكالمة"

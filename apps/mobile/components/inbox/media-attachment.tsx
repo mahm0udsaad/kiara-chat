@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Linking, Modal, Platform, Pressable, Text, View } from "react-native";
 import { Image } from "expo-image";
-import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { radius, rtlText, spacing, type } from "@/constants/theme";
@@ -77,7 +77,15 @@ export function MediaAttachment({
     return <ImageAttachment url={url} label={slot.original_filename} />;
   }
   if (messageType === "voice" || messageType === "audio") {
-    return <AudioAttachment url={url} isVoice={messageType === "voice"} ink={ink} />;
+    return (
+      <AudioAttachment
+        url={url}
+        urlFetchedAt={media.dataUpdatedAt}
+        refreshUrl={media.refetch}
+        isVoice={messageType === "voice"}
+        ink={ink}
+      />
+    );
   }
 
   return (
@@ -167,22 +175,130 @@ function ImageAttachment({ url, label }: { url: string; label?: string | null })
 }
 
 /**
+ * The session every in-thread playback runs under.
+ *
+ * iOS fills any field left out of `setAudioModeAsync` with its own default,
+ * and that default is `playsInSilentMode: false` — the `.ambient` category,
+ * which the ring/silent switch mutes. Staff keep their phones on silent at
+ * work, so voice notes "played" with the timer running and no sound, and
+ * resetting after a recording with `{ allowsRecording: false }` alone put the
+ * session straight back into that state. Always pass the whole mode.
+ */
+export const PLAYBACK_AUDIO_MODE = {
+  playsInSilentMode: true,
+  allowsRecording: false,
+  interruptionMode: "doNotMix",
+  shouldPlayInBackground: false,
+  shouldRouteThroughEarpiece: false,
+} as const;
+
+/** A signed URL is good for an hour; refresh well before a tap can hit it. */
+const URL_FRESH_MS = 40 * 60_000;
+/** A player that has not loaded by then is not going to. */
+const LOAD_TIMEOUT_MS = 15_000;
+
+/**
  * A voice note, played in place.
  *
- * Only mounted once the signed URL exists, so the player hooks always get a
- * real source and never have to be swapped mid-life.
+ * No native player exists until the employee taps play. A thread used to
+ * build one per voice note on open — dozens of prepared decoders, each holding
+ * a signed URL that expired an hour later — and a player that failed once
+ * (an expired URL, a dropped connection, a decoder the device would not hand
+ * out) stayed dead with a "…" and a play button that did nothing, until
+ * something else happened to remount the bubble. Now the tap fetches a fresh
+ * URL if needed, builds the player, and a failure offers a real retry.
  */
 function AudioAttachment({
   url,
+  urlFetchedAt,
+  refreshUrl,
   isVoice,
   ink,
 }: {
   url: string;
+  urlFetchedAt: number;
+  refreshUrl: () => Promise<unknown>;
   isVoice: boolean;
   ink: string;
 }) {
+  const [armed, setArmed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [preparing, setPreparing] = useState(false);
+  const [failed, setFailed] = useState(false);
+  // Stable, because the player below re-renders on every status tick and its
+  // load timeout must not restart each time.
+  const fail = useCallback(() => setFailed(true), []);
+
+  const start = async () => {
+    if (preparing) return;
+    setPreparing(true);
+    setFailed(false);
+    try {
+      await setAudioModeAsync(PLAYBACK_AUDIO_MODE).catch(() => {});
+      if (failed || Date.now() - urlFetchedAt > URL_FRESH_MS) await refreshUrl();
+      setAttempt((value) => value + 1);
+      setArmed(true);
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  if (!armed || failed) {
+    return (
+      <AudioRow
+        ink={ink}
+        isVoice={isVoice}
+        icon={failed ? "arrow.clockwise" : "play.fill"}
+        label={failed ? "إعادة المحاولة" : "تشغيل"}
+        busy={preparing}
+        text={failed ? "تعذّر التشغيل" : ""}
+        onPress={() => void start()}
+      />
+    );
+  }
+
+  return (
+    <LiveAudio
+      key={`${url}#${attempt}`}
+      url={url}
+      isVoice={isVoice}
+      ink={ink}
+      onFailed={fail}
+    />
+  );
+}
+
+function LiveAudio({
+  url,
+  isVoice,
+  ink,
+  onFailed,
+}: {
+  url: string;
+  isVoice: boolean;
+  ink: string;
+  onFailed: () => void;
+}) {
   const player = useAudioPlayer({ uri: url });
   const status = useAudioPlayerStatus(player);
+
+  // Mounted by a tap on play, so start straight away.
+  useEffect(() => {
+    player.play();
+  }, [player]);
+
+  useEffect(() => {
+    if (status.error) {
+      console.warn("[media] voice note failed", status.error);
+      onFailed();
+    }
+  }, [status.error, onFailed]);
+
+  useEffect(() => {
+    if (status.isLoaded) return;
+    const timer = setTimeout(onFailed, LOAD_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [status.isLoaded, onFailed]);
 
   // Playback leaves the head at the end; rewinding here means a second tap on
   // play restarts the note instead of doing nothing.
@@ -193,11 +309,51 @@ function AudioAttachment({
   const remaining = Math.max(0, Math.round(status.duration - status.currentTime));
 
   return (
-    <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+    <AudioRow
+      ink={ink}
+      isVoice={isVoice}
+      icon={status.playing ? "pause.fill" : "play.fill"}
+      label={status.playing ? "إيقاف مؤقت" : "تشغيل"}
+      busy={!status.isLoaded}
+      text={status.isLoaded ? formatSeconds(remaining) : ""}
+      onPress={() => {
+        if (status.playing) {
+          player.pause();
+          return;
+        }
+        // Another recording or call may have changed the session since.
+        void setAudioModeAsync(PLAYBACK_AUDIO_MODE)
+          .catch(() => {})
+          .then(() => player.play());
+      }}
+    />
+  );
+}
+
+function AudioRow({
+  ink,
+  isVoice,
+  icon,
+  label,
+  busy,
+  text,
+  onPress,
+}: {
+  ink: string;
+  isVoice: boolean;
+  icon: "play.fill" | "pause.fill" | "arrow.clockwise";
+  label: string;
+  busy: boolean;
+  text: string;
+  onPress: () => void;
+}) {
+  return (
+    <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm, minWidth: 140 }}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={status.playing ? "إيقاف مؤقت" : "تشغيل"}
-        onPress={() => (status.playing ? player.pause() : player.play())}
+        accessibilityLabel={label}
+        onPress={onPress}
+        hitSlop={spacing.sm}
         style={({ pressed }) => ({
           width: 34,
           height: 34,
@@ -208,12 +364,18 @@ function AudioAttachment({
           opacity: pressed ? 0.7 : 1,
         })}
       >
-        <IconSymbol name={status.playing ? "pause.fill" : "play.fill"} color={ink} size={16} />
+        {busy ? (
+          <ActivityIndicator size="small" color={ink} />
+        ) : (
+          <IconSymbol name={icon} color={ink} size={16} />
+        )}
       </Pressable>
       <IconSymbol name={isVoice ? "waveform" : "doc"} color={ink} size={16} />
-      <Text style={{ ...type.footnote, color: ink, fontVariant: ["tabular-nums"] }}>
-        {status.isLoaded ? formatSeconds(remaining) : "…"}
-      </Text>
+      {text ? (
+        <Text style={{ ...type.footnote, color: ink, fontVariant: ["tabular-nums"], ...rtlText }}>
+          {text}
+        </Text>
+      ) : null}
     </View>
   );
 }

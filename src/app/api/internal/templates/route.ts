@@ -7,14 +7,21 @@
  * these actions touch, so this grants nothing new.
  *
  * GET  → templates with their live approval status.
+ * GET ?action=segment_counts → audience size per recency segment, as the
+ *        campaign send path will read it (`customers.metadata.last_booking_at`,
+ *        not a live Rekaz query — call sync_audience first if that matters).
  * POST { action: "create_template", name, body, imagePath, category? }
  *        imagePath is an object already in the whatsapp-media bucket.
+ * POST { action: "sync_audience" }
+ *        folds `rekaz_reservations` into `customers.metadata.last_booking_at`
+ *        / `next_booking_at`, same as the broadcast screen's "sync" button.
+ *        Segments are only as fresh as the last call of this.
  * POST { action: "start_campaign", templateName, language?, segment? }
  *        refuses unless Meta has approved the template; sends the first batch.
  */
 import { timingSafeEqual } from "crypto";
 
-import { isSegment, type Segment } from "@/lib/broadcast";
+import { isSegment, segmentCounts, syncAudienceFromReservations, type Segment } from "@/lib/broadcast";
 import { createCampaign, drainCampaigns } from "@/lib/campaigns";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { WHATSAPP_MEDIA_BUCKET } from "@/lib/storage-media";
@@ -43,6 +50,14 @@ const fail = (status: number, error: string) => Response.json({ error }, { statu
 
 export async function GET(request: Request) {
   if (!authorized(request)) return fail(401, "Unauthorized");
+  const action = new URL(request.url).searchParams.get("action");
+  if (action === "segment_counts") {
+    try {
+      return Response.json({ segmentCounts: await segmentCounts() });
+    } catch (e) {
+      return fail(502, e instanceof Error ? e.message : "segment count failed");
+    }
+  }
   try {
     return Response.json({ templates: await listTemplatesWithStatus() });
   } catch (e) {
@@ -80,6 +95,15 @@ export async function POST(request: Request) {
       return Response.json({ sid: created.sid, name: created.name, status: "pending" });
     } catch (e) {
       return fail(400, e instanceof Error ? e.message : "template create failed");
+    }
+  }
+
+  if (b.action === "sync_audience") {
+    try {
+      const result = await syncAudienceFromReservations();
+      return Response.json({ audience: result.audience, segmentCounts: await segmentCounts() });
+    } catch (e) {
+      return fail(500, e instanceof Error ? e.message : "audience sync failed");
     }
   }
 

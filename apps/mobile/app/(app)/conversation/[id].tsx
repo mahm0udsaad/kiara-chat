@@ -108,6 +108,27 @@ function DaySeparator({ label }: { label: string }) {
   );
 }
 
+/**
+ * What an empty message actually was.
+ *
+ * Everything with no text used to read "رسالة وسائط", so a customer's emoji
+ * reaction looked like a photo or voice note that had failed to load — staff
+ * reported it as lost media. Older rows stored before the webhook wrote a
+ * reaction's emoji into the message still arrive empty, hence the labels.
+ */
+function emptyMessageLabel(messageType: string): string {
+  switch (messageType) {
+    case "reaction":
+      return "تفاعلت العميلة على رسالة";
+    case "contacts":
+      return "جهة اتصال مُرسلة";
+    case "unsupported":
+      return "⚠️ رسالة غير مدعومة من واتساب — اطلبي من العميلة إعادة إرسالها";
+    default:
+      return MEDIA_MESSAGE_TYPES.has(messageType) ? "رسالة وسائط" : "رسالة بدون نص";
+  }
+}
+
 const MessageBubble = memo(function MessageBubble({
   message,
   onResend,
@@ -323,7 +344,7 @@ const MessageBubble = memo(function MessageBubble({
               ...rtlText,
             }}
           >
-            {message.content || "رسالة وسائط"}
+            {message.content || emptyMessageLabel(message.message_type)}
           </Text>
         </View>
       ) : null}
@@ -331,7 +352,7 @@ const MessageBubble = memo(function MessageBubble({
         <Text style={{ ...type.caption, fontWeight: "400", opacity: 0.75, color: outbound ? colors.onBrand : colors.textTertiary, fontVariant: ["tabular-nums"], textAlign: "left" }}>
           {formatters.time.format(new Date(message.created_at))}
         </Text>
-        {message.content ? (
+        {message.content && message.message_type !== "reaction" ? (
           <Pressable accessibilityRole="button" accessibilityLabel="إعادة إرسال الرسالة" onPress={() => onResend(message.content)} hitSlop={spacing.sm} style={({ pressed }) => ({ minWidth: hitSize.min, minHeight: hitSize.min - 12, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: 3, opacity: pressed ? 0.55 : 0.78 })}>
             <IconSymbol name="paperplane.fill" color={outbound ? colors.onBrand : colors.textSecondary} size={12} />
             <Text style={{ ...type.caption, color: outbound ? colors.onBrand : colors.textSecondary, ...rtlText }}>إعادة</Text>

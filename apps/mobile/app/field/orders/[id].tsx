@@ -1,4 +1,5 @@
-import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import { PLAYBACK_AUDIO_MODE } from "@/components/inbox/media-attachment";
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -170,7 +171,13 @@ function VoiceNote({ url }: { url: string }) {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={status.playing ? t("stopListening") : t("listenToNote")}
-        onPress={() => (status.playing ? player.pause() : player.play())}
+        onPress={() => {
+          if (status.playing) return player.pause();
+          // Without the full mode iOS mutes playback on the silent switch.
+          void setAudioModeAsync(PLAYBACK_AUDIO_MODE)
+            .catch(() => {})
+            .then(() => player.play());
+        }}
         style={({ pressed }) => ({
           width: hitSize.min,
           height: hitSize.min,

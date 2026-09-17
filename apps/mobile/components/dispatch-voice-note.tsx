@@ -6,6 +6,7 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from "expo-audio";
+import { PLAYBACK_AUDIO_MODE } from "@/components/inbox/media-attachment";
 import { VOICE_NOTE_RECORDING } from "@/lib/audio-recording";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -113,8 +114,9 @@ export function DispatchVoiceNote({
     } catch {
       setError("تعذّر إنهاء التسجيل.");
     }
-    // Hand the session back so playback isn't stuck on the earpiece.
-    await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
+    // Hand the session back so playback isn't stuck on the earpiece — and
+    // with the whole mode, or iOS drops back to a silent-switch-muted session.
+    await setAudioModeAsync(PLAYBACK_AUDIO_MODE).catch(() => {});
     if (!keep || !uri) return;
     onChange({ uri, seconds: elapsed });
   };

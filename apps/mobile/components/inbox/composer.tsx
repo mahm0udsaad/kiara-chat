@@ -18,6 +18,7 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from "expo-audio";
+import { PLAYBACK_AUDIO_MODE } from "@/components/inbox/media-attachment";
 import { VOICE_NOTE_RECORDING } from "@/lib/audio-recording";
 
 import {
@@ -318,8 +319,9 @@ export function Composer({
       } catch {
         setMediaError("تعذّر إنهاء التسجيل.");
       }
-      // Hand the session back so playback isn't stuck on the earpiece.
-      await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
+      // Hand the session back so playback isn't stuck on the earpiece — and
+    // with the whole mode, or iOS drops back to a silent-switch-muted session.
+      await setAudioModeAsync(PLAYBACK_AUDIO_MODE).catch(() => {});
       if (!send || !uri) return;
 
       setUploading(true);
