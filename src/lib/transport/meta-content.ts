@@ -149,18 +149,10 @@ export async function metaTemplateHeaderImage(
   const cached = headerImageCache.get(key);
   if (cached && Date.now() - cached.at < HEADER_IMAGE_TTL_MS) return cached.link;
 
-  // The image the template was created with in Kiara is authoritative; the
-  // env override predates per-template images and would put one template's
-  // picture on another's message.
-  const stored = await storedTemplateHeaderImage(name, language);
-  if (stored) {
-    headerImageCache.set(key, { at: Date.now(), link: stored });
-    return stored;
-  }
-
-  const override = process.env.META_TEMPLATE_HEADER_IMAGE_URL?.trim();
-  if (override) return override;
-
+  // The template itself decides whether there is a header to fill. The
+  // stored image and the env override used to be returned first, so a
+  // text-only template went out with an image header and Meta refused the
+  // whole send: "132018 header: Template does not contain title component".
   const { wabaId } = metaCloudConfig();
   if (!wabaId) throw new Error("Meta Cloud API is not configured: missing WABA ID");
   const page: { data?: MetaTemplateRow[] } = await metaGraphCall(
@@ -170,9 +162,19 @@ export async function metaTemplateHeaderImage(
     (candidate) => candidate.name === name && candidate.language === language,
   );
   const header = (row?.components ?? []).find((component) => component.type === "HEADER");
-  const handle =
-    header?.format === "IMAGE" ? header.example?.header_handle?.[0]?.trim() : undefined;
-  const link = handle && /^https?:\/\//i.test(handle) ? handle : null;
+  if (header?.format !== "IMAGE") {
+    headerImageCache.set(key, { at: Date.now(), link: null });
+    return null;
+  }
+
+  // The image the template was created with in Kiara is authoritative; the
+  // env override predates per-template images and would put one template's
+  // picture on another's message.
+  const handle = header.example?.header_handle?.[0]?.trim();
+  const link =
+    (await storedTemplateHeaderImage(name, language)) ||
+    process.env.META_TEMPLATE_HEADER_IMAGE_URL?.trim() ||
+    (handle && /^https?:\/\//i.test(handle) ? handle : null);
   headerImageCache.set(key, { at: Date.now(), link });
   return link;
 }
