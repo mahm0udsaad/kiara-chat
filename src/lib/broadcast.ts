@@ -35,7 +35,7 @@ export const DAILY_SEND_CAP = Number(process.env.BROADCAST_DAILY_CAP || 2000);
 const BATCH_SIZE = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export type Segment = "all" | "week" | "month" | "upcoming" | "dormant";
+export type Segment = "all" | "week" | "month" | "upcoming" | "dormant" | "repeat_idle";
 
 export const SEGMENTS: { key: Segment; label: string; hint: string }[] = [
   { key: "all", label: "كل العملاء", hint: "القائمة كاملة" },
@@ -43,6 +43,11 @@ export const SEGMENTS: { key: Segment; label: string; hint: string }[] = [
   { key: "month", label: "حجزوا هذا الشهر", hint: "آخر حجز خلال ٣٠ يومًا" },
   { key: "upcoming", label: "لديهم حجز قادم", hint: "موعد قادم لم يحن بعد" },
   { key: "dormant", label: "بدون حجز حديث", hint: "لا حجز في الفترة المسجّلة" },
+  {
+    key: "repeat_idle",
+    label: "عميلات متكررات لم يحجزن مؤخرًا",
+    hint: "حجزن مرتين فأكثر، وآخر حجز قبل أكثر من ٥ أيام — أقرب من يستحق العرض",
+  },
 ];
 
 export function isSegment(v: string): v is Segment {
@@ -88,6 +93,11 @@ const lastBooking = (row: CustomerRow) =>
   (row.metadata?.last_booking_at as string | undefined) ?? null;
 const nextBooking = (row: CustomerRow) =>
   (row.metadata?.next_booking_at as string | undefined) ?? null;
+/** Count of past bookings, stamped by `syncAudienceFromReservations`. */
+const bookingCount = (row: CustomerRow) =>
+  (row.metadata?.booking_count as number | undefined) ?? 0;
+const REPEAT_IDLE_MIN_BOOKINGS = 2;
+const REPEAT_IDLE_DAYS = 5;
 
 export function inSegment(row: CustomerRow, segment: Segment): boolean {
   if (segment === "all") return true;
@@ -103,6 +113,12 @@ export function inSegment(row: CustomerRow, segment: Segment): boolean {
       return nx !== null && nx > now;
     case "dormant":
       return lp === null && nx === null;
+    case "repeat_idle":
+      return (
+        bookingCount(row) >= REPEAT_IDLE_MIN_BOOKINGS &&
+        lp !== null &&
+        lp <= now - REPEAT_IDLE_DAYS * DAY_MS
+      );
   }
 }
 
@@ -128,9 +144,10 @@ export async function loadAllCustomers(): Promise<CustomerRow[]> {
 
 /**
  * Fold recent bookings into the customer list: create rows for customers who
- * only exist in `rekaz_reservations`, and stamp everyone's latest past booking
- * and nearest future booking so segments read straight off the row. Idempotent
- * — safe to run before every send.
+ * only exist in `rekaz_reservations`, and stamp everyone's latest past booking,
+ * nearest future booking, and past-booking count so segments (including
+ * "repeat_idle") read straight off the row. Idempotent — safe to run before
+ * every send.
  */
 export async function syncAudienceFromReservations(): Promise<{ audience: number }> {
   const admin = getAdminSupabaseClient();
@@ -152,16 +169,18 @@ export async function syncAudienceFromReservations(): Promise<{ audience: number
   const now = Date.now();
   const booking = new Map<
     string,
-    { phone: string; name: string | null; last: string | null; next: string | null }
+    { phone: string; name: string | null; last: string | null; next: string | null; count: number }
   >();
   for (const r of resv) {
     const d = digits(r.customer_phone);
     if (!d) continue;
     const at = r.arrival_at ? new Date(r.arrival_at).getTime() : null;
     const entry =
-      booking.get(d) ?? { phone: `+${d}`, name: r.customer_name?.trim() || null, last: null, next: null };
+      booking.get(d) ??
+      { phone: `+${d}`, name: r.customer_name?.trim() || null, last: null, next: null, count: 0 };
     if (at !== null) {
       if (at <= now) {
+        entry.count += 1;
         if (!entry.last || at > new Date(entry.last).getTime()) entry.last = r.arrival_at;
       } else if (!entry.next || at < new Date(entry.next).getTime()) {
         entry.next = r.arrival_at;
@@ -185,10 +204,15 @@ export async function syncAudienceFromReservations(): Promise<{ audience: number
     const current = byPhone.get(d);
     if (current) {
       const meta = (current.metadata as Record<string, unknown> | null) ?? {};
-      if (meta.last_booking_at === b.last && meta.next_booking_at === b.next) continue;
+      if (
+        meta.last_booking_at === b.last &&
+        meta.next_booking_at === b.next &&
+        meta.booking_count === b.count
+      )
+        continue;
       toUpdate.push({
         id: current.id,
-        metadata: { ...meta, last_booking_at: b.last, next_booking_at: b.next },
+        metadata: { ...meta, last_booking_at: b.last, next_booking_at: b.next, booking_count: b.count },
       });
     } else {
       // `source` is guarded by a check constraint admitting only the values
@@ -203,6 +227,7 @@ export async function syncAudienceFromReservations(): Promise<{ audience: number
           origin: "rekaz_reservation",
           last_booking_at: b.last,
           next_booking_at: b.next,
+          booking_count: b.count,
         },
       });
     }
@@ -316,7 +341,7 @@ export interface BroadcastStatus {
 }
 
 function countSegments(rows: CustomerRow[]): Record<Segment, number> {
-  const out = { all: 0, week: 0, month: 0, upcoming: 0, dormant: 0 } as Record<Segment, number>;
+  const out = { all: 0, week: 0, month: 0, upcoming: 0, dormant: 0, repeat_idle: 0 } as Record<Segment, number>;
   for (const row of rows) for (const s of SEGMENTS) if (inSegment(row, s.key)) out[s.key] += 1;
   return out;
 }

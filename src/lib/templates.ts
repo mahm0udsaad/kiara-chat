@@ -21,7 +21,12 @@ import {
 import { customerProvider } from "@/lib/transport";
 import { META_TEMPLATE_PREFIX } from "@/lib/transport/meta-content";
 
-export type TemplateKey = "booking_followup" | "conversation_opener" | "number_notice" | "open_conversation";
+export type TemplateKey =
+  | "booking_followup"
+  | "conversation_opener"
+  | "number_notice"
+  | "open_conversation"
+  | "kiara_offer_verified_196";
 
 export interface TemplateVariableSpec {
   /** Positional key as Twilio wants it: "1", "2", … */
@@ -113,6 +118,19 @@ const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
     category: "marketing",
     body:
       "📢 تنويه مهم لعملائنا الكرام 🤍\n\nفي حال كان رقم الواتساب الخاص بكيارا لا يظهر لديكم أو لا يعمل بشكل صحيح، نرجو منكم حذف الرقم من جهات الاتصال في جوالكم ثم إعادة حفظه من جديد.\n\n📱 رقم كيارا سبا:\n966508421748\n\nبعد إعادة حفظ الرقم، افتحوا الواتساب من جديد وسيظهر لكم الحساب بإذن الله 🤍\n\nشاكرين لكم تفهّمكم وصبركم، ونسعد دائمًا بخدمتكم 🌿\nKiara Spa | كيارا سبا",
+    buttons: [],
+    variables: [],
+  },
+  kiara_offer_verified_196: {
+    env: "TWILIO_CONTENT_SID_KIARA_OFFER_VERIFIED_196",
+    metaEnv: "META_TEMPLATE_NAME_KIARA_OFFER_VERIFIED_196",
+    metaName: "kiara_offer_verified_196",
+    label: "عرض توثيق الواتساب (مساج لشخصين)",
+    description:
+      "قالب صورة بمناسبة توثيق حساب كيارا سبا على واتساب — عرض مساج لشخصين بـ ١٩٦ ريال، لمدة ثلاثة أيام.",
+    category: "marketing",
+    body:
+      "عرض جديد من كيارا سبا 🍃\n⏳ العرض لمدة ثلاثة أيام فقط\n\n📌 ملاحظة: إذا لم تتمكنوا من مراسلتنا على هذا الرقم قم بحذف الرقم واضافته من جديد\n📞 أو الاتصال على: 0508421748 \n\nKiara Spa | كيارا سبا 🌿",
     buttons: [],
     variables: [],
   },

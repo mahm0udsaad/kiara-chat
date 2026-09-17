@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { BroadcastAnalyticsView } from "@/components/broadcast-analytics-view";
 
-type Segment = "all" | "week" | "month" | "upcoming" | "dormant";
+type Segment = "all" | "week" | "month" | "upcoming" | "dormant" | "repeat_idle";
 
 const SEGMENTS: { key: Segment; label: string; hint: string }[] = [
   { key: "all", label: "كل العملاء", hint: "القائمة كاملة" },
@@ -24,9 +24,19 @@ const SEGMENTS: { key: Segment; label: string; hint: string }[] = [
   { key: "month", label: "حجزوا هذا الشهر", hint: "آخر حجز خلال ٣٠ يومًا" },
   { key: "upcoming", label: "لديهم حجز قادم", hint: "موعد قادم لم يحن بعد" },
   { key: "dormant", label: "بدون حجز حديث", hint: "لا حجز في الفترة المسجّلة" },
+  {
+    key: "repeat_idle",
+    label: "متكررات لم يحجزن مؤخرًا",
+    hint: "حجزن مرتين فأكثر، وآخر حجز قبل أكثر من ٥ أيام",
+  },
 ];
 
 const TEMPLATE_OPTIONS = [
+  {
+    key: "kiara_offer_verified_196",
+    label: "عرض توثيق الواتساب (مساج لشخصين ١٩٦ ريال)",
+    desc: "قالب الصورة الخاص بعرض التوثيق — لمدة ثلاثة أيام",
+  },
   {
     key: "open_conversation",
     label: "open_conversation (تنويه الرقم)",
@@ -70,7 +80,7 @@ interface DrainResult {
 export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { initialTemplateKey?: string }) {
   const [activeTemplate, setActiveTemplate] = useState<string>(initialTemplateKey);
   const [activeTab, setActiveTab] = useState<"send" | "analytics">("send");
-  const [segment, setSegment] = useState<Segment>("all");
+  const [segment, setSegment] = useState<Segment>("repeat_idle");
   const [status, setStatus] = useState<Status | null>(null);
   const [running, setRunning] = useState(false);
   const [syncing, setSyncing] = useState(false);
