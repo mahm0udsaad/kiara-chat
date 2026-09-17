@@ -10,6 +10,11 @@ import type {
   TemplateCategory,
   TemplateSummary,
 } from "./twilio-content";
+import {
+  rememberTemplateHeaderImage,
+  storedTemplateHeaderImage,
+  storagePathFromSignedUrl,
+} from "@/lib/template-header-images";
 
 export const META_TEMPLATE_PREFIX = "meta:";
 
@@ -140,12 +145,21 @@ export async function metaTemplateHeaderImage(
   name: string,
   language: string,
 ): Promise<string | null> {
-  const override = process.env.META_TEMPLATE_HEADER_IMAGE_URL?.trim();
-  if (override) return override;
-
   const key = `${name}:${language}`;
   const cached = headerImageCache.get(key);
   if (cached && Date.now() - cached.at < HEADER_IMAGE_TTL_MS) return cached.link;
+
+  // The image the template was created with in Kiara is authoritative; the
+  // env override predates per-template images and would put one template's
+  // picture on another's message.
+  const stored = await storedTemplateHeaderImage(name, language);
+  if (stored) {
+    headerImageCache.set(key, { at: Date.now(), link: stored });
+    return stored;
+  }
+
+  const override = process.env.META_TEMPLATE_HEADER_IMAGE_URL?.trim();
+  if (override) return override;
 
   const { wabaId } = metaCloudConfig();
   if (!wabaId) throw new Error("Meta Cloud API is not configured: missing WABA ID");
@@ -273,5 +287,10 @@ export async function createMetaTemplate(
     },
   );
   if (!result.id) throw new Error("Meta did not return a template id");
+  const headerPath =
+    input.contentType === "media" && input.mediaUrl
+      ? storagePathFromSignedUrl(input.mediaUrl)
+      : null;
+  if (headerPath) await rememberTemplateHeaderImage(input.name, input.language, headerPath);
   return { sid: encodeIdentifier(input.name, input.language), name: input.name };
 }
