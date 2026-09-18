@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeOut } from "react-native-reanimated";
+import * as Clipboard from "expo-clipboard";
 
 import { BookingSheet } from "@/components/inbox/booking-sheet";
 import { CallControl } from "@/components/inbox/call-control";
@@ -417,6 +418,25 @@ export default function ConversationScreen() {
           }),
       },
     ]);
+  };
+
+  const copyMessage = (content: string) => {
+    tapFeedback();
+    void Clipboard.setStringAsync(content);
+  };
+
+  // The long-press menu itself — copy only offered when there's actual text
+  // to copy (a media-only message has nothing worth putting on the clipboard).
+  const showMessageActions = (message: { id: string; content: string }) => {
+    tapFeedback();
+    const options: { text: string; style?: "default" | "cancel" | "destructive"; onPress?: () => void }[] =
+      [];
+    if (message.content) {
+      options.push({ text: "نسخ الرسالة", onPress: () => copyMessage(message.content) });
+    }
+    options.push({ text: "حذف الرسالة", style: "destructive", onPress: () => confirmDeleteMessage(message.id) });
+    options.push({ text: "إلغاء", style: "cancel" });
+    Alert.alert("خيارات الرسالة", undefined, options);
   };
 
   const messages = useMemo(() => {
@@ -847,7 +867,7 @@ export default function ConversationScreen() {
             // just vanishes the instant the list re-renders.
             <Animated.View exiting={FadeOut.duration(220)}>
               <Pressable
-                onLongPress={() => confirmDeleteMessage(item.message.id)}
+                onLongPress={() => showMessageActions(item.message)}
                 delayLongPress={400}
               >
                 <MessageBubble message={item.message} onResend={setResendBody} />
