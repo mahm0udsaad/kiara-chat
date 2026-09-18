@@ -3,11 +3,14 @@ import { getKiaraSession } from "@/lib/tenant";
 import { denyIfRouted } from "@/lib/conversation-access";
 import { hideMessage } from "@/lib/inbox";
 import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
+import { GRANTABLE_PERMISSIONS } from "@/lib/permissions";
+import { hasPermission } from "@/lib/permissions-store";
 
 /**
  * DELETE /api/conversations/[id]/messages/[messageId] — hide one message from
  * Kiara's own thread view. See `hideMessage` in `@/lib/inbox` for what this
  * does and, importantly, does not do (nothing changes on WhatsApp itself).
+ * An admin may always do this; an agent needs it granted from الموظفون.
  */
 export async function DELETE(
   _request: Request,
@@ -15,6 +18,12 @@ export async function DELETE(
 ) {
   const session = await getKiaraSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!(await hasPermission(session, GRANTABLE_PERMISSIONS.deleteMessages))) {
+    return NextResponse.json(
+      { error: "ليست لديكِ صلاحية حذف الرسائل — اطلبي من المديرة منحها لكِ." },
+      { status: 403 }
+    );
+  }
 
   const { id, messageId } = await params;
   const denied = await denyIfRouted(id, session);

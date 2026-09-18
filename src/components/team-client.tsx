@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Loader2, UserPlus, KeyRound, Ban, RotateCcw, Check, Copy, Wand2 } from "lucide-react";
+import { Loader2, UserPlus, KeyRound, Ban, RotateCcw, Check, Copy, Wand2, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
 import type { TeamMemberRow } from "@/lib/team";
+import { GRANTABLE_PERMISSIONS, PERMISSION_LABEL, type PermissionKey } from "@/lib/permissions";
+
+const ALL_PERMISSIONS = Object.values(GRANTABLE_PERMISSIONS);
 
 function roleLabel(role: string) {
   return role === "admin" ? "مدير" : "موظف";
@@ -87,6 +90,36 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
         });
         if (!res.ok) {
           setError((await res.json())?.error ?? "تعذّر التحديث");
+          return;
+        }
+        await refresh();
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [refresh]
+  );
+
+  /**
+   * Grant or revoke one permission. An admin's role already covers everything
+   * grantable, so this only ever matters for an employee — the toggle isn't
+   * shown for admin rows.
+   */
+  const togglePermission = useCallback(
+    async (m: TeamMemberRow, key: PermissionKey) => {
+      const has = m.permissions.includes(key);
+      const next = has ? m.permissions.filter((p) => p !== key) : [...m.permissions, key];
+      setBusyId(m.id);
+      setError(null);
+      setNotice(null);
+      try {
+        const res = await fetch(`/api/team/${m.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ permissions: next }),
+        });
+        if (!res.ok) {
+          setError((await res.json())?.error ?? "تعذّر تحديث الصلاحية");
           return;
         }
         await refresh();
@@ -252,6 +285,34 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
               <p dir="ltr" className="truncate text-xs text-muted-foreground">
                 {m.email}
               </p>
+              {/* An admin's role already covers everything grantable here —
+                  the toggle only means something for an employee. */}
+              {m.role !== "admin" ? (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <ShieldCheck size={12} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+                  {ALL_PERMISSIONS.map((key) => {
+                    const granted = m.permissions.includes(key);
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => void togglePermission(m, key)}
+                        disabled={busyId === m.id}
+                        aria-pressed={granted}
+                        className={cn(
+                          "rounded-full border px-2 py-0.5 text-[11px] transition disabled:opacity-60",
+                          granted
+                            ? "border-[var(--brand)] bg-[var(--brand-soft)] text-[var(--brand)]"
+                            : "border-slate-200 text-muted-foreground hover:bg-slate-50"
+                        )}
+                      >
+                        {granted ? "✓ " : ""}
+                        {PERMISSION_LABEL[key]}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
             <div className="flex items-center gap-2">
               <button

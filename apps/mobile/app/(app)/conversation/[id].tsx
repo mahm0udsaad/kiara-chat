@@ -406,7 +406,15 @@ export default function ConversationScreen() {
     tapFeedback();
     Alert.alert("حذف الرسالة؟", "ستُخفى من هذه المحادثة في كيارا فقط، ولن يتغيّر شيء في واتساب العميلة.", [
       { text: "إلغاء", style: "cancel" },
-      { text: "حذف", style: "destructive", onPress: () => deleteMessage.mutate(messageId) },
+      {
+        text: "حذف",
+        style: "destructive",
+        onPress: () =>
+          deleteMessage.mutate(messageId, {
+            onError: (err) =>
+              Alert.alert("تعذّر الحذف", err instanceof Error ? err.message : "حدث خطأ غير متوقع"),
+          }),
+      },
     ]);
   };
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { setTeamMemberActive, resetTeamMemberPassword } from "@/lib/team";
+import { setTeamMemberPermissions } from "@/lib/permissions-store";
 
 export async function PATCH(
   request: Request,
@@ -30,6 +31,12 @@ export async function PATCH(
         return NextResponse.json({ error: "userId مطلوب" }, { status: 400 });
       }
       await resetTeamMemberPassword(body.userId as string, body.password as string);
+    }
+    if (Array.isArray(body?.permissions)) {
+      const permissions = body.permissions.filter(
+        (p: unknown): p is string => typeof p === "string"
+      );
+      await setTeamMemberPermissions(id, permissions);
     }
     return NextResponse.json({ ok: true });
   } catch (e) {

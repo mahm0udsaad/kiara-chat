@@ -6,21 +6,29 @@
  */
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import type { PermissionKey } from "@/lib/permissions";
+import { allTeamPermissions } from "@/lib/permissions-store";
 import type { AgentInfo } from "@/lib/types";
 
 export interface TeamMemberRow extends AgentInfo {
   userId: string;
   createdAt: string | null;
+  /** Owner-granted extras beyond what `role` already allows. Empty for admins
+   *  — an admin's role already covers everything grantable. */
+  permissions: PermissionKey[];
 }
 
 /** Everyone on the team, active or suspended (the admin view). */
 export async function listTeam(): Promise<TeamMemberRow[]> {
   const admin = getAdminSupabaseClient();
-  const { data } = await admin
-    .from("team_members")
-    .select("id, user_id, role, full_name, is_active, created_at")
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .order("created_at");
+  const [{ data }, permissions] = await Promise.all([
+    admin
+      .from("team_members")
+      .select("id, user_id, role, full_name, is_active, created_at")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .order("created_at"),
+    allTeamPermissions(),
+  ]);
 
   return Promise.all(
     (data ?? []).map(async (m) => {
@@ -40,6 +48,7 @@ export async function listTeam(): Promise<TeamMemberRow[]> {
         fullName: fullName || null,
         isActive: Boolean(m.is_active),
         createdAt: (m.created_at as string) ?? null,
+        permissions: permissions[m.id as string] ?? [],
       };
     })
   );
@@ -90,6 +99,7 @@ export async function createTeamMember(input: {
     fullName: ((member.full_name as string) || "").trim() || null,
     isActive: true,
     createdAt: (member.created_at as string) ?? null,
+    permissions: [],
   };
 }
 
