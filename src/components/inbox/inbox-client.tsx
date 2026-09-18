@@ -44,6 +44,7 @@ import {
   Bell,
   Check,
   X,
+  Trash2,
 } from "lucide-react";
 
 // Lazy — keep the large order form out of the initial inbox bundle. The module
@@ -908,6 +909,75 @@ export function InboxClient({
    * the header and every order sheet read the name off `selected`, and waiting
    * for the server round trip would make the rename feel broken.
    */
+  /**
+   * Hide one message from Kiara's own view of this thread. This never reaches
+   * WhatsApp — the Business Platform has no "delete for everyone" call, so
+   * anything already delivered stays on the customer's phone regardless.
+   * Removed from local state first, same reasoning as the rename above.
+   */
+  const deleteMessage = useCallback(
+    async (messageId: string) => {
+      if (!selected) return;
+      if (
+        !window.confirm(
+          "حذف هذه الرسالة من كيارا؟ لن يتغيّر شيء في واتساب العميلة، ولا يمكن التراجع."
+        )
+      )
+        return;
+      const removed = messages.find((m) => m.id === messageId) ?? null;
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      try {
+        const res = await fetch(
+          `/api/conversations/${selected.id}/messages/${messageId}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok && removed) {
+          // Put it back where it was — cheaper and less jarring than a full
+          // refetch for the one message that failed to hide.
+          setMessages((prev) =>
+            [...prev, removed].sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
+          );
+        }
+      } catch {
+        if (removed) {
+          setMessages((prev) =>
+            [...prev, removed].sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
+          );
+        }
+      }
+    },
+    [selected, messages]
+  );
+
+  /**
+   * Hide every message in this thread from Kiara's own view — owner-only, see
+   * the route for why. Clears local state immediately; a failure just leaves
+   * the thread as it was, caught by the alert below.
+   */
+  const clearChat = useCallback(async () => {
+    if (!selected) return;
+    if (
+      !window.confirm(
+        "مسح كل رسائل هذه المحادثة من كيارا؟ لن يتغيّر شيء في واتساب العميلة، ولا يمكن التراجع عن هذا من التطبيق."
+      )
+    )
+      return;
+    const previous = messages;
+    setMessages([]);
+    try {
+      const res = await fetch(`/api/conversations/${selected.id}/clear`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setMediaError(data?.error ?? "تعذّر مسح المحادثة");
+        setMessages(previous);
+      }
+    } catch {
+      setMessages(previous);
+    }
+  }, [selected, messages]);
+
   const saveCustomerName = useCallback(async () => {
     if (!selected) return;
     const name = nameDraft.trim().slice(0, 80);
@@ -1974,7 +2044,26 @@ export function InboxClient({
                     return (
                       <Fragment key={m.id}>
                         {newDay ? <DaySeparator iso={m.created_at} /> : null}
-                        <MessageBubble message={m} />
+                        {m.role === "system" ? (
+                          <MessageBubble message={m} />
+                        ) : (
+                          <div className="group relative">
+                            <MessageBubble message={m} />
+                            {/* Hover-only, matches the "hidden until you look
+                                for it" affordance elsewhere in the thread —
+                                deleting is common enough to need one click,
+                                rare enough to not want a permanent icon. */}
+                            <button
+                              type="button"
+                              onClick={() => void deleteMessage(m.id)}
+                              aria-label="حذف الرسالة"
+                              title="حذف الرسالة من كيارا"
+                              className="absolute end-1 top-1 flex size-6 items-center justify-center rounded-full bg-white/90 text-rose-500 opacity-0 shadow-sm ring-1 ring-slate-200 transition-opacity hover:bg-rose-50 group-hover:opacity-100"
+                            >
+                              <Trash2 size={12} aria-hidden="true" />
+                            </button>
+                          </div>
+                        )}
                       </Fragment>
                     );
                   })}
@@ -2544,6 +2633,30 @@ export function InboxClient({
                 {isAdmin && selectedId ? (
                   <section className="flex flex-col gap-2">
                     <ConversationAuditPanel conversationId={selectedId} />
+                  </section>
+                ) : null}
+
+                {/* Owner-only and deliberately separate from `act()` above —
+                    this fires immediately and needs its own confirmation,
+                    like release/transfer. Never reaches WhatsApp: there's no
+                    "delete for everyone" on the Business Platform, so it only
+                    hides history from Kiara's own inbox. */}
+                {isAdmin ? (
+                  <section className="flex flex-col gap-2 rounded-xl border border-rose-200 bg-rose-50/60 p-4">
+                    <h3 className="flex items-center gap-1.5 text-xs font-semibold text-rose-700">
+                      <Trash2 size={13} aria-hidden="true" /> منطقة الخطر
+                    </h3>
+                    <p className="text-[11px] leading-5 text-rose-700/80">
+                      يُخفي كل رسائل هذه المحادثة من كيارا فقط — لا يتغيّر شيء في واتساب العميلة، ولا يمكن التراجع عن هذا من التطبيق.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void clearChat()}
+                      disabled={busy}
+                      className="flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-rose-300 bg-white text-sm font-medium text-rose-600 hover:bg-rose-100 disabled:opacity-60"
+                    >
+                      <Trash2 size={15} aria-hidden="true" /> مسح كل الرسائل
+                    </button>
                   </section>
                 ) : null}
               </div>

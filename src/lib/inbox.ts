@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { canViewConversation } from "@/lib/conversation-meta";
 import type { Conversation, Message } from "@/lib/types";
@@ -125,11 +126,14 @@ export async function getConversationMessages(
 
   const { data: conv } = await supabase
     .from("conversations")
-    .select("id")
+    .select("id, metadata")
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
   if (!conv) return { messages: [], hasMore: false };
+  const clearedAt = (conv.metadata as Record<string, unknown> | null)?.clearedAt as
+    | string
+    | undefined;
 
   const limit = Math.min(Math.max(opts.limit ?? MESSAGE_PAGE_SIZE, 1), MAX_PAGE_SIZE);
 
@@ -137,10 +141,14 @@ export async function getConversationMessages(
     .from("messages")
     .select(MESSAGE_COLS)
     .eq("conversation_id", conversationId)
+    // "Deleted" from the thread is per-message and per-conversation, both
+    // local to Kiara's view — see `hideMessage`/`clearConversationMessages`.
+    .is("metadata->>hiddenAt", null)
     .order("created_at", { ascending: false })
     // One extra row is the cheapest way to know whether a page follows.
     .limit(limit + 1);
   if (opts.before) query = query.lte("created_at", opts.before);
+  if (clearedAt) query = query.gt("created_at", clearedAt);
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -148,4 +156,62 @@ export async function getConversationMessages(
   const rows = (data ?? []) as Message[];
   const hasMore = rows.length > limit;
   return { messages: rows.slice(0, limit).reverse(), hasMore };
+}
+
+/**
+ * Hide one message from Kiara's own view of the thread.
+ *
+ * This cannot and does not reach WhatsApp: the Business Platform has no
+ * "delete for everyone" call, so anything already delivered stays on the
+ * customer's phone regardless. `content` is left untouched too — the bot's
+ * conversation memory, the audit trail, and the quality/analysis reports all
+ * read it straight from `messages`, and a staff clean-up action shouldn't
+ * quietly rewrite what the owner's report or the AI's context saw. Only the
+ * `hiddenAt` marker is new, and only `getConversationMessages` honours it.
+ */
+export async function hideMessage(
+  conversationId: string,
+  messageId: string,
+  hiddenBy: string | null,
+): Promise<boolean> {
+  const admin = getAdminSupabaseClient();
+  const { data: row } = await admin
+    .from("messages")
+    .select("id, metadata")
+    .eq("id", messageId)
+    .eq("conversation_id", conversationId)
+    .maybeSingle();
+  if (!row) return false;
+
+  const meta = (row.metadata as Record<string, unknown> | null) ?? {};
+  const { error } = await admin
+    .from("messages")
+    .update({ metadata: { ...meta, hiddenAt: new Date().toISOString(), hiddenBy } })
+    .eq("id", messageId);
+  if (error) throw new Error(error.message);
+  return true;
+}
+
+/**
+ * Hide every message currently in the thread from Kiara's own view, by
+ * stamping a cutoff on the conversation rather than touching each message row
+ * — cheap regardless of how many thousands of messages a long-running thread
+ * has. Same "local to Kiara" caveat as `hideMessage`: nothing changes on the
+ * customer's phone, and no `content` is touched, so the bot, the audit trail
+ * and the reports still see the full history.
+ */
+export async function clearConversationMessages(conversationId: string): Promise<void> {
+  const admin = getAdminSupabaseClient();
+  const { data } = await admin
+    .from("conversations")
+    .select("metadata")
+    .eq("id", conversationId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  const meta = (data?.metadata as Record<string, unknown> | null) ?? {};
+  const { error } = await admin
+    .from("conversations")
+    .update({ metadata: { ...meta, clearedAt: new Date().toISOString() } })
+    .eq("id", conversationId);
+  if (error) throw new Error(error.message);
 }

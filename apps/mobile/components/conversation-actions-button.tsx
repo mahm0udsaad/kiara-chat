@@ -30,6 +30,7 @@ import { tapFeedback } from "@/lib/haptics";
 import { useKeyboardPadding } from "@/lib/keyboard";
 import {
   useAddConversationNote,
+  useClearConversation,
   useConversationNotes,
   useCreateConversationLabel,
   useDeleteConversationLabel,
@@ -213,6 +214,7 @@ export function ConversationActionsButton({
   const transfer = useTransferConversation(conversationId);
   const routing = useSetConversationRouting(conversationId);
   const sectionMutation = useSetConversationSection(conversationId);
+  const clearChat = useClearConversation(conversationId);
   const busy =
     release.isPending ||
     transfer.isPending ||
@@ -1222,6 +1224,65 @@ export function ConversationActionsButton({
               ) : null}
 
               <NotesSection conversationId={conversationId} enabled={open} />
+
+              {/* Owner-only, and deliberately kept out of the draft/save flow
+                  above — this fires immediately, like release/transfer, and
+                  needs its own confirmation because there's no undo in the
+                  UI. It never reaches WhatsApp: there's no "delete for
+                  everyone" on the Business Platform, so this only hides the
+                  history from Kiara's own inbox. */}
+              {isAdmin ? (
+                <ActionSection
+                  title="منطقة الخطر"
+                  subtitle="لا يؤثر على واتساب العميلة — يُخفي السجل من كيارا فقط"
+                >
+                  <Pressable
+                    testID="conversation-actions-clear-chat"
+                    accessibilityRole="button"
+                    accessibilityLabel="مسح كل رسائل هذه المحادثة"
+                    disabled={clearChat.isPending}
+                    onPress={() => {
+                      tapFeedback();
+                      Alert.alert(
+                        "مسح كل الرسائل؟",
+                        "سيتم إخفاء كل رسائل هذه المحادثة من كيارا فقط. لن يتغيّر شيء في واتساب العميلة، ولا يمكن التراجع عن هذا من التطبيق.",
+                        [
+                          { text: "إلغاء", style: "cancel" },
+                          {
+                            text: "مسح",
+                            style: "destructive",
+                            onPress: () => clearChat.mutate(),
+                          },
+                        ],
+                      );
+                    }}
+                    style={({ pressed }) => ({
+                      minHeight: hitSize.min,
+                      flexDirection: "row-reverse",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: spacing.sm,
+                      borderRadius: radius.md,
+                      borderWidth: 1,
+                      borderColor: colors.danger,
+                      backgroundColor: colors.dangerSoft,
+                      opacity: clearChat.isPending ? 0.6 : pressed ? 0.75 : 1,
+                    })}
+                  >
+                    {clearChat.isPending ? (
+                      <ActivityIndicator color={colors.danger} size="small" />
+                    ) : (
+                      <IconSymbol name="trash" color={colors.danger} size={16} />
+                    )}
+                    <Text style={{ ...type.subheadStrong, color: colors.danger, ...rtlText }}>
+                      مسح كل الرسائل
+                    </Text>
+                  </Pressable>
+                  {clearChat.error ? (
+                    <InlineAlert message={clearChat.error.message} />
+                  ) : null}
+                </ActionSection>
+              ) : null}
             </View>
 
             {!canEdit ? (

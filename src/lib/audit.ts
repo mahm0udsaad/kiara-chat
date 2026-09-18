@@ -47,6 +47,11 @@ export const CONVERSATION_EVENTS = {
   reminderConfirmed: "conversation.reminder_confirmed",
   botResumed: "conversation.bot_resumed",
   customerRenamed: "conversation.customer_renamed",
+  // Hides only Kiara's own view of the thread — see `hideMessage` /
+  // `clearConversationMessages` in `@/lib/inbox`. Recorded because it's the
+  // kind of action the owner's report should be able to show happened.
+  messageDeleted: "conversation.message_deleted",
+  messagesCleared: "conversation.messages_cleared",
   // Calling. The request is an employee action and belongs on the
   // responsibility trail; the grant and the decline are the customer
   // answering, recorded as system events so the report can show the outcome

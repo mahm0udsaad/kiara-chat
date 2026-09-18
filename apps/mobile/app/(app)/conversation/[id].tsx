@@ -1,6 +1,7 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { memo, useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Linking,
@@ -47,6 +48,7 @@ import {
   useBootstrap,
   useConversation,
   useConversationMessages,
+  useDeleteMessage,
   useDismissBookingRequest,
   useMarkConversationRead,
   useTakeConversation,
@@ -397,6 +399,16 @@ export default function ConversationScreen() {
   const [takeoverReason, setTakeoverReason] = useState("");
   const [bookingOpen, setBookingOpen] = useState(false);
   const [resendBody, setResendBody] = useState<string | null>(null);
+  const deleteMessage = useDeleteMessage(id);
+  // Hides it from Kiara's own view only — there is no "delete for everyone"
+  // on the Business Platform, so this can never reach the customer's phone.
+  const confirmDeleteMessage = (messageId: string) => {
+    tapFeedback();
+    Alert.alert("حذف الرسالة؟", "ستُخفى من هذه المحادثة في كيارا فقط، ولن يتغيّر شيء في واتساب العميلة.", [
+      { text: "إلغاء", style: "cancel" },
+      { text: "حذف", style: "destructive", onPress: () => deleteMessage.mutate(messageId) },
+    ]);
+  };
 
   const messages = useMemo(() => {
     const pages = messageHistory.data?.pages;
@@ -821,7 +833,12 @@ export default function ConversationScreen() {
           item.kind === "day" ? (
             <DaySeparator label={item.label} />
           ) : (
-            <MessageBubble message={item.message} onResend={setResendBody} />
+            <Pressable
+              onLongPress={() => confirmDeleteMessage(item.message.id)}
+              delayLongPress={400}
+            >
+              <MessageBubble message={item.message} onResend={setResendBody} />
+            </Pressable>
           )
         }
         // A long thread is the one list here that really can reach hundreds of

@@ -841,6 +841,42 @@ export function useSetConversationSection(id: string) {
   );
 }
 
+/**
+ * Owner-only: hide the whole thread from Kiara's own view. This never reaches
+ * WhatsApp — the Business Platform has no "delete for everyone" call, so
+ * nothing changes on the customer's phone. See the server's
+ * `clearConversationMessages`.
+ */
+export function useClearConversation(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiRequest<{ ok: true }>(`/conversations/${id}/clear`, { method: "POST" }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversationMessages(id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(id) }),
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+      ]);
+    },
+  });
+}
+
+/**
+ * Hide one message from Kiara's own view of the thread. Same caveat as
+ * `useClearConversation`: local to Kiara, not a WhatsApp unsend.
+ */
+export function useDeleteMessage(conversationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (messageId: string) =>
+      apiRequest<{ ok: true }>(`/conversations/${conversationId}/messages/${messageId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.conversationMessages(conversationId) }),
+  });
+}
+
 /** Internal notes — staff-only, never sent to the customer. */
 export function useConversationNotes(id: string, enabled = true) {
   return useQuery({
