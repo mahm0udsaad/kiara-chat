@@ -67,6 +67,7 @@ import type {
   RekazPullResponse,
   SavedReply,
   SendOrderReminderInput,
+  TeamResponse,
   TripType,
 } from "@/types/api";
 import { publicApiRequest } from "@/lib/api";
@@ -121,6 +122,7 @@ export const queryKeys = {
   orderAudit: (id: string) => ["order-audit", id] as const,
   catalog: ["catalog"] as const,
   mediaUrl: (path: string, format = "") => ["media-url", path, format] as const,
+  team: ["team"] as const,
 };
 
 export function useBootstrap(enabled = true) {
@@ -882,6 +884,31 @@ export function useDeleteMessage(conversationId: string) {
         queryClient.invalidateQueries({ queryKey: queryKeys.conversationMessages(conversationId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.conversation(conversationId) }),
       ]),
+  });
+}
+
+/** Owner-only: the employee list for the permissions screen. */
+export function useTeam(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.team,
+    queryFn: () => apiRequest<TeamResponse>("/team"),
+    enabled,
+  });
+}
+
+/**
+ * Owner-only: replace one employee's granted extras. Narrower than the web
+ * route on purpose — this screen only ever touches `permissions`.
+ */
+export function useSetTeamMemberPermissions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, permissions }: { id: string; permissions: string[] }) =>
+      apiRequest<{ ok: true }>(`/team/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ permissions }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.team }),
   });
 }
 

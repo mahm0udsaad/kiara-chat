@@ -54,6 +54,19 @@ export default function AppLayout() {
         }}
       />
       <Stack.Screen
+        name="team/index"
+        options={{
+          headerShown: true,
+          title: "صلاحيات الموظفين",
+          headerTintColor: colors.brand,
+          headerTitleStyle: { color: colors.text },
+          headerStyle: { backgroundColor: colors.surface },
+          headerShadowVisible: false,
+          headerBackButtonDisplayMode: "minimal",
+          contentStyle: { backgroundColor: colors.background },
+        }}
+      />
+      <Stack.Screen
         name="customer/[phone]/index"
         options={{
           headerShown: true,

@@ -154,6 +154,38 @@ export default function AccountScreen() {
         </Card>
       </View>
 
+      {/* Owner-only. Everything else about running the team (accounts,
+          passwords) stays a web-only task — this is just the switch the
+          owner reaches for most: who may delete a message. */}
+      {capabilities.canManageTeam ? (
+        <View style={{ gap: spacing.sm }}>
+          <SectionHeader title="الفريق" />
+          <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.push("/team" as never)}
+              style={{
+                flexDirection: "row-reverse",
+                alignItems: "center",
+                justifyContent: "space-between",
+                paddingVertical: spacing.md,
+              }}
+            >
+              <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+                <IconSymbol name="person.2" color={colors.brand} size={20} />
+                <View>
+                  <Text style={{ ...type.body, color: colors.text, ...rtlText }}>صلاحيات الموظفين</Text>
+                  <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+                    امنحي كل موظفة الصلاحيات التي تثقين بها معها
+                  </Text>
+                </View>
+              </View>
+              <IconSymbol name="chevron.left" color={colors.textTertiary} size={18} />
+            </Pressable>
+          </Card>
+        </View>
+      ) : null}
+
       {/* Notifications — a phone that never registered used to look identical
           to one that did, and simply received nothing. */}
       <View style={{ gap: spacing.sm }}>

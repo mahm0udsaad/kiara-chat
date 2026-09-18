@@ -1154,3 +1154,22 @@ export type CallRecord = {
   durationSeconds: number | null;
   error: string | null;
 };
+
+/**
+ * One employee, for the owner's permissions screen — the same list the web
+ * /team page shows, minus password/active-state controls this screen doesn't
+ * expose. `permissions` are owner-granted extras beyond what `role` already
+ * covers, keyed by the same strings the server's GRANTABLE_PERMISSIONS uses.
+ */
+export type TeamMember = {
+  id: string;
+  role: string;
+  fullName: string | null;
+  email: string | null;
+  isActive?: boolean;
+  permissions: string[];
+};
+
+export type TeamResponse = {
+  team: TeamMember[];
+};
