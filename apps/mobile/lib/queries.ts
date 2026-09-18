@@ -872,8 +872,16 @@ export function useDeleteMessage(conversationId: string) {
       apiRequest<{ ok: true }>(`/conversations/${conversationId}/messages/${messageId}`, {
         method: "DELETE",
       }),
+    // The chat screen falls back to `conversation.data.messages` (from
+    // useConversation) whenever the infinite-query pages haven't loaded a
+    // message yet, so that query has to be invalidated alongside the
+    // messages one — otherwise its stale copy of the deleted message keeps
+    // surfacing in the merged list even after the pages refetch clean.
     onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.conversationMessages(conversationId) }),
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversationMessages(conversationId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.conversation(conversationId) }),
+      ]),
   });
 }
 

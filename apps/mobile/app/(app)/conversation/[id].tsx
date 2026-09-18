@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Animated, { FadeOut } from "react-native-reanimated";
 
 import { BookingSheet } from "@/components/inbox/booking-sheet";
 import { CallControl } from "@/components/inbox/call-control";
@@ -841,12 +842,17 @@ export default function ConversationScreen() {
           item.kind === "day" ? (
             <DaySeparator label={item.label} />
           ) : (
-            <Pressable
-              onLongPress={() => confirmDeleteMessage(item.message.id)}
-              delayLongPress={400}
-            >
-              <MessageBubble message={item.message} onResend={setResendBody} />
-            </Pressable>
+            // The fade plays as this view unmounts once the deleted message
+            // drops out of `chatItems` after the refetch — without it the row
+            // just vanishes the instant the list re-renders.
+            <Animated.View exiting={FadeOut.duration(220)}>
+              <Pressable
+                onLongPress={() => confirmDeleteMessage(item.message.id)}
+                delayLongPress={400}
+              >
+                <MessageBubble message={item.message} onResend={setResendBody} />
+              </Pressable>
+            </Animated.View>
           )
         }
         // A long thread is the one list here that really can reach hundreds of

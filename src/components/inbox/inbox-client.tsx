@@ -488,6 +488,11 @@ export function InboxClient({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
+  // Rows fading out ahead of the actual removal from `messages`, so a delete
+  // reads as something happening rather than an instant splice.
+  const [deletingMessageIds, setDeletingMessageIds] = useState<Set<string>>(
+    new Set()
+  );
   const [recording, setRecording] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -925,7 +930,16 @@ export function InboxClient({
       )
         return;
       const removed = messages.find((m) => m.id === messageId) ?? null;
+      // Fade the row first — an instant splice reads as the click not having
+      // registered for the beat before the list re-renders.
+      setDeletingMessageIds((prev) => new Set(prev).add(messageId));
+      await new Promise((resolve) => setTimeout(resolve, 200));
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      setDeletingMessageIds((prev) => {
+        const next = new Set(prev);
+        next.delete(messageId);
+        return next;
+      });
       try {
         const res = await fetch(
           `/api/conversations/${selected.id}/messages/${messageId}`,
@@ -2047,7 +2061,12 @@ export function InboxClient({
                         {m.role === "system" ? (
                           <MessageBubble message={m} />
                         ) : (
-                          <div className="group relative">
+                          <div
+                            className={cn(
+                              "group relative transition-opacity duration-200",
+                              deletingMessageIds.has(m.id) && "opacity-0"
+                            )}
+                          >
                             <MessageBubble message={m} />
                             {/* Hover-only, matches the "hidden until you look
                                 for it" affordance elsewhere in the thread —
