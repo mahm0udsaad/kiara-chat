@@ -166,6 +166,7 @@ export async function apiRequest<T>(
   } catch {
     // An abort and a dropped connection are the same thing to the employee:
     // it did not go through, and she may try again.
+    clearTimeout(timer);
     throw new ApiError(
       controller.signal.aborted
         ? "الخادم تأخر في الرد. حاولي مرة أخرى."
@@ -173,11 +174,25 @@ export async function apiRequest<T>(
       0,
       controller.signal.aborted ? "TIMEOUT" : "NETWORK",
     );
+  }
+
+  /**
+   * `fetch` only resolves once headers arrive; the deadline above never covers
+   * a body that stalls mid-read after a salon-wifi drop. Keep the same timer
+   * running through `response.text()` so a stalled body times out too, instead
+   * of leaving the caller's mutation (and the button showing its spinner)
+   * pending forever.
+   */
+  try {
+    return await untilAborted(unwrap<T>(response), controller.signal);
+  } catch (cause) {
+    if (controller.signal.aborted) {
+      throw new ApiError("الخادم تأخر في الرد. حاولي مرة أخرى.", 0, "TIMEOUT");
+    }
+    throw cause;
   } finally {
     clearTimeout(timer);
   }
-
-  return unwrap<T>(response);
 }
 
 /** A file part, as React Native's `FormData` wants it. */
