@@ -200,7 +200,16 @@ export function mergeVisits(
     const span = visitSpan(group);
     const matchedOrders = matchingOrders(first, liveOrders, claimed);
     const order = matchedOrders[0];
-    for (const matched of matchedOrders) claimed.add(matched.id);
+    // Leftover rows of the same visit fold into its card. A row carrying its
+    // own driver is not a leftover: it is an extra team (a second specialist
+    // with her own car) and keeps a card of its own, or nobody could follow it.
+    for (const matched of matchedOrders) {
+      const extraTeam =
+        matched !== order &&
+        Boolean(matched.driver_id) &&
+        matched.driver_id !== order?.driver_id;
+      if (!extraTeam) claimed.add(matched.id);
+    }
     const responsibleProvider =
       order?.specialist_name?.trim() ||
       group.flatMap((item) => item.providers).find((name) => name.trim())?.trim();

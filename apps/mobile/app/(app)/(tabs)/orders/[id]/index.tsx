@@ -1,7 +1,7 @@
 import { OrderServiceChanges } from "@/components/order-service-changes";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo } from "react";
-import { Linking, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
@@ -36,7 +36,7 @@ import {
   tripTypeLabel,
 } from "@/lib/format";
 import { tapFeedback } from "@/lib/haptics";
-import { useBootstrap, useOrder } from "@/lib/queries";
+import { useBootstrap, useCreateExtraTeamOrder, useOrder } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { FieldSessionState } from "@/types/api";
 
@@ -215,6 +215,7 @@ export default function OrderDetailScreen() {
     [params.id],
   );
   const detail = useOrder(id);
+  const extraTeam = useCreateExtraTeamOrder();
   const bootstrap = useBootstrap();
 
   if (detail.isLoading) return <LoadingScreen label="جارٍ تحميل الطلب…" />;
@@ -676,6 +677,39 @@ export default function OrderDetailScreen() {
             </Text>
           </Pressable>
         </Link>
+        {/* Another specialist with her own driver for the same visit: a new
+            pending order that goes through the ordinary dispatch screen. */}
+        {order.driver_id && order.status !== "cancelled" ? (
+          <PrimaryButton
+            label="إرسال فريق إضافي لنفس الزيارة"
+            loading={extraTeam.isPending}
+            loadingLabel="جارٍ إنشاء الطلب…"
+            icon="person.2"
+            variant="outline"
+            onPress={() =>
+              Alert.alert(
+                "فريق إضافي",
+                "سيُنشأ طلب جديد بنفس الموعد والموقع، ثم تختارين له الأخصائية والسائق.",
+                [
+                  { text: "إلغاء", style: "cancel" },
+                  {
+                    text: "متابعة",
+                    onPress: () =>
+                      extraTeam.mutate(order.id, {
+                        onSuccess: ({ order: created }) =>
+                          router.push({
+                            pathname: "/orders/[id]/dispatch",
+                            params: { id: created.id },
+                          }),
+                        onError: (error) =>
+                          Alert.alert("تعذّر إنشاء الطلب", error.message),
+                      }),
+                  },
+                ],
+              )
+            }
+          />
+        ) : null}
       </ActionBar>
     </View>
   );

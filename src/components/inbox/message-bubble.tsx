@@ -250,6 +250,36 @@ function emptyMessageLabel(messageType: string): string {
   }
 }
 
+type ReplyTo = { role?: string | null; text?: string | null; message_type?: string | null };
+
+/**
+ * The message a swipe-reply answers, quoted above it as WhatsApp does. Without
+ * it "أبي هذا" under two offers reads as whichever one staff guess.
+ */
+function ReplyQuote({ replyTo, isCustomer }: { replyTo: ReplyTo; isCustomer: boolean }) {
+  const who =
+    replyTo.role === "customer" ? "العميلة" : replyTo.role ? "كيارا" : "رسالة سابقة";
+  const text =
+    replyTo.text ||
+    (replyTo.message_type && MEDIA_TYPES.has(replyTo.message_type)
+      ? "📎 وسائط"
+      : "رسالة لم تُحفظ في كيارا");
+  return (
+    <div
+      dir="rtl"
+      className={cn(
+        "mb-1.5 rounded-lg border-s-4 px-2 py-1 text-xs",
+        isCustomer
+          ? "border-[var(--brand)] bg-slate-100 text-slate-700"
+          : "border-white/70 bg-white/15 text-white/90"
+      )}
+    >
+      <p className="font-semibold">↩︎ ردًا على {who}</p>
+      <p className="line-clamp-3 whitespace-pre-wrap">{text}</p>
+    </div>
+  );
+}
+
 export function MessageBubble({ message }: { message: Message }) {
   const isCustomer = message.role === "customer";
   const isSystem = message.role === "system";
@@ -272,7 +302,10 @@ export function MessageBubble({ message }: { message: Message }) {
   const align = isCustomer ? "justify-start" : "justify-end";
   const dir = AR.test(message.content || "") ? "rtl" : "ltr";
 
-  const meta = (message.metadata as { media?: MediaSlot[] }) || {};
+  const meta = (message.metadata as { media?: MediaSlot[]; reply_to?: ReplyTo }) || {};
+  const quote = meta.reply_to ? (
+    <ReplyQuote replyTo={meta.reply_to} isCustomer={isCustomer} />
+  ) : null;
   const slots = MEDIA_TYPES.has(message.message_type) ? meta.media || [] : [];
 
   // A shared pin: the engine turns it into "name — address\nmaps link". Render
@@ -333,6 +366,7 @@ export function MessageBubble({ message }: { message: Message }) {
           )}
           dir={dir}
         >
+          {quote}
           {slots.map((slot, idx) => (
             <MediaSlotView
               key={`${message.id}-m${idx}`}
@@ -358,6 +392,7 @@ export function MessageBubble({ message }: { message: Message }) {
         )}
         dir={dir}
       >
+        {quote}
         {message.content ? (
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : (

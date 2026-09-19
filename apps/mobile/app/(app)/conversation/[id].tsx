@@ -13,7 +13,6 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeOut } from "react-native-reanimated";
-import * as Clipboard from "expo-clipboard";
 
 import { BookingSheet } from "@/components/inbox/booking-sheet";
 import { CallControl } from "@/components/inbox/call-control";
@@ -30,6 +29,7 @@ import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-stat
 import { Badge } from "@/components/ui/badge";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { copyText } from "@/lib/clipboard";
 import { useKeyboardPadding } from "@/lib/keyboard";
 import {
   findSharedLocation,
@@ -131,6 +131,51 @@ function emptyMessageLabel(messageType: string): string {
     default:
       return MEDIA_MESSAGE_TYPES.has(messageType) ? "رسالة وسائط" : "رسالة بدون نص";
   }
+}
+
+type ReplyTo = { role?: string | null; text?: string | null; message_type?: string | null };
+
+function replyToOf(message: ConversationMessage): ReplyTo | null {
+  const value = message.metadata?.reply_to;
+  return value && typeof value === "object" ? (value as ReplyTo) : null;
+}
+
+/**
+ * The message a swipe-reply answers, quoted above it as WhatsApp does. Without
+ * it "أبي هذا" under two offers reads as whichever one staff guess.
+ */
+function ReplyQuote({ replyTo, outbound }: { replyTo: ReplyTo; outbound: boolean }) {
+  const { colors } = useTheme();
+  const who =
+    replyTo.role === "customer" ? "العميلة" : replyTo.role ? "كيارا" : "رسالة سابقة";
+  const text =
+    replyTo.text ||
+    (replyTo.message_type && MEDIA_MESSAGE_TYPES.has(replyTo.message_type)
+      ? "📎 وسائط"
+      : "رسالة لم تُحفظ في كيارا");
+  return (
+    <View
+      style={{
+        gap: 2,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: spacing.xs + 1,
+        borderRadius: radius.sm,
+        borderRightWidth: 3,
+        borderRightColor: outbound ? colors.onBrand : colors.brand,
+        backgroundColor: outbound ? "rgba(255,255,255,0.15)" : colors.surfaceSunken,
+      }}
+    >
+      <Text style={{ ...type.caption, fontWeight: "600", color: outbound ? colors.onBrand : colors.brand, ...rtlText }}>
+        {`↩︎ ردًا على ${who}`}
+      </Text>
+      <Text
+        numberOfLines={3}
+        style={{ ...type.footnote, color: outbound ? colors.onBrand : colors.textSecondary, ...rtlText }}
+      >
+        {text}
+      </Text>
+    </View>
+  );
 }
 
 const MessageBubble = memo(function MessageBubble({
@@ -321,6 +366,10 @@ const MessageBubble = memo(function MessageBubble({
         </Text>
       ) : null}
 
+      {replyToOf(message) ? (
+        <ReplyQuote replyTo={replyToOf(message)!} outbound={outbound} />
+      ) : null}
+
       {slots.map((slot, index) => (
         <MediaAttachment
           key={slot.storage_path ?? `${message.id}-${index}`}
@@ -422,7 +471,7 @@ export default function ConversationScreen() {
 
   const copyMessage = (content: string) => {
     tapFeedback();
-    void Clipboard.setStringAsync(content);
+    void copyText(content).catch(() => {});
   };
 
   // The long-press menu itself — copy only offered when there's actual text

@@ -204,6 +204,35 @@ async function reactionText(
   return quoted ? `${head} على: «${quoted}»` : `${head} على رسالة`;
 }
 
+/**
+ * What a swipe-reply was answering. Meta sends only the quoted message's id,
+ * so the quote is resolved here and frozen on the row: a customer who answers
+ * "هذا" to one of two offers is unreadable without it, and staff were
+ * confirming the wrong option. A quote we never stored (sent before Kiara, or
+ * from another device) keeps its id and renders as "رسالة سابقة".
+ */
+async function replyContext(
+  conversationId: string,
+  context: NonNullable<MetaMessage["context"]>,
+): Promise<Record<string, unknown> | null> {
+  const quotedId = context.id?.trim();
+  if (!quotedId) return null;
+  const { data } = await getAdminSupabaseClient()
+    .from("messages")
+    .select("id, role, content, message_type")
+    .eq("conversation_id", conversationId)
+    .eq("external_message_sid", quotedId)
+    .maybeSingle();
+  const text = ((data?.content as string | null) ?? "").trim();
+  return {
+    external_id: quotedId,
+    message_id: (data?.id as string | undefined) ?? null,
+    role: (data?.role as string | undefined) ?? null,
+    message_type: (data?.message_type as string | undefined) ?? null,
+    text: text ? (text.length > 300 ? `${text.slice(0, 300)}…` : text) : null,
+  };
+}
+
 function contactsText(contacts: NonNullable<MetaMessage["contacts"]>): string {
   const lines = contacts.map((contact) => {
     const name = contact.name?.formatted_name?.trim() || "بدون اسم";
@@ -243,6 +272,13 @@ async function ingestMessage(value: MetaValue, message: MetaMessage): Promise<vo
   if (message.location) metadata.location = message.location;
   if (message.reaction) metadata.reaction = message.reaction;
   if (message.contacts) metadata.contacts = message.contacts;
+  // A reaction's context is its own target, already quoted in its text.
+  if (message.context?.id && message.type !== "reaction") {
+    const replyTo = await replyContext(conversation.id, message.context).catch(
+      () => ({ external_id: message.context!.id, text: null }),
+    );
+    if (replyTo) metadata.reply_to = replyTo;
+  }
 
   if (message.type === "unsupported" && message.errors?.length) {
     // Kept on the row, not just in the log. Meta's `errors[]` is the only

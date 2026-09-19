@@ -1190,19 +1190,24 @@ export async function previewBookingDispatch(
   const translated = language.targetLanguage
     ? await translateMessage(arabicSpecialistMessage, language.targetLanguage)
     : null;
-  const deterministicEnglish = language.targetLanguage === "English";
+  // English is the fallback for every non-Arabic specialist, not only the
+  // ones who chose it: when translation is down, an Indonesian or Amharic
+  // speaker can work from English and cannot from Arabic. From Sept 17 every
+  // translation failed silently and they were all sent Arabic.
+  const englishFallback = Boolean(language.targetLanguage);
 
   return {
     driverMessage,
     specialistMessage:
-      translated || (deterministicEnglish ? englishSpecialistMessage : arabicSpecialistMessage),
+      translated || (englishFallback ? englishSpecialistMessage : arabicSpecialistMessage),
     // Name the language of the text actually produced. Reporting her mother
-    // tongue while handing back the Arabic fallback told the employee the
-    // translation had happened when it had not — she would send it believing
-    // the specialist could read it.
-    specialistLanguage: translated || deterministicEnglish
+    // tongue while handing back a fallback told the employee the translation
+    // had happened when it had not.
+    specialistLanguage: translated
       ? language.label
-      : "العربية",
+      : englishFallback
+        ? "الإنجليزية"
+        : "العربية",
     automaticAdditions: [],
   };
 }
@@ -1832,6 +1837,82 @@ export async function resendDriverOrder(
     order: row,
     sent: whatsappSent || Boolean(push && push.accepted > 0),
   };
+}
+
+/**
+ * A second team for a visit the first team is already on — a customer booked
+ * for two, or a package one specialist cannot finish alone.
+ *
+ * The visit stays one visit; the extra team is its own operational order with
+ * its own specialist, driver and trip, because that is how it is worked: a
+ * separate car, separate notes, separate completion. The new row copies the
+ * visit (time, address, length, trip type, door photo) and starts pending, so
+ * the employee dispatches it through the ordinary preview.
+ *
+ * It is deliberately left without a Rekaz link. The link is unique per
+ * reservation — it is what stops two employees raising the same visit twice by
+ * accident — and the specialist's service list is still found from the
+ * customer's phone and day.
+ */
+export async function createExtraTeamOrder(
+  sourceOrderId: string,
+  actor: OperationsActor,
+): Promise<DriverOrderRow> {
+  const admin = getAdminSupabaseClient();
+  const { data: source, error } = await admin
+    .from("driver_orders")
+    .select(ORDER_COLS_WITH_DOOR)
+    .eq("id", sourceOrderId)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!source) throw new Error("الطلب غير موجود");
+  const order = source as unknown as DriverOrder;
+  if (order.status === "cancelled" || String(order.dispatch_state) === "cancelled") {
+    throw new Error("لا يمكن إضافة فريق لطلب ملغي");
+  }
+
+  const { data: created, error: insErr } = await admin
+    .from("driver_orders")
+    .insert({
+      restaurant_id: KIARA_RESTAURANT_ID,
+      conversation_id: order.conversation_id,
+      specialist_id: null,
+      driver_id: null,
+      arrival_at: order.arrival_at,
+      customer_location: order.customer_location,
+      customer_phone: order.customer_phone,
+      duration_minutes: order.duration_minutes,
+      trip_type: order.trip_type,
+      price: null,
+      status: "pending",
+      created_by: actor.userId,
+      door_photo_path: order.door_photo_path ?? null,
+    })
+    .select(ORDER_COLS)
+    .single();
+  if (insErr) throw new Error(insErr.message);
+
+  try {
+    await admin.from("operation_events").insert({
+      restaurant_id: KIARA_RESTAURANT_ID,
+      aggregate_type: "driver_order",
+      aggregate_id: created.id,
+      event_type: "driver_order.extra_team_created",
+      actor_type: actor.teamMemberId ? "team_member" : "owner",
+      actor_user_id: actor.userId,
+      actor_team_member_id: actor.teamMemberId,
+      actor_role: actor.role,
+      payload: { source_order_id: sourceOrderId },
+    });
+  } catch {
+    // The order exists either way; the trail is best-effort as on cancel.
+  }
+
+  const [row] = await withNames(await createServerSupabaseClient(), [
+    created as unknown as DriverOrder,
+  ]);
+  return row;
 }
 
 /** Batch-resolve specialist/driver/customer/editor names for a page of orders. */

@@ -757,6 +757,24 @@ export function useCreateOrderFromReservation() {
   });
 }
 
+/**
+ * A second specialist and driver for a visit already dispatched. Creates only
+ * the pending order; the caller opens its dispatch screen like any other.
+ */
+export function useCreateExtraTeamOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: string) =>
+      apiRequest<{ order: OrderSummary }>(`/orders/${orderId}/extra-team`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["orders-calendar"] });
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+  });
+}
+
 export function useRekazPull() {
   const queryClient = useQueryClient();
   return useMutation({

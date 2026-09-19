@@ -27,7 +27,11 @@ export async function translateMessage(
   text: string,
   targetLanguage: string
 ): Promise<string | null> {
-  if (!isBotConfigured() || !text.trim()) return null;
+  if (!text.trim()) return null;
+  if (!isBotConfigured()) {
+    console.error("[translate] no Gemini API key configured");
+    return null;
+  }
   try {
     const { text: translated } = await generateText({
       model: googleAI(MODEL),
@@ -44,7 +48,10 @@ export async function translateMessage(
       prompt: text,
     });
     return translated.trim() || null;
-  } catch {
+  } catch (error) {
+    // Still optional, but never silent again: a revoked key sent every
+    // specialist Arabic for days with nothing in the logs to say why.
+    console.error(`[translate] ${MODEL} → ${targetLanguage} failed:`, error);
     return null;
   }
 }

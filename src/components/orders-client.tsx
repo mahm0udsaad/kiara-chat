@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Send,
   UserRound,
+  UserRoundPlus,
   Wallet,
 } from "lucide-react";
 import { OrderAuditPanel } from "@/components/audit-trail";
@@ -215,9 +216,12 @@ export function OrdersClient({
     }
   }, []);
 
+  // Also adds an order the list has not seen — the extra team's new order.
   const replaceOrder = useCallback((next: DriverOrderRow) => {
     setOrders((previous) =>
-      previous.map((order) => (order.id === next.id ? next : order))
+      previous.some((order) => order.id === next.id)
+        ? previous.map((order) => (order.id === next.id ? next : order))
+        : [...previous, next]
     );
   }, []);
 
@@ -644,6 +648,34 @@ function OrderCard({
     }
   }, [onUpdated, order.id]);
 
+  const [addingTeam, setAddingTeam] = useState(false);
+  const addTeam = useCallback(async () => {
+    if (!window.confirm("إرسال أخصائية وسائق إضافيين لنفس الزيارة؟ سيُنشأ طلب جديد بنفس الموعد والموقع.")) {
+      return;
+    }
+    setAddingTeam(true);
+    setNote(null);
+    try {
+      const response = await fetch(`/api/orders/${order.id}/extra-team`, {
+        method: "POST",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setNote({ ok: false, text: data?.error ?? "تعذّر إنشاء طلب الفريق الإضافي" });
+        return;
+      }
+      onUpdated(data.order as DriverOrderRow);
+      setNote({
+        ok: true,
+        text: "تم إنشاء طلب جديد لنفس الزيارة — اضغطي «طلب سائق» عليه لاختيار الأخصائية والسائق.",
+      });
+    } catch {
+      setNote({ ok: false, text: "تعذّر إنشاء طلب الفريق الإضافي" });
+    } finally {
+      setAddingTeam(false);
+    }
+  }, [onUpdated, order.id]);
+
   return (
     <li>
       <Card className="h-full">
@@ -734,6 +766,16 @@ function OrderCard({
               إعادة الإرسال
             </Button>
           )}
+          {order.driver_id && order.status !== "cancelled" ? (
+            <Button variant="outline" onClick={addTeam} disabled={addingTeam}>
+              {addingTeam ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <UserRoundPlus data-icon="inline-start" />
+              )}
+              فريق إضافي
+            </Button>
+          ) : null}
         </CardFooter>
       </Card>
 
