@@ -1,7 +1,7 @@
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { PLAYBACK_AUDIO_MODE } from "@/components/inbox/media-attachment";
 import { useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Image,
@@ -33,9 +33,76 @@ import {
 import { useFieldI18n } from "@/lib/field-i18n";
 import { successFeedback } from "@/lib/haptics";
 import { useKeyboardPadding } from "@/lib/keyboard";
-import { useCancelAcceptedFieldOrder, useFieldOrder, useFieldOrderAction } from "@/lib/queries";
+import { useCancelAcceptedFieldOrder, useFieldOrder, useFieldOrderAction, useSubmitLateReason } from "@/lib/queries";
+import { useDriverTripTracking } from "@/lib/driver-trip-tracking";
 import { useTheme } from "@/providers/theme-provider";
-import type { FieldOrder } from "@/types/api";
+import type { FieldOrder, LateReasonCode, PunctualitySummary } from "@/types/api";
+
+const CLASSIFICATION_LABEL: Record<PunctualitySummary["classification"], string> = {
+  pending: "الرحلة قيد المتابعة",
+  on_time: "وصلت الرحلة في الموعد",
+  driver_late_to_specialist: "تأخر السائق في الوصول للأخصائية",
+  specialist_delayed_departure: "تأخر الانطلاق بعد وصول السائق",
+  driver_trip_late_to_client: "تأخرت الرحلة في الوصول للعميلة",
+  uncertain: "المسؤولية غير مؤكدة",
+};
+
+const REASON_OPTIONS: { code: LateReasonCode; label: string }[] = [
+  { code: "traffic", label: "ازدحام مروري" },
+  { code: "specialist_not_ready", label: "الأخصائية لم تكن جاهزة" },
+  { code: "incorrect_specialist_location", label: "موقع الأخصائية غير صحيح" },
+  { code: "incorrect_client_location", label: "موقع العميلة غير صحيح" },
+  { code: "vehicle_issue", label: "مشكلة في السيارة" },
+  { code: "previous_order_finished_late", label: "انتهى الطلب السابق متأخرًا" },
+  { code: "other", label: "سبب آخر" },
+];
+
+function PunctualityCard({ value, onReason }: { value: PunctualitySummary; onReason: () => void }) {
+  const { colors } = useTheme();
+  const milestones = [
+    [value.specialistArrivalSource === "driver_step" ? "وصول السائق للأخصائية (حسب تأكيده)" : "وصول السائق للأخصائية", value.plannedSpecialistArrivalAt, value.specialistArrivedAt],
+    ["انطلاق السائق", value.plannedDriverDepartureAt, value.driverDepartedAt],
+    ["ركوب الأخصائية", null, value.specialistPickupAt],
+    [value.clientArrivalSource === "service_start" ? "الوصول للعميلة (حسب بدء الخدمة)" : "الوصول للعميلة", null, value.clientArrivedAt],
+    ["بدء الخدمة", null, value.serviceStartedAt],
+  ] as const;
+  const time = (iso: string | null) => iso ? new Intl.DateTimeFormat("ar-SA", { hour: "numeric", minute: "2-digit" }).format(new Date(iso)) : "—";
+  return (
+    <View style={{ gap: spacing.sm }}>
+      <SectionHeader title="الالتزام بالمواعيد" />
+      <Card style={{ gap: spacing.md }}>
+        <Badge
+          label={CLASSIFICATION_LABEL[value.classification]}
+          tone={value.classification === "on_time" ? "success" : value.requiresLateReason ? "danger" : "warning"}
+          icon={value.classification === "on_time" ? "checkmark.circle" : "clock"}
+        />
+        {value.specialistClientDistanceMetres !== null ? (
+          <Text selectable style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+            إلى العميلة: {(value.specialistClientDistanceMetres / 1000).toFixed(1)} كم · نحو {Math.ceil((value.specialistClientDurationSeconds ?? 0) / 60)} د · {value.routeSource === "osrm" ? "مسار OSRM" : "تقدير احتياطي"}
+          </Text>
+        ) : null}
+        {milestones.map(([label, planned, actual]) => (
+          <View key={label} style={{ flexDirection: "row-reverse", justifyContent: "space-between", gap: spacing.sm }}>
+            <Text selectable style={{ flex: 1, ...type.footnote, color: colors.text, ...rtlText }}>{label}</Text>
+            <Text selectable style={{ ...type.caption, color: colors.textSecondary, fontVariant: ["tabular-nums"] }}>
+              {planned ? `مخطط ${time(planned)} · ` : ""}فعلي {time(actual)}
+            </Text>
+          </View>
+        ))}
+        <Text selectable style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
+          حد الموقع {value.geofenceMetres} م · سماح {value.graceMinutes} د · آخر موقع {value.locationFreshnessSeconds === null ? "غير متاح" : `منذ ${value.locationFreshnessSeconds} ث`}
+        </Text>
+        {value.lateReasonCode ? (
+          <Text selectable style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+            السبب: {REASON_OPTIONS.find((item) => item.code === value.lateReasonCode)?.label} — {value.lateReasonNote}
+          </Text>
+        ) : value.requiresLateReason ? (
+          <PrimaryButton label="إضافة سبب التأخير" icon="exclamationmark.circle" tone="danger" variant="tinted" onPress={onReason} />
+        ) : null}
+      </Card>
+    </View>
+  );
+}
 
 function ProgressRail({ order }: { order: FieldOrder }) {
   const { colors } = useTheme();
@@ -223,11 +290,24 @@ export default function FieldOrderDetailScreen() {
   const detail = useFieldOrder(id);
   const action = useFieldOrderAction(id);
   const cancelAction = useCancelAcceptedFieldOrder(id);
+  const reasonAction = useSubmitLateReason(id);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [completionOpen, setCompletionOpen] = useState(false);
   const [completionOutcome, setCompletionOutcome] = useState<"done" | "not_done">("done");
   const [completionNote, setCompletionNote] = useState("");
+  const [lateReasonOpen, setLateReasonOpen] = useState(false);
+  const [lateReasonCode, setLateReasonCode] = useState<LateReasonCode | null>(null);
+  const [lateReasonNote, setLateReasonNote] = useState("");
+  const { refetch: refetchDetail } = detail;
+  const refreshAfterLocation = useCallback(() => { void refetchDetail(); }, [refetchDetail]);
+  const viewer = detail.data?.order;
+  useDriverTripTracking(
+    id,
+    // Unknown until loaded; a specialist's screen never touches the service.
+    !viewer || viewer.viewerRole !== "driver" ? null : Boolean(viewer.punctuality?.trackingActive),
+    refreshAfterLocation,
+  );
   if (detail.isLoading) return <LoadingScreen label={t("loadingOrder")} />;
   if (detail.isError || !detail.data) {
     return <ErrorState title={t("orderLoadError")} message={detail.error ? t("orderLoadError") : t("orderNotFound")} onRetry={() => void detail.refetch()} />;
@@ -412,6 +492,11 @@ export default function FieldOrderDetailScreen() {
         </View>
 
         <DispatchNote order={order} />
+
+        {/* Null for orders from before tracking started, or without both pins. */}
+        {order.punctuality ? (
+          <PunctualityCard value={order.punctuality} onReason={() => setLateReasonOpen(true)} />
+        ) : null}
 
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title={t("orderTeam")} />
@@ -675,6 +760,24 @@ export default function FieldOrderDetailScreen() {
             <PrimaryButton label="العودة بدون إلغاء" variant="plain" disabled={cancelAction.isPending} onPress={closeCancel} />
           </ScrollView>
         </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={lateReasonOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setLateReasonOpen(false)}>
+        <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg }} style={{ backgroundColor: colors.background }}>
+          <Text selectable style={{ ...type.title2, color: colors.text, ...rtlText }}>سبب التأخير</Text>
+          <Text selectable style={{ ...type.body, color: colors.textSecondary, ...rtlText }}>اختاري سببًا محددًا، ثم اكتبي ملاحظة تساعد العمليات على فهم ما حدث.</Text>
+          <View style={{ gap: spacing.sm }}>
+            {REASON_OPTIONS.map((item) => (
+              <Pressable key={item.code} onPress={() => setLateReasonCode(item.code)} style={({ pressed }) => ({ padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: lateReasonCode === item.code ? colors.brand : colors.borderStrong, backgroundColor: lateReasonCode === item.code ? colors.brandSoft : colors.surface, opacity: pressed ? 0.7 : 1 })}>
+                <Text selectable style={{ ...type.body, color: colors.text, ...rtlText }}>{item.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <TextInput multiline maxLength={500} value={lateReasonNote} onChangeText={setLateReasonNote} placeholder="اكتبي التفاصيل (3 أحرف على الأقل)" placeholderTextColor={colors.textTertiary} style={{ minHeight: 120, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, color: colors.text, ...type.body, ...rtlText, textAlignVertical: "top" }} />
+          {reasonAction.error ? <InlineAlert message="تعذر حفظ سبب التأخير." /> : null}
+          <PrimaryButton label="حفظ سبب التأخير" icon="checkmark.circle" loading={reasonAction.isPending} disabled={!lateReasonCode || lateReasonNote.trim().length < 3} onPress={() => lateReasonCode && reasonAction.mutate({ code: lateReasonCode, note: lateReasonNote.trim() }, { onSuccess: () => { successFeedback(); setLateReasonOpen(false); setLateReasonCode(null); setLateReasonNote(""); } })} />
+          <PrimaryButton label="إلغاء" variant="plain" disabled={reasonAction.isPending} onPress={() => setLateReasonOpen(false)} />
+        </ScrollView>
       </Modal>
     </View>
   );

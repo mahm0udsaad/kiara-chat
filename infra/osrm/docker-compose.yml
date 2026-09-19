@@ -1,0 +1,15 @@
+services:
+  osrm:
+    image: osrm/osrm-backend:v5.27.1
+    command: osrm-routed --algorithm mld /data/region.osrm
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./data:/data:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5000/route/v1/driving/46.6753,24.7136;46.6800,24.7200?overview=false"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+

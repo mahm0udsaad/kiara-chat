@@ -350,6 +350,21 @@ export function OperationsReportClient({ initialReport }: { initialReport: Opera
         <Metric icon={<Clock3 className="size-4" />} label="الساعات المحجوزة" value={`${hoursLabel(totals.minutes)} س`} />
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>مسؤولية التأخير</CardTitle>
+          <CardDescription>التصنيف مبني على الخطة، نطاقات الموقع، وحد السماح؛ الأدلة الناقصة تبقى غير مؤكدة.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-3">
+          <Metric icon={<CheckCircle2 />} label="في الموعد" value={numberFormatter.format(report.punctuality.onTime)} />
+          <Metric icon={<Clock3 />} label="السائق إلى الأخصائية" value={numberFormatter.format(report.punctuality.driverLateToSpecialist)} />
+          <Metric icon={<Clock3 />} label="انتظار الأخصائية" value={numberFormatter.format(report.punctuality.specialistDelayedDeparture)} />
+          <Metric icon={<Clock3 />} label="الرحلة إلى العميلة" value={numberFormatter.format(report.punctuality.driverTripLateToClient)} />
+          <Metric icon={<RefreshCw />} label="غير مؤكد" value={numberFormatter.format(report.punctuality.uncertain)} />
+          <Metric icon={<RefreshCw />} label="ينقصه سبب" value={numberFormatter.format(report.punctuality.missingReason)} />
+        </CardContent>
+      </Card>
+
       {/* Not split by role: a leg belongs to the hand-off between the two, and
           attributing "من الركوب حتى بدء الخدمة" to one of them would invite the
           wrong argument about whose fault it is. */}

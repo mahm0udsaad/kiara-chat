@@ -73,7 +73,8 @@
           "locationAlwaysAndWhenInUsePermission": "يستخدم تطبيق كيارا موقعك لتوثيق خطوات الزيارة (تأكيد الرحلة، ركوب الأخصائية، بدء الخدمة وإنهائها) وقت تنفيذها فقط.",
           "locationWhenInUsePermission": "يستخدم تطبيق كيارا موقعك لتوثيق خطوات الزيارة وقت تنفيذها فقط.",
           "isIosBackgroundLocationEnabled": false,
-          "isAndroidBackgroundLocationEnabled": false
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       "@react-native-community/datetimepicker",

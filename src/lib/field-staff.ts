@@ -11,6 +11,7 @@ import {
   type FieldLocationEvidence,
 } from "@/lib/operational-commands";
 import type { DriverOrderStatus, FieldOrderProgressState, TripType } from "@/lib/types";
+import { getOrderPunctuality, type PunctualitySummary } from "@/lib/punctuality";
 
 export type FieldStaffRole = "specialist" | "driver";
 export type FieldOrderAction =
@@ -46,6 +47,7 @@ export type FieldOrderProgress = FieldOrderProgressState;
 
 export interface FieldOrder {
   id: string;
+  viewerRole: FieldStaffRole;
   status: DriverOrderStatus;
   specialistId: string | null;
   secondSpecialistId: string | null;
@@ -85,6 +87,8 @@ export interface FieldOrder {
    * this shows him which gate. Null for the specialist, who is driven there.
    */
   doorPhotoUrl: string | null;
+  /** Timing plan and evidence summary. Exact continuous GPS points stay server-only. */
+  punctuality: PunctualitySummary | null;
 }
 
 export interface FieldStaffAccountSummary {
@@ -528,6 +532,25 @@ async function loadOrdersForSession(
     session.role === "driver" ? signUrls("door_photo_path") : new Map(),
   ]);
 
+  const punctualityByOrder = new Map<string, PunctualitySummary | null>();
+  if (options.orderId && rows[0]) {
+    // Detail-only: planning can call OSRM and should not turn a 100-row list
+    // into 100 route calculations. Capped so a slow route or short-link lookup
+    // never holds up the order screen; the card appears on the next refresh.
+    try {
+      punctualityByOrder.set(
+        String(rows[0].id),
+        await Promise.race([
+          getOrderPunctuality(String(rows[0].id)),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2_500)),
+        ]),
+      );
+    } catch (error) {
+      console.warn("[punctuality] detail unavailable", error);
+      punctualityByOrder.set(String(rows[0].id), null);
+    }
+  }
+
   const mapped = rows.map((row): FieldOrder => {
     const progress = progressOf(progressRows.get(row.id as string));
     const next = nextFieldAction(progress);
@@ -535,6 +558,7 @@ async function loadOrdersForSession(
     const cancelled = status === "cancelled";
     return {
       id: row.id as string,
+      viewerRole: session.role,
       status,
       specialistId: (row.specialist_id as string | null) ?? null,
       secondSpecialistId: (row.second_specialist_id as string | null) ?? null,
@@ -572,6 +596,7 @@ async function loadOrdersForSession(
           : null,
       doorPhotoUrl:
         session.role === "driver" ? doorUrls.get(row.id as string) ?? null : null,
+      punctuality: punctualityByOrder.get(row.id as string) ?? null,
     };
   });
   return options.view === "done"

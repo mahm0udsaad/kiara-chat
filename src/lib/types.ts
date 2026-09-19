@@ -107,6 +107,9 @@ export interface Specialist {
   nationality?: string | null;
   /** Explicit app/dispatch language override; null derives from nationality. */
   preferred_language?: string | null;
+  pickup_latitude?: number | null;
+  pickup_longitude?: number | null;
+  pickup_location_label?: string | null;
 }
 
 /** A delivery driver (السائق) the order is dispatched to over WhatsApp. */

@@ -5,6 +5,8 @@ import { useEffect } from "react";
 import { I18nManager, Platform, Pressable, ScrollView, Text } from "react-native";
 import * as Updates from "expo-updates";
 
+// Defines the driver-trip background task at bundle load; see the module.
+import "@/lib/driver-trip-tracking";
 import { AppProviders } from "@/providers/app-providers";
 import { fieldLocaleForSession } from "@/lib/field-i18n";
 import { useBootstrap } from "@/lib/queries";

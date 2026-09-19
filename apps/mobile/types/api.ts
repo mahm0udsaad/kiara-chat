@@ -487,6 +487,9 @@ export type OperationsEvent = {
   status: string;
   completed: boolean;
   completedAt: string | null;
+  punctualityClassification: string | null;
+  lateReasonCode: string | null;
+  lateReasonNote: string | null;
 };
 
 export type OperationsReport = {
@@ -498,6 +501,14 @@ export type OperationsReport = {
   generatedAt: string;
   people: Record<OperationsRole, OperationsPerson[]>;
   events: Record<OperationsRole, OperationsEvent[]>;
+  punctuality?: {
+    onTime: number;
+    driverLateToSpecialist: number;
+    specialistDelayedDeparture: number;
+    driverTripLateToClient: number;
+    uncertain: number;
+    missingReason: number;
+  };
 };
 
 export type OrdersReportDay = {
@@ -937,6 +948,7 @@ export type OrderReminderDelivery = {
 
 export type FieldOrder = {
   id: string;
+  viewerRole: FieldSessionRole;
   status: OrderStatus;
   specialistId: string | null;
   secondSpecialistId: string | null;
@@ -971,6 +983,52 @@ export type FieldOrder = {
    * this shows him which gate. Null for the specialist, who is driven there.
    */
   doorPhotoUrl: string | null;
+  punctuality: PunctualitySummary | null;
+};
+
+export type LateReasonCode =
+  | "traffic"
+  | "specialist_not_ready"
+  | "incorrect_specialist_location"
+  | "incorrect_client_location"
+  | "vehicle_issue"
+  | "previous_order_finished_late"
+  | "other";
+
+export type PunctualitySummary = {
+  plannedSpecialistArrivalAt: string | null;
+  plannedDriverDepartureAt: string | null;
+  driverDepartedAt: string | null;
+  specialistArrivedAt: string | null;
+  /** GPS fence, or the driver's own "arrived" tap. */
+  specialistArrivalSource: "geofence" | "driver_step" | null;
+  specialistPickupAt: string | null;
+  clientArrivedAt: string | null;
+  /** GPS fence, or the service-start tap as an upper bound. */
+  clientArrivalSource: "geofence" | "service_start" | null;
+  serviceStartedAt: string | null;
+  specialistClientDistanceMetres: number | null;
+  specialistClientDurationSeconds: number | null;
+  driverStartDistanceMetres: number | null;
+  driverStartDurationSeconds: number | null;
+  routeSource: "osrm" | "haversine" | null;
+  locationFreshnessSeconds: number | null;
+  classification:
+    | "pending"
+    | "on_time"
+    | "driver_late_to_specialist"
+    | "specialist_delayed_departure"
+    | "driver_trip_late_to_client"
+    | "uncertain";
+  certainty: "confirmed" | "uncertain";
+  uncertaintyCode: string | null;
+  graceMinutes: number;
+  geofenceMetres: number;
+  pickupBufferMinutes: number;
+  lateReasonCode: LateReasonCode | null;
+  lateReasonNote: string | null;
+  requiresLateReason: boolean;
+  trackingActive: boolean;
 };
 
 /* ── Responsibility trail ────────────────────────────────────────────────── */

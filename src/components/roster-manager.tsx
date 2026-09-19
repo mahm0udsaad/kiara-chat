@@ -300,12 +300,15 @@ function RosterSection<T extends Row>({
               kind={kind}
               account={accounts.find((account) => account.rosterId === it.id) ?? null}
               onAccount={onAccount}
-              onSave={(fullName, phoneVal, nat, language) =>
+              onSave={(fullName, phoneVal, nat, language, pickupLocation, pickupLabel) =>
                 patch(it.id, {
                   fullName,
                   phone: phoneVal,
                   ...(withNationality ? { nationality: nat || null } : {}),
                   ...(withNationality ? { preferredLanguage: language || null } : {}),
+                  // Only a changed pin is sent, so saving a name never re-reads it.
+                  ...(withNationality && pickupLocation !== null ? { pickupLocation } : {}),
+                  ...(withNationality ? { pickupLocationLabel: pickupLabel || null } : {}),
                 })
               }
               onToggleActive={() => patch(it.id, { isActive: !it.is_active })}
@@ -337,6 +340,9 @@ function RosterRow({
     phone: string,
     nationality: string,
     preferredLanguage: string,
+    /** Pasted link or "lat, lng"; null when unchanged. */
+    pickupLocation: string | null,
+    pickupLocationLabel: string,
   ) => Promise<boolean>;
   onToggleActive: () => void;
   kind: Kind;
@@ -351,6 +357,13 @@ function RosterRow({
   const natInfo = nationalityOf(rowNationality);
   const rowPreferredLanguage = (row as Specialist).preferred_language ?? "";
   const [preferredLanguage, setPreferredLanguage] = useState(rowPreferredLanguage);
+  const specialist = row as Specialist;
+  const rowPickupLocation = specialist.pickup_latitude != null && specialist.pickup_longitude != null
+    ? `${specialist.pickup_latitude}, ${specialist.pickup_longitude}`
+    : "";
+  const rowPickupLabel = specialist.pickup_location_label ?? "";
+  const [pickupLocation, setPickupLocation] = useState(rowPickupLocation);
+  const [pickupLabel, setPickupLabel] = useState(rowPickupLabel);
   const languageInfo = specialistLanguageOf(rowNationality, rowPreferredLanguage);
   const [accountOpen, setAccountOpen] = useState(false);
   const [accountPassword, setAccountPassword] = useState("");
@@ -398,7 +411,8 @@ function RosterRow({
   };
 
   const save = async () => {
-    const ok = await onSave(name, phone, nationality, preferredLanguage);
+    const changedPickup = pickupLocation.trim() === rowPickupLocation ? null : pickupLocation.trim();
+    const ok = await onSave(name, phone, nationality, preferredLanguage, changedPickup, pickupLabel);
     if (ok) setEditing(false);
   };
 
@@ -429,6 +443,21 @@ function RosterRow({
               onChange={setPreferredLanguage}
               className="min-h-10 px-2"
             />
+            <input
+              value={pickupLocation}
+              onChange={(event) => setPickupLocation(event.target.value)}
+              dir="ltr"
+              placeholder="رابط خرائط Google لمقر الأخصائية"
+              aria-label="موقع مقر الأخصائية: رابط خرائط Google أو الإحداثيات"
+              className="min-h-10 w-full rounded-lg border px-2 text-sm outline-none focus:border-[var(--brand)]"
+            />
+            <input
+              value={pickupLabel}
+              onChange={(event) => setPickupLabel(event.target.value)}
+              placeholder="وصف مقر الأخصائية"
+              aria-label="وصف مقر الأخصائية"
+              className="min-h-10 w-full rounded-lg border px-2 text-sm outline-none focus:border-[var(--brand)]"
+            />
           </>
         ) : null}
         <div className="flex shrink-0 gap-1.5">
@@ -449,6 +478,8 @@ function RosterRow({
               setPhone(row.phone ?? "");
               setNationality(rowNationality);
               setPreferredLanguage(rowPreferredLanguage);
+              setPickupLocation(rowPickupLocation);
+              setPickupLabel(rowPickupLabel);
             }}
             aria-label="إلغاء"
             className="flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-black/5"
@@ -488,6 +519,11 @@ function RosterRow({
           {account ? (
             <span className="mr-2 rounded-full bg-[var(--brand-soft)] px-1.5 py-0.5 text-[10px] text-[var(--brand)]">
               دخول التطبيق مفعّل
+            </span>
+          ) : null}
+          {withNationality && specialist.pickup_latitude != null ? (
+            <span className="mr-2 rounded-full bg-[var(--brand-soft)] px-1.5 py-0.5 text-[10px] text-[var(--brand)]">
+              موقع الالتقاط محفوظ
             </span>
           ) : null}
           {!row.is_active ? (

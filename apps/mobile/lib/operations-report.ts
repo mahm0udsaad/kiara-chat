@@ -30,6 +30,9 @@ export type OperationsVisit = {
   completed: boolean;
   completedAt: string | null;
   sourceLabel: string;
+  punctualityClassification: string | null;
+  lateReasonCode: string | null;
+  lateReasonNote: string | null;
 };
 
 /** Current Saudi working week (Sunday–Saturday) or current calendar month. */
@@ -92,6 +95,9 @@ export function groupOperationsVisits(events: OperationsEvent[]): OperationsVisi
         completed: rows.every((event) => event.completed),
         completedAt: rows.find((event) => event.completedAt)?.completedAt ?? null,
         sourceLabel: rows.some((event) => event.source === "rekaz") ? "حجز ركاز" : "طلب واتساب",
+        punctualityClassification: rows.find((event) => event.punctualityClassification)?.punctualityClassification ?? null,
+        lateReasonCode: rows.find((event) => event.lateReasonCode)?.lateReasonCode ?? null,
+        lateReasonNote: rows.find((event) => event.lateReasonNote)?.lateReasonNote ?? null,
       };
     })
     .sort((a, b) => b.arrivalAt.localeCompare(a.arrivalAt));

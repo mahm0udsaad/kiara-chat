@@ -5,6 +5,7 @@ import {
 } from "@/lib/field-timings";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import { isLateClassification } from "@/lib/punctuality-core";
 import type { RekazReservation } from "@/lib/reservations";
 
 export const OPERATIONS_TIME_ZONE = "Asia/Riyadh";
@@ -39,6 +40,9 @@ export type OperationsEvent = {
   status: string;
   completed: boolean;
   completedAt: string | null;
+  punctualityClassification: string | null;
+  lateReasonCode: string | null;
+  lateReasonNote: string | null;
 };
 
 export type OperationsReport = {
@@ -66,6 +70,14 @@ export type OperationsReport = {
     unrecordedSteps: number;
     /** Percent of confirmed steps carrying a device fix, 0 when none. */
     verifiedPercent: number;
+  };
+  punctuality: {
+    onTime: number;
+    driverLateToSpecialist: number;
+    specialistDelayedDeparture: number;
+    driverTripLateToClient: number;
+    uncertain: number;
+    missingReason: number;
   };
 };
 
@@ -260,6 +272,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
     checkpointsResult,
     specialistsResult,
     driversResult,
+    punctualityResult,
   ] =
     await Promise.all([
       admin
@@ -294,6 +307,11 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         .from("drivers")
         .select("id, full_name, is_active")
         .eq("restaurant_id", KIARA_RESTAURANT_ID),
+      admin
+        .from("order_punctuality")
+        .select("order_id, classification, late_reason_code, late_reason_note, driver_orders!inner(status)")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .neq("driver_orders.status", "cancelled"),
     ]);
 
   for (const result of [reservationsResult, ordersResult, progressResult, checkpointsResult, specialistsResult, driversResult]) {
@@ -305,6 +323,19 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
   const progress = (progressResult.data ?? []) as unknown as ProgressRow[];
   const specialists = (specialistsResult.data ?? []) as unknown as RosterRow[];
   const drivers = (driversResult.data ?? []) as unknown as RosterRow[];
+  const rangeOrderIds = new Set(orders.map((order) => order.id));
+  const punctualityRows = ((punctualityResult.data ?? []) as unknown as {
+    order_id: string; classification: string; late_reason_code: string | null; late_reason_note: string | null;
+  }[]).filter((row) => rangeOrderIds.has(row.order_id));
+  const punctualityByOrder = new Map(punctualityRows.map((row) => [row.order_id, row]));
+  const punctualityFields = (orderId: string | null) => {
+    const row = orderId ? punctualityByOrder.get(orderId) : null;
+    return {
+      punctualityClassification: row?.classification ?? null,
+      lateReasonCode: row?.late_reason_code ?? null,
+      lateReasonNote: row?.late_reason_note ?? null,
+    };
+  };
   const startMinute = timeToMinutes(input.startTime);
   const endMinute = timeToMinutes(input.endTime);
 
@@ -420,6 +451,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         status: reservation.status || row.status,
         completed,
         completedAt,
+        ...punctualityFields(linkedOrder?.id ?? null),
       });
     }
   }
@@ -444,6 +476,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         status: completedAt ? "Done" : "Scheduled",
         completed: Boolean(completedAt),
         completedAt,
+        ...punctualityFields(order.id),
       });
     }
   }
@@ -481,6 +514,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
       status: completedAt ? "Done" : "Scheduled",
       completed: Boolean(completedAt),
       completedAt,
+      ...punctualityFields(order.id),
     });
   }
 
@@ -502,6 +536,14 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
       verifiedPercent: confirmedSteps
         ? Math.round((verifiedSteps / confirmedSteps) * 100)
         : 0,
+    },
+    punctuality: {
+      onTime: punctualityRows.filter((row) => row.classification === "on_time").length,
+      driverLateToSpecialist: punctualityRows.filter((row) => row.classification === "driver_late_to_specialist").length,
+      specialistDelayedDeparture: punctualityRows.filter((row) => row.classification === "specialist_delayed_departure").length,
+      driverTripLateToClient: punctualityRows.filter((row) => row.classification === "driver_trip_late_to_client").length,
+      uncertain: punctualityRows.filter((row) => row.classification === "uncertain").length,
+      missingReason: punctualityRows.filter((row) => isLateClassification(row.classification) && !row.late_reason_code).length,
     },
   };
 }

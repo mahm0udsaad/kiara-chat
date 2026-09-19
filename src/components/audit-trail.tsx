@@ -203,8 +203,73 @@ export function OrderAuditPanel({ orderId }: { orderId: string }) {
               ))}
             </ul>
           )}
+          <PunctualityEvidence value={data.punctuality} />
           <FieldEvidence field={data.field} legs={data.legs} />
         </>
+      ) : null}
+    </section>
+  );
+}
+
+const PUNCTUALITY_LABEL: Record<string, string> = {
+  pending: "قيد المتابعة",
+  on_time: "في الموعد",
+  driver_late_to_specialist: "السائق وصل للأخصائية متأخرًا",
+  specialist_delayed_departure: "الأخصائية أخّرت الانطلاق بعد وصول السائق",
+  driver_trip_late_to_client: "السائق/الرحلة وصل للعميلة متأخرًا",
+  uncertain: "غير مؤكد — الأدلة غير مكتملة",
+};
+
+const LATE_REASON_LABEL: Record<string, string> = {
+  traffic: "ازدحام مروري",
+  specialist_not_ready: "الأخصائية لم تكن جاهزة",
+  incorrect_specialist_location: "موقع الأخصائية غير صحيح",
+  incorrect_client_location: "موقع العميلة غير صحيح",
+  vehicle_issue: "مشكلة في السيارة",
+  previous_order_finished_late: "الطلب السابق انتهى متأخرًا",
+  other: "سبب آخر",
+};
+
+function PunctualityEvidence({ value }: { value: OrderAuditLog["punctuality"] }) {
+  if (!value) return null;
+  const time = (iso: string | null) => iso ? DATE_TIME_FMT.format(new Date(iso)) : "—";
+  const milestones = [
+    [value.specialistArrivalSource === "driver_step" ? "وصول السائق للأخصائية (حسب تأكيده)" : "وصول السائق للأخصائية (GPS)", value.plannedSpecialistArrivalAt, value.specialistArrivedAt],
+    ["انطلاق السائق", value.plannedDriverDepartureAt, value.driverDepartedAt],
+    ["ركوب الأخصائية", null, value.specialistPickupAt],
+    [value.clientArrivalSource === "service_start" ? "الوصول للعميلة (حسب بدء الخدمة)" : "الوصول للعميلة (GPS)", null, value.clientArrivedAt],
+    ["بدء الخدمة", null, value.serviceStartedAt],
+  ] as const;
+  return (
+    <section className="mt-3 flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold">تحليل الالتزام بالموعد</h4>
+        <Badge variant={value.classification === "on_time" ? "secondary" : value.requiresLateReason ? "destructive" : "outline"}>
+          {PUNCTUALITY_LABEL[value.classification] ?? value.classification}
+        </Badge>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {value.specialistClientDistanceMetres === null ? "المسار غير متاح" : `${distanceLabel(value.specialistClientDistanceMetres)} · ${Math.ceil((value.specialistClientDurationSeconds ?? 0) / 60)} د`}
+        {` · ${value.routeSource === "osrm" ? "OSRM" : "Haversine احتياطي"} · سماح ${value.graceMinutes} د · نطاق ${value.geofenceMetres} م`}
+      </p>
+      <ul className="divide-y rounded-md border px-3">
+        {milestones.map(([label, planned, actual]) => (
+          <li key={label} className="flex items-center justify-between gap-3 py-2 text-xs">
+            <span>{label}</span>
+            <span className="tabular-nums text-muted-foreground">
+              {planned ? `مخطط ${time(planned)} · ` : ""}فعلي {time(actual)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-muted-foreground">
+        حداثة الموقع: {value.locationFreshnessSeconds === null ? "لا يوجد GPS" : `منذ ${value.locationFreshnessSeconds} ث`}
+        {value.uncertaintyCode ? ` · سبب عدم اليقين: ${value.uncertaintyCode}` : ""}
+      </p>
+      {value.lateReasonCode ? (
+        <p className="text-xs font-medium">سبب التأخير: {LATE_REASON_LABEL[value.lateReasonCode] ?? value.lateReasonCode} — {value.lateReasonNote}</p>
+      ) : value.requiresLateReason ? (
+        <p className="text-xs font-medium text-destructive">التأخير يحتاج سببًا منظمًا وملاحظة.</p>
       ) : null}
     </section>
   );

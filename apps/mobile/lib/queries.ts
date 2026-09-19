@@ -1271,6 +1271,20 @@ export function useFieldOrderAction(id: string) {
   });
 }
 
+export function useSubmitLateReason(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { code: import("@/types/api").LateReasonCode; note: string }) =>
+      apiRequest<{ punctuality: import("@/types/api").PunctualitySummary }>(
+        `/field/orders/${id}/punctuality`,
+        { method: "PATCH", body: JSON.stringify(input) },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.fieldOrder(id) });
+    },
+  });
+}
+
 export function useCancelAcceptedFieldOrder(id: string) {
   const queryClient = useQueryClient();
   return useMutation({

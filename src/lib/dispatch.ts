@@ -55,6 +55,7 @@ import type {
 type AuthedClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
 const SPECIALIST_COLS = "id, full_name, phone, is_active, nationality, preferred_language";
+const SPECIALIST_COLS_WITH_PICKUP = `${SPECIALIST_COLS}, pickup_latitude, pickup_longitude, pickup_location_label`;
 const NATIONALITY_SPECIALIST_COLS = "id, full_name, phone, is_active, nationality";
 /** Until the nationality migration runs, reads fall back to these columns. */
 const LEGACY_SPECIALIST_COLS = "id, full_name, phone, is_active";
@@ -62,6 +63,8 @@ const missingPreferredLanguage = (err: { message: string } | null) =>
   Boolean(err?.message.includes("preferred_language"));
 const missingNationality = (err: { message: string } | null) =>
   Boolean(err?.message.includes("nationality"));
+const missingPickupCoordinates = (err: { message: string } | null) =>
+  Boolean(err?.message.includes("pickup_latitude") || err?.message.includes("pickup_longitude") || err?.message.includes("pickup_location_label"));
 const NATIONALITY_SCHEMA_ERROR =
   "تحديث الجنسيات غير مطبّق على قاعدة البيانات. تواصلي مع مسؤول النظام ثم أعيدي المحاولة.";
 const LANGUAGE_SCHEMA_ERROR =
@@ -195,7 +198,8 @@ export async function listSpecialists(
     if (opts.activeOnly) q = q.eq("is_active", true);
     return q.order("full_name");
   };
-  let { data, error } = await run(SPECIALIST_COLS);
+  let { data, error } = await run(SPECIALIST_COLS_WITH_PICKUP);
+  if (missingPickupCoordinates(error)) ({ data, error } = await run(SPECIALIST_COLS));
   if (missingPreferredLanguage(error)) ({ data, error } = await run(NATIONALITY_SPECIALIST_COLS));
   if (missingNationality(error)) ({ data, error } = await run(LEGACY_SPECIALIST_COLS));
   if (error) throw new Error(error.message);
@@ -254,6 +258,9 @@ export interface RosterPatch {
   nationality?: string | null;
   /** Specialists only — explicit app/dispatch language override. */
   preferredLanguage?: string | null;
+  pickupLatitude?: number | null;
+  pickupLongitude?: number | null;
+  pickupLocationLabel?: string | null;
 }
 
 function buildRosterPatch(patch: RosterPatch): Record<string, unknown> {
@@ -263,6 +270,9 @@ function buildRosterPatch(patch: RosterPatch): Record<string, unknown> {
   if (patch.isActive !== undefined) upd.is_active = patch.isActive;
   if (patch.nationality !== undefined) upd.nationality = patch.nationality;
   if (patch.preferredLanguage !== undefined) upd.preferred_language = patch.preferredLanguage;
+  if (patch.pickupLatitude !== undefined) upd.pickup_latitude = patch.pickupLatitude;
+  if (patch.pickupLongitude !== undefined) upd.pickup_longitude = patch.pickupLongitude;
+  if (patch.pickupLocationLabel !== undefined) upd.pickup_location_label = patch.pickupLocationLabel?.trim() || null;
   return upd;
 }
 
@@ -279,7 +289,13 @@ export async function updateSpecialist(
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .select(cols)
       .single();
-  let { data, error } = await run(SPECIALIST_COLS, buildRosterPatch(patch));
+  let { data, error } = await run(SPECIALIST_COLS_WITH_PICKUP, buildRosterPatch(patch));
+  if (missingPickupCoordinates(error)) {
+    if (patch.pickupLatitude !== undefined || patch.pickupLongitude !== undefined || patch.pickupLocationLabel !== undefined) {
+      throw new Error("تحديث مواقع الأخصائيات غير مطبّق على قاعدة البيانات.");
+    }
+    ({ data, error } = await run(SPECIALIST_COLS, buildRosterPatch(patch)));
+  }
   if (missingPreferredLanguage(error)) {
     if (patch.preferredLanguage !== undefined) throw new Error(LANGUAGE_SCHEMA_ERROR);
     const withoutLanguage = { ...patch };

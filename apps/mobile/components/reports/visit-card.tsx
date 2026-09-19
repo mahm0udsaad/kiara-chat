@@ -62,7 +62,19 @@ function VisitContent({ visit }: { visit: OperationsVisit }) {
           {visit.serviceCount > 1 ? (
             <Badge label={`${reportInteger.format(visit.serviceCount)} خدمات في زيارة واحدة`} tone="info" />
           ) : null}
+          {visit.punctualityClassification ? (
+            <Badge
+              label={visit.punctualityClassification === "on_time" ? "في الموعد" : visit.punctualityClassification === "uncertain" ? "التأخير غير مؤكد" : "تأخير مسجل"}
+              tone={visit.punctualityClassification === "on_time" ? "success" : "warning"}
+            />
+          ) : null}
         </View>
+
+        {visit.lateReasonNote ? (
+          <Text selectable style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
+            سبب التأخير: {visit.lateReasonNote}
+          </Text>
+        ) : null}
 
         <View
           accessibilityLabel={`خدمات الزيارة، ${visit.serviceCount}`}

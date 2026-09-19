@@ -19,6 +19,7 @@ import { getFieldAudit, type FieldAudit } from "@/lib/field-audit";
 import { fieldLegsOf, type FieldLeg } from "@/lib/field-timings";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import { getOrderPunctuality, type PunctualitySummary } from "@/lib/punctuality";
 
 export interface AuditPerson {
   /** team member id, user id, or roster id — whatever identified the actor. */
@@ -85,6 +86,7 @@ export interface OrderAuditLog {
   field: FieldAudit | null;
   /** Minutes per leg of the visit, for the same order. */
   legs: FieldLeg[];
+  punctuality: PunctualitySummary | null;
 }
 
 const CS_STATUS_LABEL: Record<string, string> = {
@@ -599,7 +601,7 @@ export async function getOrderAuditLog(orderId: string): Promise<OrderAuditLog |
     .maybeSingle();
   if (!order) return null;
 
-  const [events, conversation, field] = await Promise.all([
+  const [events, conversation, field, punctuality] = await Promise.all([
     admin
       .from("operation_events")
       .select(
@@ -617,6 +619,7 @@ export async function getOrderAuditLog(orderId: string): Promise<OrderAuditLog |
     // Best-effort: an order whose field work has not started has no audit, and
     // that must not blank the event log the owner came here to read.
     getFieldAudit(orderId).catch(() => null),
+    getOrderPunctuality(orderId).catch(() => null),
   ]);
 
   const rows = (events.data ?? []) as Payload[];
@@ -658,5 +661,6 @@ export async function getOrderAuditLog(orderId: string): Promise<OrderAuditLog |
     entries,
     field,
     legs: fieldLegsOf(field?.progress ?? null, text(order.sent_at)),
+    punctuality,
   };
 }
