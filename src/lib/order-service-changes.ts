@@ -7,6 +7,10 @@ import {
   serviceFingerprint,
 } from "@/lib/service-change-planning";
 import { specialistLanguageOf } from "@/lib/specialist-languages";
+import {
+  fallbackServiceChangeMessage,
+  specialistFallbackCodeOf,
+} from "@/lib/specialist-dispatch-fallback";
 import { translateMessage } from "@/lib/translate";
 import { notifyFieldStaffReminder } from "@/lib/field-push";
 
@@ -343,9 +347,24 @@ export async function previewServiceChange(
     order.specialist_id,
   );
   if (language.targetLanguage)
+    // Translation is optional: without it she still gets the change in her own
+    // language (or English), never the Arabic she cannot read.
     specialistMessage =
       (await translateMessage(specialistMessage, language.targetLanguage)) ||
-      specialistMessage;
+      fallbackServiceChangeMessage(
+        specialistFallbackCodeOf(
+          specialist.data?.nationality,
+          specialist.data?.preferred_language,
+          order.specialist_id,
+        ),
+        {
+          existing: Boolean(existing),
+          name,
+          minutes,
+          customerPhone: order.customer_phone,
+          endsAt: timing.newEnd,
+        },
+      );
   const payload = {
     name,
     minutes,

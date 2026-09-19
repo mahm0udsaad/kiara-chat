@@ -1,5 +1,11 @@
 import "server-only";
 
+import {
+  specialistDriverArrivedCopy,
+  specialistNextStepCopy,
+  specialistOrderAssignedCopy,
+  specialistPushTestCopy,
+} from "@/lib/field-notification-copy";
 import { fetchWithTimeout } from "@/lib/http-timeout";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
@@ -230,6 +236,44 @@ async function activeTokensForRoster(
   return out;
 }
 
+
+interface SpecialistLanguageRow {
+  nationality: string | null;
+  preferredLanguage: string | null;
+}
+
+/**
+ * What decides each specialist's language, keyed by roster id. Reads
+ * `preferred_language` when the column exists and degrades to nationality
+ * alone before its migration lands; any other failure leaves the map empty,
+ * which addresses her in Arabic — the copy every push had before it was
+ * localised, so a lookup problem never blocks the alert itself.
+ */
+async function specialistLanguageRows(
+  ids: string[],
+): Promise<Map<string, SpecialistLanguageRow>> {
+  const out = new Map<string, SpecialistLanguageRow>();
+  if (!ids.length) return out;
+  const admin = getAdminSupabaseClient();
+  const query = (cols: string) =>
+    admin.from("specialists").select(cols).eq("restaurant_id", KIARA_RESTAURANT_ID).in("id", ids);
+  let { data, error } = await query("id, nationality, preferred_language");
+  if (error?.message.includes("preferred_language")) {
+    ({ data, error } = await query("id, nationality"));
+  }
+  if (error) {
+    console.error("[field-push] Could not read specialist languages", error.message);
+    return out;
+  }
+  for (const row of (data ?? []) as unknown as Array<Record<string, unknown>>) {
+    out.set(row.id as string, {
+      nationality: (row.nationality as string | null) ?? null,
+      preferredLanguage: (row.preferred_language as string | null) ?? null,
+    });
+  }
+  return out;
+}
+
 /**
  * A reminder an employee wrote and sent by hand from the order screen.
  *
@@ -283,15 +327,21 @@ export async function notifyFieldOrderAssigned(input: {
     activeTokensForRoster("driver", [input.driverId]),
   ]);
   const name = input.customerName || "العميلة";
+  const languages = await specialistLanguageRows(input.specialistIds);
   const data = { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` };
   const messages: PushMessage[] = [
-    ...input.specialistIds.flatMap((specialistId) =>
-      (specialistTokens.get(specialistId) ?? []).map((to) => fieldMessage(to, {
-      title: input.repeat ? "تذكير بطلبكِ" : "طلب جديد لكِ",
-      body: `افتحي تفاصيل طلب ${name} وتابعي خطوات التنفيذ.`,
-      data,
-      })),
-    ),
+    ...input.specialistIds.flatMap((specialistId) => {
+      const copy = specialistOrderAssignedCopy({
+        specialistId,
+        nationality: languages.get(specialistId)?.nationality,
+        preferredLanguage: languages.get(specialistId)?.preferredLanguage,
+        customerName: input.customerName,
+        repeat: input.repeat,
+      });
+      return (specialistTokens.get(specialistId) ?? []).map((to) =>
+        fieldMessage(to, { ...copy, data }),
+      );
+    }),
     ...(driverTokens.get(input.driverId) ?? []).map((to) => fieldMessage(to, {
       title: input.repeat ? "تذكير برحلتك" : "رحلة جديدة لك",
       body: `افتح تفاصيل طلب ${name} وأكّد الرحلة.`,
@@ -316,15 +366,22 @@ export async function notifyFieldDriverArrived(input: {
   );
   if (!specialistIds.length) return sendExpoMessages([]);
   const tokens = await activeTokensForRoster("specialist", specialistIds);
-  const name = input.customerName || "العميلة";
+  const languages = await specialistLanguageRows(specialistIds);
   return sendExpoMessages(
-    specialistIds.flatMap((specialistId) =>
-      (tokens.get(specialistId) ?? []).map((to) => fieldMessage(to, {
-      title: "وصل السائق",
-      body: `السائق في انتظاركِ للتوجه إلى ${name}.`,
-      data: { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` },
-      })),
-    )
+    specialistIds.flatMap((specialistId) => {
+      const copy = specialistDriverArrivedCopy({
+        specialistId,
+        nationality: languages.get(specialistId)?.nationality,
+        preferredLanguage: languages.get(specialistId)?.preferredLanguage,
+        customerName: input.customerName,
+      });
+      return (tokens.get(specialistId) ?? []).map((to) =>
+        fieldMessage(to, {
+          ...copy,
+          data: { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` },
+        }),
+      );
+    })
   );
 }
 
@@ -342,15 +399,27 @@ export async function notifyNextFieldStep(input: {
       )
     : input.driverId ? [input.driverId] : [];
   if (!next.role || !next.label || !rosterIds.length) return sendExpoMessages([]);
-  const tokens = await activeTokensForRoster(next.role, rosterIds);
+  const [tokens, languages] = await Promise.all([
+    activeTokensForRoster(next.role, rosterIds),
+    // Drivers are always addressed in Arabic; only specialists are localised.
+    next.role === "specialist"
+      ? specialistLanguageRows(rosterIds)
+      : Promise.resolve(new Map<string, SpecialistLanguageRow>()),
+  ]);
+  const data = { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` };
   return sendExpoMessages(
-    rosterIds.flatMap((rosterId) =>
-      (tokens.get(rosterId) ?? []).map((to) => fieldMessage(to, {
-      title: "الخطوة التالية جاهزة",
-      body: next.label!,
-      data: { type: "field_order", orderId: input.orderId, url: `/field/orders/${input.orderId}` },
-      })),
-    )
+    rosterIds.flatMap((rosterId) => {
+      const localised = next.role === "specialist"
+        ? specialistNextStepCopy({
+            specialistId: rosterId,
+            nationality: languages.get(rosterId)?.nationality,
+            preferredLanguage: languages.get(rosterId)?.preferredLanguage,
+            action: next.action,
+          })
+        : null;
+      const copy = localised ?? { title: "الخطوة التالية جاهزة", body: next.label! };
+      return (tokens.get(rosterId) ?? []).map((to) => fieldMessage(to, { ...copy, data }));
+    })
   );
 }
 
@@ -358,7 +427,16 @@ export async function notifyNextFieldStep(input: {
 export async function testFieldPushDelivery(
   accountId: string,
   deviceId: string,
+  /** Present for a specialist, so the test arrives in the language she reads. */
+  specialist?: { rosterId: string; nationality: string | null; preferredLanguage: string | null },
 ): Promise<FieldPushDeliverySummary> {
+  const copy = specialist
+    ? specialistPushTestCopy({
+        specialistId: specialist.rosterId,
+        nationality: specialist.nationality,
+        preferredLanguage: specialist.preferredLanguage,
+      })
+    : { title: "اختبار إشعارات كيارا", body: "الإشعارات تعمل على هذا الجهاز." };
   const { data: tokens, error } = await getAdminSupabaseClient()
     .from("field_staff_push_tokens")
     .select("expo_token")
@@ -369,8 +447,7 @@ export async function testFieldPushDelivery(
   if (error) throw new Error(error.message);
   return sendExpoMessages(
     (tokens ?? []).map((row) => fieldMessage(row.expo_token as string, {
-      title: "اختبار إشعارات كيارا",
-      body: "الإشعارات تعمل على هذا الجهاز.",
+      ...copy,
       data: { type: "field_push_test", url: "/field/account" },
     })),
     { checkReceipts: true },

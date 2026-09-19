@@ -511,9 +511,9 @@ export default function InboxScreen() {
   const { colors } = useTheme();
   const router = useRouter();
   const android = process.env.EXPO_OS === "android";
-  // Search and labels should start from the complete customer archive. The
-  // narrower operational queues remain one tap away in the same control.
-  const [view, setView] = useState<InboxView>("all");
+  // Opens on what is waiting for a reply. The full archive and the other
+  // queues are one tap away in the same control.
+  const [view, setView] = useState<InboxView>("new");
   const [search, setSearch] = useState("");
   // The web inbox's status/section/label dropdowns, folded into one sheet.
   const [filters, setFilters] = useState<ConversationFilters>(

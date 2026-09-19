@@ -37,7 +37,7 @@ function OrderCard({ order }: { order: FieldOrder }) {
                 </Text>
               </View>
               <Badge
-                label={cancelled ? "ملغى" : completed ? t("completed") : order.canAct ? t("waitingForYou") : t("inProgress")}
+                label={cancelled ? t("cancelledBadge") : completed ? t("completed") : order.canAct ? t("waitingForYou") : t("inProgress")}
                 tone={cancelled ? "danger" : completed ? "success" : order.canAct ? "warning" : "neutral"}
                 icon={cancelled ? "xmark.circle" : completed ? "checkmark.circle" : order.canAct ? "bell" : "clock"}
               />
@@ -72,7 +72,7 @@ function OrderCard({ order }: { order: FieldOrder }) {
                   ...textStyle,
                 }}
               >
-                {cancelled ? "تم إلغاء الطلب" : order.nextAction ? actionLabel(order.nextAction) : t("orderFinished")}
+                {cancelled ? t("orderCancelled") : order.nextAction ? actionLabel(order.nextAction) : t("orderFinished")}
               </Text>
               <IconSymbol name={isRtl ? "chevron.left" : "chevron.right"} size={15} color={colors.textTertiary} />
             </View>

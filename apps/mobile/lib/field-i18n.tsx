@@ -134,6 +134,18 @@ const arabic = {
   confirmCompletion: "تأكيد وإنهاء الخدمة",
   driverReturnTitle: "إنهاء الرحلة والعودة",
   driverReturnBody: "أؤكد عودتي وإتمام رحلة هذا الطلب.",
+  cancelledBadge: "ملغى",
+  orderCancelled: "تم إلغاء الطلب",
+  timingTitle: "الالتزام بموعد الخدمة",
+  timingScheduledAt: "موعد بدء الخدمة",
+  timingActualStart: "بدء الخدمة الفعلي",
+  timingNotStartedYet: "لم تضغط الأخصائية بدء الخدمة بعد",
+  timingLate: "بدأت متأخرة بـ {duration}",
+  timingEarly: "بدأت قبل الموعد بـ {duration}",
+  timingOnTime: "بدأت في الموعد",
+  timingWaiting: "متأخرة حتى الآن بـ {duration}",
+  timingUpcoming: "متبقي على الموعد {duration}",
+  timingFootnote: "يتم تثبيت الحساب من وقت ضغطة الأخصائية على «بدء الخدمة».",
 } as const;
 
 type TranslationKey = keyof typeof arabic;
@@ -187,6 +199,12 @@ const english: Dictionary = {
   completedAsPlanned: "Completed", notCompleted: "Not completed", completionNoteLabel: "Note (optional)",
   completionNotePlaceholder: "Example: the customer changed the service or there was a problem", confirmCompletion: "Confirm and close service",
   driverReturnTitle: "Complete return trip", driverReturnBody: "I confirm that I returned and completed this order's trip.",
+  cancelledBadge: "Cancelled", orderCancelled: "Order cancelled",
+  timingTitle: "Service punctuality", timingScheduledAt: "Scheduled start", timingActualStart: "Actual start",
+  timingNotStartedYet: "You have not tapped Start service yet", timingLate: "Started {duration} late",
+  timingEarly: "Started {duration} early", timingOnTime: "Started on time", timingWaiting: "{duration} late so far",
+  timingUpcoming: "{duration} until the appointment",
+  timingFootnote: "Timing is counted from when you tapped “Start service”.",
 };
 
 const indonesian: Dictionary = {
@@ -237,6 +255,12 @@ const indonesian: Dictionary = {
   completedAsPlanned: "Selesai", notCompleted: "Tidak selesai", completionNoteLabel: "Catatan (opsional)",
   completionNotePlaceholder: "Contoh: pelanggan mengubah layanan atau ada masalah", confirmCompletion: "Konfirmasi dan tutup layanan",
   driverReturnTitle: "Selesaikan perjalanan pulang", driverReturnBody: "Saya mengonfirmasi telah kembali dan menyelesaikan perjalanan pesanan ini.",
+  cancelledBadge: "Dibatalkan", orderCancelled: "Pesanan dibatalkan",
+  timingTitle: "Ketepatan waktu layanan", timingScheduledAt: "Jadwal mulai", timingActualStart: "Waktu mulai sebenarnya",
+  timingNotStartedYet: "Anda belum menekan Mulai layanan", timingLate: "Mulai terlambat {duration}",
+  timingEarly: "Mulai lebih awal {duration}", timingOnTime: "Mulai tepat waktu", timingWaiting: "Sudah terlambat {duration}",
+  timingUpcoming: "{duration} lagi menuju jadwal",
+  timingFootnote: "Waktu dihitung sejak Anda menekan “Mulai layanan”.",
 };
 
 const filipino: Dictionary = {
@@ -287,6 +311,12 @@ const filipino: Dictionary = {
   completedAsPlanned: "Natapos", notCompleted: "Hindi natapos", completionNoteLabel: "Tala (opsyonal)",
   completionNotePlaceholder: "Halimbawa: binago ng customer ang serbisyo o may problema", confirmCompletion: "Kumpirmahin at isara ang serbisyo",
   driverReturnTitle: "Tapusin ang balik na biyahe", driverReturnBody: "Kinukumpirma kong nakabalik na ako at natapos ang biyahe para sa order na ito.",
+  cancelledBadge: "Kinansela", orderCancelled: "Kinansela ang order",
+  timingTitle: "Pagiging maagap sa serbisyo", timingScheduledAt: "Nakatakdang simula", timingActualStart: "Aktwal na simula",
+  timingNotStartedYet: "Hindi mo pa pinipindot ang Simulan ang serbisyo", timingLate: "Nagsimula nang huli ng {duration}",
+  timingEarly: "Nagsimula nang mas maaga ng {duration}", timingOnTime: "Nagsimula sa tamang oras", timingWaiting: "Huli na ng {duration}",
+  timingUpcoming: "{duration} bago ang appointment",
+  timingFootnote: "Binibilang ang oras mula nang pindutin mo ang “Simulan ang serbisyo”.",
 };
 
 const russian: Dictionary = {
@@ -336,6 +366,12 @@ const russian: Dictionary = {
   completedAsPlanned: "Выполнено", notCompleted: "Не выполнено", completionNoteLabel: "Заметка (необязательно)",
   completionNotePlaceholder: "Например: клиент изменил услугу или возникла проблема", confirmCompletion: "Подтвердить и завершить услугу",
   driverReturnBody: "Подтверждаю возвращение и завершение поездки по этому заказу.",
+  cancelledBadge: "Отменён", orderCancelled: "Заказ отменён",
+  timingTitle: "Соблюдение времени услуги", timingScheduledAt: "Плановое начало", timingActualStart: "Фактическое начало",
+  timingNotStartedYet: "Вы ещё не нажали «Начать услугу»", timingLate: "Начали с опозданием на {duration}",
+  timingEarly: "Начали раньше на {duration}", timingOnTime: "Начали вовремя", timingWaiting: "Опоздание пока {duration}",
+  timingUpcoming: "До назначенного времени {duration}",
+  timingFootnote: "Время считается с момента, когда вы нажали «Начать услугу».",
 };
 
 const amharic: Dictionary = {
@@ -388,6 +424,12 @@ const amharic: Dictionary = {
   completedAsPlanned: "ተጠናቋል", notCompleted: "አልተጠናቀቀም", completionNoteLabel: "ማስታወሻ (አማራጭ)",
   completionNotePlaceholder: "ምሳሌ፦ ደንበኛዋ አገልግሎቱን ቀይራለች ወይም ችግር ነበር", confirmCompletion: "አረጋግጠው አገልግሎቱን ዝጉ",
   driverReturnTitle: "የመመለሻ ጉዞውን ጨርስ", driverReturnBody: "ተመልሼ የዚህን ትዕዛዝ ጉዞ መጨረሴን አረጋግጣለሁ።",
+  cancelledBadge: "ተሰርዟል", orderCancelled: "ትዕዛዙ ተሰርዟል",
+  timingTitle: "የአገልግሎት ሰዓት ተገዢነት", timingScheduledAt: "የታቀደ የመጀመሪያ ሰዓት", timingActualStart: "ትክክለኛ የመጀመሪያ ሰዓት",
+  timingNotStartedYet: "«አገልግሎት ጀምር»ን ገና አልነኩም", timingLate: "በ{duration} ዘግይቶ ተጀምሯል",
+  timingEarly: "በ{duration} ቀድሞ ተጀምሯል", timingOnTime: "በሰዓቱ ተጀምሯል", timingWaiting: "እስካሁን በ{duration} ዘግይቷል",
+  timingUpcoming: "እስከ ቀጠሮው {duration} ይቀራል",
+  timingFootnote: "ሰዓቱ የሚቆጠረው «አገልግሎት ጀምር»ን ከነኩበት ጊዜ ጀምሮ ነው።",
 };
 
 const dictionaries: Record<FieldLocale, Dictionary> = {

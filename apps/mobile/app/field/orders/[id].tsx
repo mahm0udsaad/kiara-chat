@@ -146,7 +146,11 @@ function ProgressRail({ order }: { order: FieldOrder }) {
             )}
           </View>
           <Text
-            numberOfLines={2}
+            // Six steps share one row, so a translated label can be several
+            // words: let it wrap and shrink a little rather than end in "…".
+            numberOfLines={3}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}
             style={{ ...type.caption, textAlign: "center", color: done[index] ? colors.text : colors.textTertiary }}
           >
             {label}
@@ -398,7 +402,7 @@ export default function FieldOrderDetailScreen() {
               </Text>
             </View>
             <Badge
-              label={cancelled ? "ملغى" : order.progress.driverReturnedAt ? t("completed") : order.canAct ? t("waitingForYou") : t("waitingNextStep")}
+              label={cancelled ? t("cancelledBadge") : order.progress.driverReturnedAt ? t("completed") : order.canAct ? t("waitingForYou") : t("waitingNextStep")}
               tone={cancelled ? "danger" : order.progress.driverReturnedAt ? "success" : order.canAct ? "warning" : "neutral"}
               icon={cancelled ? "xmark.circle" : order.progress.driverReturnedAt ? "checkmark.circle" : "clock"}
             />
@@ -537,7 +541,7 @@ export default function FieldOrderDetailScreen() {
           />
         ) : null}
         {cancelled ? (
-          <PrimaryButton label="تم إلغاء الطلب" icon="xmark.circle" tone="danger" variant="tinted" disabled onPress={() => undefined} />
+          <PrimaryButton label={t("orderCancelled")} icon="xmark.circle" tone="danger" variant="tinted" disabled onPress={() => undefined} />
         ) : next && order.canAct ? (
           <PrimaryButton label={actionLabel(next)} icon="checkmark.circle" loading={action.isPending} onPress={confirm} />
         ) : next ? (

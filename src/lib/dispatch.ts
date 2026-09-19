@@ -19,6 +19,11 @@ import {
 } from "@/lib/field-push";
 import { findSharedLocationInConversation } from "@/lib/location";
 import { specialistDispatchLanguageOf } from "@/lib/specialist-languages";
+import {
+  fallbackSpecialistOrderMessage,
+  specialistFallbackCodeOf,
+  specialistFallbackLabel,
+} from "@/lib/specialist-dispatch-fallback";
 import { normalizePhone } from "@/lib/phone";
 import {
   claimOutboxEvent,
@@ -444,7 +449,11 @@ export async function createBooking(
       console.error("Failed to snapshot Rekaz visit services", error),
     );
     await clearBookingRequest(input.conversationId).catch(() => {});
-    return sameDayOrder as unknown as DriverOrder;
+    const reused = sameDayOrder as unknown as DriverOrder;
+    return coverVisitServices(
+      reused,
+      await servicesForOrder(reused).catch(() => [] as VisitService[]),
+    );
   }
 
   const { data: created, error: insErr } = await supabase
@@ -476,7 +485,11 @@ export async function createBooking(
   );
 
   await clearBookingRequest(input.conversationId).catch(() => {});
-  return created as DriverOrder;
+  const order = created as DriverOrder;
+  return coverVisitServices(
+    order,
+    await servicesForOrder(order).catch(() => [] as VisitService[]),
+  );
 }
 
 export class RekazBookingError extends Error {
@@ -656,6 +669,53 @@ async function rekazVisitSpan(
     minutes: Math.round((end - start) / 60_000),
     services,
   };
+}
+
+/**
+ * Minutes from the first service's start to the last one's end, with every
+ * service performed back to back by the one specialist — the same rule as
+ * {@link rekazVisitSpan}. Zero when there are no timed services.
+ */
+function servicesSpanMinutes(services: VisitService[]): number {
+  let start = Number.POSITIVE_INFINITY;
+  let end = Number.NEGATIVE_INFINITY;
+  for (const svc of [...services].sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))) {
+    const scheduledStart = Date.parse(svc.startsAt);
+    if (!Number.isFinite(scheduledStart)) continue;
+    start = Math.min(start, scheduledStart);
+    end = Math.max(scheduledStart, end) + Math.max(svc.minutes || 0, 0) * 60_000;
+  }
+  return Number.isFinite(start) && end > start ? Math.round((end - start) / 60_000) : 0;
+}
+
+/**
+ * Stretch a not-yet-sent order to cover every service of its visit.
+ *
+ * An order raised from the chat keeps the duration typed into the booking
+ * sheet — an hour by default — while the visit may be two one-hour massages.
+ * The services list then named both but the driver and the specialist were
+ * told "ساعة", and the pickup was planned an hour early. Only ever lengthens:
+ * a longer duration the employee chose on purpose is left alone, and sent
+ * work keeps the timing everyone already confirmed.
+ */
+async function coverVisitServices<T extends Pick<DriverOrder, "id" | "duration_minutes" | "status"> & {
+  sent_at?: string | null;
+}>(order: T, services: VisitService[]): Promise<T> {
+  if (order.status !== "pending" || order.sent_at) return order;
+  const covered = Math.min(servicesSpanMinutes(services), 480);
+  if (covered <= order.duration_minutes) return order;
+  const { error } = await getAdminSupabaseClient()
+    .from("driver_orders")
+    .update({ duration_minutes: covered, updated_at: new Date().toISOString() })
+    .eq("id", order.id)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("status", "pending")
+    .is("sent_at", null);
+  if (error) {
+    console.error("[dispatch] Could not extend the order to its services", error.message);
+    return order;
+  }
+  return { ...order, duration_minutes: covered };
 }
 
 /** Approved services, including manual additions and linked Rekaz reservations. */
@@ -1150,7 +1210,9 @@ async function loadDispatchContext(
   if (!conv) throw new Error("Conversation not found");
 
   return {
-    order,
+    // Orders raised before this fix still carry the booking sheet's hour; the
+    // preview and the send both correct it before a message is composed.
+    order: await coverVisitServices(order, services),
     tripType,
     services,
     customerLocation: input.customerLocation?.trim() || order.customer_location,
@@ -1191,7 +1253,12 @@ export async function previewBookingDispatch(
     services: context.services,
     sessionLink: null,
   });
-  const englishSpecialistMessage = formatSpecialistOrderMessageEnglish({
+  const fallbackCode = specialistFallbackCodeOf(
+    context.specialist.nationality,
+    context.specialist.preferred_language,
+    context.specialist.id,
+  );
+  const fallbackSpecialistMessage = fallbackSpecialistOrderMessage(fallbackCode, {
     ...orderDetails,
     driverName: context.driver.full_name,
     note: input.specialistNote?.trim() || null,
@@ -1206,23 +1273,26 @@ export async function previewBookingDispatch(
   const translated = language.targetLanguage
     ? await translateMessage(arabicSpecialistMessage, language.targetLanguage)
     : null;
-  // English is the fallback for every non-Arabic specialist, not only the
-  // ones who chose it: when translation is down, an Indonesian or Amharic
-  // speaker can work from English and cannot from Arabic. From Sept 17 every
-  // translation failed silently and they were all sent Arabic.
-  const englishFallback = Boolean(language.targetLanguage);
+  // When translation is down, every specialist who needs one still gets a
+  // message she can work from: her own language where we hold static copy for
+  // it (Indonesian, Filipino, Russian, Amharic, English), English for the
+  // nationalities we do not. Arabic would be unreadable to all of them, which
+  // is what every specialist was sent from Sept 17 when translation failed
+  // silently.
+  const fallbackAvailable = Boolean(language.targetLanguage);
 
   return {
     driverMessage,
     specialistMessage:
-      translated || (englishFallback ? englishSpecialistMessage : arabicSpecialistMessage),
+      translated ||
+      (fallbackAvailable ? fallbackSpecialistMessage : arabicSpecialistMessage),
     // Name the language of the text actually produced. Reporting her mother
     // tongue while handing back a fallback told the employee the translation
     // had happened when it had not.
     specialistLanguage: translated
       ? language.label
-      : englishFallback
-        ? "الإنجليزية"
+      : fallbackAvailable
+        ? specialistFallbackLabel(fallbackCode)
         : "العربية",
     automaticAdditions: [],
   };
@@ -2206,51 +2276,6 @@ export function formatSpecialistOrderMessage(o: {
   if (o.note) lines.push("", `📝 ملاحظة من الفريق: ${o.note}`);
   if (o.sessionLink) {
     lines.push("", "📲 جلساتك وتأكيد البداية والنهاية:", o.sessionLink);
-  }
-  return lines.join("\n");
-}
-
-const EN_ARRIVAL_FMT = new Intl.DateTimeFormat("en-SA", {
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  hour: "numeric",
-  minute: "2-digit",
-  timeZone: "Asia/Riyadh",
-});
-
-function formatDurationEnglish(minutes: number): string {
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  const hourLabel = `${hours} ${hours === 1 ? "hour" : "hours"}`;
-  return rest ? `${hourLabel} ${rest} min` : hourLabel;
-}
-
-/** Guaranteed English fallback when live translation is unavailable. */
-function formatSpecialistOrderMessageEnglish(
-  o: Parameters<typeof formatSpecialistOrderMessage>[0],
-): string {
-  const lines = [
-    "🌸 *New appointment for you*",
-    "",
-    `🕒 Arrival time: ${EN_ARRIVAL_FMT.format(new Date(o.arrivalAt))}`,
-    `⏱️ Session duration: ${formatDurationEnglish(o.durationMinutes)}`,
-    `🚕 Driver: ${o.driverName}`,
-  ];
-  const services = (o.services ?? []).filter((service) => service.name);
-  if (services.length) {
-    lines.push("", "💅 Services in order:");
-    services.forEach((service, index) => {
-      const length = service.minutes > 0
-        ? ` (${formatDurationEnglish(service.minutes)})`
-        : "";
-      lines.push(`${index + 1}. ${service.name}${length}`);
-    });
-  }
-  if (o.note) lines.push("", `📝 Note from the team: ${o.note}`);
-  if (o.sessionLink) {
-    lines.push("", "📲 Your visits and start/end confirmation:", o.sessionLink);
   }
   return lines.join("\n");
 }

@@ -15,7 +15,17 @@ export async function POST(request: Request) {
     return mobileError(400, "INVALID_DEVICE_ID", "A valid deviceId is required");
   }
   try {
-    const delivery = await testFieldPushDelivery(auth.session.accountId, deviceId);
+    const delivery = await testFieldPushDelivery(
+      auth.session.accountId,
+      deviceId,
+      auth.session.role === "specialist"
+        ? {
+            rosterId: auth.session.rosterId,
+            nationality: auth.session.nationality,
+            preferredLanguage: auth.session.preferredLanguage,
+          }
+        : undefined,
+    );
     return mobileData({ delivery });
   } catch (error) {
     return mobileServerError(
