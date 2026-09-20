@@ -49,6 +49,7 @@ import {
   useOrder,
 } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
+import type { OrderDetailResponse } from "@/types/api";
 
 const noteMaxLength = 500;
 /** Matches the API's cap — a door photo is a snapshot, not an album. */
@@ -177,6 +178,116 @@ function OutcomeScreen({ kind, sentAt }: { kind: Outcome; sentAt: string | null 
   );
 }
 
+/**
+ * Who performs what, when two specialists share one visit.
+ *
+ * Each specialist gets the visit's services as checkboxes under her name, and
+ * a service belongs to exactly one of them — ticking it for one clears it from
+ * the other. Nothing is preselected: the employee is the one who knows how
+ * they split the work, and a guess here goes out in both their messages.
+ */
+function ServiceSplit({
+  services,
+  first,
+  second,
+  assignments,
+  onChange,
+}: {
+  services: NonNullable<OrderDetailResponse["order"]["approved_services"]>;
+  first: { id: string; name: string };
+  second: { id: string; name: string };
+  assignments: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+}) {
+  const { colors } = useTheme();
+  const assignable = services.filter((service) => service.id);
+  if (!assignable.length) return null;
+
+  return (
+    <View style={{ gap: spacing.md }}>
+      <View style={{ gap: spacing.xs }}>
+        <Text style={{ ...type.calloutStrong, color: colors.text, ...rtlText }}>
+          توزيع الخدمات
+        </Text>
+        <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
+          حددي الخدمات التي ستنفذها كل أخصائية. كل خدمة لأخصائية واحدة.
+        </Text>
+      </View>
+      {[first, second].map((person) => (
+        <View key={person.id} style={{ gap: spacing.xs }}>
+          <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>
+            {person.name}
+          </Text>
+          {assignable.map((service) => {
+            const serviceId = service.id as string;
+            const selected = assignments[serviceId] === person.id;
+            const takenByOther =
+              Boolean(assignments[serviceId]) && !selected;
+            return (
+              <Pressable
+                key={`${person.id}:${serviceId}`}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: selected }}
+                accessibilityLabel={`${service.name} — ${person.name}`}
+                onPress={() => {
+                  tapFeedback();
+                  const next = { ...assignments };
+                  if (selected) delete next[serviceId];
+                  else next[serviceId] = person.id;
+                  onChange(next);
+                }}
+                style={({ pressed }) => ({
+                  minHeight: hitSize.min,
+                  flexDirection: "row-reverse",
+                  alignItems: "center",
+                  gap: spacing.sm,
+                  paddingHorizontal: spacing.md,
+                  borderRadius: radius.md,
+                  borderWidth: selected ? 1.5 : 1,
+                  borderColor: selected ? colors.brand : colors.border,
+                  backgroundColor: selected ? colors.brandSoft : colors.surface,
+                  opacity: pressed ? 0.7 : takenByOther ? 0.45 : 1,
+                })}
+              >
+                <View
+                  style={{
+                    width: 20,
+                    height: 20,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: radius.sm,
+                    borderWidth: selected ? 0 : 1,
+                    borderColor: colors.borderStrong,
+                    backgroundColor: selected ? colors.brand : "transparent",
+                  }}
+                >
+                  {selected ? (
+                    <IconSymbol name="checkmark" color={colors.onBrand} size={13} />
+                  ) : null}
+                </View>
+                <Text
+                  numberOfLines={2}
+                  style={{
+                    flex: 1,
+                    ...type.subhead,
+                    color: selected ? colors.onBrandSoft : colors.text,
+                    ...rtlText,
+                  }}
+                >
+                  {service.name}
+                </Text>
+                <Text style={{ ...type.caption, color: colors.textTertiary }}>
+                  {durationLabel(service.minutes)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function DispatchForm({
   id,
   preferredSpecialistName,
@@ -202,6 +313,10 @@ function DispatchForm({
   const [doorPhotoError, setDoorPhotoError] = useState<string | null>(null);
   const [specialistId, setSpecialistId] = useState<string | null>(null);
   const [secondSpecialistId, setSecondSpecialistId] = useState<string | null>(null);
+  // `{ serviceId: specialistId }`. Only filled in when two specialists share
+  // the visit; a single specialist performs everything, so there is nothing
+  // to divide and the map stays empty.
+  const [serviceAssignments, setServiceAssignments] = useState<Record<string, string>>({});
   const [editingSpecialist, setEditingSpecialist] = useState(false);
   const [driverId, setDriverId] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -282,6 +397,12 @@ function DispatchForm({
     options.data.specialists.find((person) => person.id === specialistId)?.full_name ?? null;
   const selectedSpecialist =
     options.data.specialists.find((person) => person.id === specialistId) ?? null;
+  // Every service must have an owner before a split visit can go out: one that
+  // nobody ticked would appear in neither specialist's work.
+  const splitServices = (current.approved_services ?? []).filter((service) => service.id);
+  const unassignedServices = secondSpecialistId
+    ? splitServices.filter((service) => !serviceAssignments[service.id as string])
+    : [];
   const selectedSecondSpecialist =
     options.data.specialists.find((person) => person.id === secondSpecialistId) ?? null;
   const specialistMatchesRekaz = Boolean(
@@ -312,6 +433,7 @@ function DispatchForm({
   const applySpecialist = (value: string | null) => {
     setSpecialistId(value);
     if (value === secondSpecialistId) setSecondSpecialistId(null);
+    setServiceAssignments({});
     setEditingSpecialist(false);
     clearFieldError("specialist");
   };
@@ -373,6 +495,12 @@ function DispatchForm({
         "سجّلي الملاحظة الصوتية أو حوّلي إلى تعليمات مكتوبة.",
       );
     }
+    if (unassignedServices.length) {
+      return showFieldError(
+        "specialist",
+        "حددي الأخصائية المسؤولة عن كل خدمة قبل المراجعة.",
+      );
+    }
     setValidation(null);
     setSendError(null);
     warningFeedback();
@@ -380,6 +508,7 @@ function DispatchForm({
       {
         specialistId,
         secondSpecialistId,
+        serviceAssignments,
         driverId,
         customerLocation: location.trim(),
         // The preview writes the booking copy in her language; in voice mode
@@ -446,12 +575,19 @@ function DispatchForm({
     if (!specialistMessage.trim()) {
       return showFieldError("specialistMessage", "راجعي رسالة الأخصائية قبل الإرسال.");
     }
+    if (unassignedServices.length) {
+      return showFieldError(
+        "specialist",
+        "حددي الأخصائية المسؤولة عن كل خدمة قبل الإرسال.",
+      );
+    }
     setValidation(null);
     setSendError(null);
     dispatch.mutate(
       {
         specialistId,
         secondSpecialistId,
+        serviceAssignments,
         driverId,
         customerLocation: location.trim(),
         driverMessage: driverMessage.trim(),
@@ -704,15 +840,43 @@ function DispatchForm({
                     value={secondSpecialistId}
                     onChange={(value) => {
                       setSecondSpecialistId(value);
+                      // The split belongs to a specific pair; swapping one of
+                      // them makes every previous tick meaningless.
+                      setServiceAssignments({});
                       setReviewing(false);
                     }}
                   />
                   <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
                     {selectedSecondSpecialist
-                      ? `سيظهر الطلب للأخصائيتين ${specialistName} و ${selectedSecondSpecialist.full_name}، وستصل لهما نفس الرسالة.`
+                      ? `سيظهر الطلب للأخصائيتين ${specialistName} و ${selectedSecondSpecialist.full_name}، وتظهر لكل واحدة خدماتها.`
                       : "أضيفي أخصائية ثانية عندما تنفذان الطلب معًا."}
                   </Text>
                 </View>
+                {/* Only with two specialists: one specialist performs the whole
+                    visit, so there is nothing to divide. */}
+                {selectedSecondSpecialist && selectedSpecialist ? (
+                  <ServiceSplit
+                    services={current.approved_services ?? []}
+                    first={{
+                      id: selectedSpecialist.id,
+                      name: selectedSpecialist.full_name,
+                    }}
+                    second={{
+                      id: selectedSecondSpecialist.id,
+                      name: selectedSecondSpecialist.full_name,
+                    }}
+                    assignments={serviceAssignments}
+                    onChange={(next) => {
+                      setServiceAssignments(next);
+                      setReviewing(false);
+                    }}
+                  />
+                ) : null}
+                {unassignedServices.length ? (
+                  <Text style={{ ...type.caption, color: colors.danger, ...rtlText }}>
+                    {`بقي ${unassignedServices.length} من الخدمات بدون أخصائية.`}
+                  </Text>
+                ) : null}
                 <View onLayout={rememberFieldPosition("driver")}>
                   <RosterPicker
                     label="السائق"

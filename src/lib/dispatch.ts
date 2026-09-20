@@ -531,6 +531,14 @@ export interface VisitService {
   startsAt: string;
   minutes: number;
   sourceId?: string | null;
+  /** Row id, so a split can name the service it is assigning. */
+  id?: string | null;
+  /**
+   * Who performs it, when two specialists share the visit. Null means the
+   * whole team — which is every service until a split is chosen, and stays
+   * the meaning for orders raised before splitting existed.
+   */
+  assignedSpecialistId?: string | null;
 }
 
 interface RekazVisitService extends VisitService {
@@ -728,7 +736,7 @@ export async function servicesForOrder(
   // Rekaz changes after dispatch.
   const admin = getAdminSupabaseClient();
   const { data, error } = await admin.from("order_visit_services")
-    .select("source_id, name, starts_at, minutes")
+    .select("id, source_id, name, starts_at, minutes, assigned_specialist_id")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .eq("order_id", order.id).order("starts_at");
   // The snapshot table was added after initial production deployments. Its
@@ -738,10 +746,12 @@ export async function servicesForOrder(
     /order_visit_services|schema cache/i.test(error?.message ?? "");
   if (error && !snapshotUnavailable) throw new Error(error.message);
   const approved = (data ?? []).map((row) => ({
+    id: row.id as string,
     sourceId: row.source_id,
     name: row.name,
     startsAt: row.starts_at,
     minutes: row.minutes,
+    assignedSpecialistId: (row.assigned_specialist_id as string | null) ?? null,
   }));
   if (approved.length) return approved;
 
@@ -1107,6 +1117,8 @@ function rekazLocationValue(
 export interface DispatchBookingInput {
   specialistId: string;
   secondSpecialistId?: string | null;
+  /** Persisted before the messages are composed — see {@link ServiceAssignments}. */
+  serviceAssignments?: ServiceAssignments | null;
   driverId: string;
   /**
    * The customer's address, settled here rather than left to the edit sheet.
@@ -1145,9 +1157,18 @@ export interface DispatchBookingInput {
   };
 }
 
+/**
+ * Who performs what, keyed by `order_visit_services.id`. Only meaningful with a
+ * second specialist: one specialist performs the whole visit, so there is
+ * nothing to divide. An empty map leaves every service with the team, which is
+ * how every visit dispatched before splitting existed still reads.
+ */
+export type ServiceAssignments = Record<string, string>;
+
 export interface DispatchPreviewInput {
   specialistId: string;
   secondSpecialistId?: string | null;
+  serviceAssignments?: ServiceAssignments | null;
   driverId: string;
   /** The address as it stands in the form, so the preview quotes what will send. */
   customerLocation?: string;
@@ -1233,7 +1254,12 @@ async function loadDispatchContext(
   id: string,
   input: Pick<
     DispatchPreviewInput,
-    "specialistId" | "secondSpecialistId" | "driverId" | "tripType" | "customerLocation"
+    | "specialistId"
+    | "secondSpecialistId"
+    | "driverId"
+    | "tripType"
+    | "customerLocation"
+    | "serviceAssignments"
   >,
 ): Promise<DispatchContext> {
   const supabase = await createServerSupabaseClient();
@@ -1304,12 +1330,29 @@ async function loadDispatchContext(
   if (!driver) throw new Error("Driver not found");
   if (!conv) throw new Error("Conversation not found");
 
+  // One message goes to both specialists, so a split is carried in the text:
+  // each service names who performs it. Anything left unassigned stays
+  // unnamed and belongs to whoever is on the visit, exactly as before.
+  const teamNames = new Map<string, string>([[specialist.id, specialist.full_name]]);
+  if (secondSpecialist) teamNames.set(secondSpecialist.id, secondSpecialist.full_name);
+  const assignments = input.serviceAssignments ?? {};
+  const splitServices = services.map((service) => {
+    const assignedSpecialistId =
+      (service.id ? assignments[service.id] : null) ?? service.assignedSpecialistId ?? null;
+    const owner = assignedSpecialistId ? teamNames.get(assignedSpecialistId) : null;
+    return {
+      ...service,
+      assignedSpecialistId,
+      name: owner ? `${service.name} — ${owner}` : service.name,
+    };
+  });
+
   return {
     // Orders raised before this fix still carry the booking sheet's hour; the
     // preview and the send both correct it before a message is composed.
     order: await coverVisitServices(order, services),
     tripType,
-    services,
+    services: splitServices,
     customerLocation: input.customerLocation?.trim() || order.customer_location,
     // Trip cost is now entered manually by the owner from the order detail.
     // Preserve an amount she entered before dispatch; never replace it with
@@ -1443,6 +1486,57 @@ async function deliverOutboxText(input: {
  * team can already see read as failed. Each nudge reports its own result so a
  * failed WhatsApp copy can be retried on its own.
  */
+/**
+ * Freeze who performs what before the visit is sent.
+ *
+ * Only a second specialist makes this meaningful, and only a screen that
+ * actually offers the choice sends it — an older app build sends nothing and
+ * dispatches exactly as it always has. When a split IS sent it must be
+ * complete: a service nobody owns would appear in neither specialist's work,
+ * which is the one outcome the feature must never produce.
+ */
+async function persistServiceAssignments(input: {
+  orderId: string;
+  assignments: ServiceAssignments;
+  services: VisitService[];
+  specialistId: string;
+  secondSpecialistId: string | null;
+}): Promise<void> {
+  const entries = Object.entries(input.assignments);
+  if (!entries.length) return;
+  if (!input.secondSpecialistId) return;
+
+  const team = new Set([input.specialistId, input.secondSpecialistId]);
+  const known = new Set(
+    input.services.map((service) => service.id).filter((id): id is string => Boolean(id)),
+  );
+  for (const [serviceId, specialistId] of entries) {
+    if (!known.has(serviceId)) throw new Error("خدمة غير موجودة في هذه الزيارة");
+    if (!team.has(specialistId)) {
+      throw new Error("لا يمكن إسناد خدمة لأخصائية خارج هذه الزيارة");
+    }
+  }
+  if (known.size && entries.length < known.size) {
+    throw new Error("حددي الأخصائية المسؤولة عن كل خدمة قبل الإرسال");
+  }
+
+  const admin = getAdminSupabaseClient();
+  for (const [serviceId, specialistId] of entries) {
+    const { error } = await admin
+      .from("order_visit_services")
+      .update({ assigned_specialist_id: specialistId })
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .eq("order_id", input.orderId)
+      .eq("id", serviceId);
+    // The column ships with its own migration; a database still without it
+    // must not block the dispatch itself, which is the operational act.
+    if (error) {
+      console.error("[dispatch] Could not save a service assignment", error.message);
+      return;
+    }
+  }
+}
+
 export async function dispatchBooking(
   id: string,
   input: DispatchBookingInput
@@ -1457,6 +1551,14 @@ export async function dispatchBooking(
 }> {
   const context = await loadDispatchContext(id, input);
   const specialistMessage = input.specialistMessage.trim();
+
+  await persistServiceAssignments({
+    orderId: id,
+    assignments: input.serviceAssignments ?? {},
+    services: context.services,
+    specialistId: input.specialistId,
+    secondSpecialistId: input.secondSpecialistId ?? null,
+  });
 
   // Uploaded before the command so the notes and their attachments commit
   // together; a failed upload costs the attachment, not the dispatch.
@@ -2115,7 +2217,8 @@ async function withNames(
     customerDetails(supabase, uniq(orders.map((o) => o.conversation_id))),
     teamMemberNames(supabase, uniq(orders.map((o) => o.updated_by))),
     fieldProgressFor(orders.map((o) => o.id)),
-    getAdminSupabaseClient().from("order_visit_services").select("order_id, source_id, name, minutes")
+    getAdminSupabaseClient().from("order_visit_services")
+      .select("id, order_id, source_id, name, minutes, assigned_specialist_id")
       .eq("restaurant_id", KIARA_RESTAURANT_ID).in("order_id", orders.map(o => o.id)).order("starts_at"),
   ]);
 
@@ -2157,11 +2260,20 @@ async function withNames(
         : ((services.data ?? []).filter((s) => s.order_id === o.id).length
             ? (services.data ?? [])
                 .filter((s) => s.order_id === o.id)
-                .map((s) => ({ sourceId: s.source_id, name: s.name, minutes: s.minutes }))
+                .map((s) => ({
+                  id: s.id as string,
+                  sourceId: s.source_id,
+                  name: s.name,
+                  minutes: s.minutes,
+                  assignedSpecialistId:
+                    (s.assigned_specialist_id as string | null) ?? null,
+                }))
             : detailServiceFallback.map((s) => ({
+                id: s.id ?? null,
                 sourceId: s.sourceId ?? null,
                 name: s.name,
                 minutes: s.minutes,
+                assignedSpecialistId: s.assignedSpecialistId ?? null,
               }))),
     };
   });

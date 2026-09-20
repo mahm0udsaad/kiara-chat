@@ -463,7 +463,7 @@ async function loadOrdersForSession(
     options.orderId && orderIds.length
       ? admin
           .from("order_visit_services")
-          .select("id, order_id, name, minutes, starts_at")
+          .select("id, order_id, name, minutes, starts_at, assigned_specialist_id")
           .eq("restaurant_id", KIARA_RESTAURANT_ID)
           .in("order_id", orderIds)
           .order("starts_at")
@@ -493,6 +493,18 @@ async function loadOrdersForSession(
   const servicesByOrder = new Map<string, FieldOrder["services"]>();
   for (const row of servicesResult.data ?? []) {
     const orderId = row.order_id as string;
+    // When two specialists share a visit, each reads her own list. A service
+    // with no assignee belongs to whoever is on the order, so it stays on
+    // both lists — which is every service on every visit dispatched before
+    // the work could be divided.
+    const assignedTo = (row.assigned_specialist_id as string | null) ?? null;
+    if (
+      assignedTo &&
+      session.role === "specialist" &&
+      assignedTo !== session.rosterId
+    ) {
+      continue;
+    }
     const services = servicesByOrder.get(orderId) ?? [];
     services.push({
       id: row.id as string,

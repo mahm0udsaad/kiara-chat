@@ -7,6 +7,16 @@ import type { TripType } from "@/lib/types";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+/** `{ serviceId: specialistId }`, ignoring anything that is not a pair of strings. */
+function readServiceAssignments(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [serviceId, specialistId] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof specialistId === "string" && specialistId) out[serviceId] = specialistId;
+  }
+  return out;
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -52,6 +62,7 @@ export async function POST(
     const preview = await previewBookingDispatch(id, {
       specialistId,
       secondSpecialistId,
+      serviceAssignments: readServiceAssignments(body.serviceAssignments),
       driverId,
       customerLocation,
       specialistNote,

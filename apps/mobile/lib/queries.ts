@@ -1081,6 +1081,11 @@ export function useDispatchOrder(id: string) {
             ...(input.secondSpecialistId
               ? { secondSpecialistId: input.secondSpecialistId }
               : {}),
+            // Multipart carries no objects, so the split travels as JSON text.
+            ...(input.serviceAssignments &&
+            Object.keys(input.serviceAssignments).length
+              ? { serviceAssignments: JSON.stringify(input.serviceAssignments) }
+              : {}),
             driverId: input.driverId,
             customerLocation: input.customerLocation,
             driverMessage: input.driverMessage,
@@ -1154,6 +1159,8 @@ export function useDispatchPreview(id: string) {
     mutationFn: (input: {
       specialistId: string;
       secondSpecialistId?: string | null;
+      /** `{ serviceId: specialistId }`, so the preview names who does what. */
+      serviceAssignments?: Record<string, string> | null;
       driverId: string;
       /** So the preview quotes the address about to be committed. */
       customerLocation: string;

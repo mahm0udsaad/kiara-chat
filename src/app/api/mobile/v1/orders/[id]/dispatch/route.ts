@@ -90,6 +90,17 @@ export async function POST(
       : "";
   const secondSpecialistId =
     typeof body.secondSpecialistId === "string" ? body.secondSpecialistId.trim() : "";
+  const serviceAssignments = ((): Record<string, string> => {
+    const raw = (body as { serviceAssignments?: unknown }).serviceAssignments;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out: Record<string, string> = {};
+    for (const [serviceId, specialistId] of Object.entries(raw)) {
+      if (typeof serviceId === "string" && typeof specialistId === "string" && specialistId) {
+        out[serviceId] = specialistId;
+      }
+    }
+    return out;
+  })();
   const driverMessage =
     typeof body.driverMessage === "string" ? body.driverMessage.trim() : "";
   const specialistMessage =
@@ -149,6 +160,7 @@ export async function POST(
     const result = await dispatchBooking(id, {
       specialistId,
       secondSpecialistId: secondSpecialistId || null,
+      serviceAssignments,
       driverId,
       customerLocation,
       doorPhoto,

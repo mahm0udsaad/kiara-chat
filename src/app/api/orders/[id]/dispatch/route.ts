@@ -18,6 +18,16 @@ const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** Assign the booking and publish both notes to the field team's app. */
+/** `{ serviceId: specialistId }`, ignoring anything that is not a pair of strings. */
+function readServiceAssignments(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [serviceId, specialistId] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof specialistId === "string" && specialistId) out[serviceId] = specialistId;
+  }
+  return out;
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -33,6 +43,7 @@ export async function POST(
   // streams up instead of being inflated to base64 in the browser.
   let specialistId: string | undefined;
   let secondSpecialistId: string | undefined;
+  let serviceAssignments: Record<string, string> = {};
   let driverId: string | undefined;
   let customerLocation: string | undefined;
   let specialistNote: string | undefined;
@@ -53,6 +64,9 @@ export async function POST(
     }
     specialistId = (form.get("specialistId") as string | null)?.trim();
     secondSpecialistId = (form.get("secondSpecialistId") as string | null)?.trim() || undefined;
+    serviceAssignments = readServiceAssignments(
+      JSON.parse((form.get("serviceAssignments") as string | null) || "{}"),
+    );
     driverId = (form.get("driverId") as string | null)?.trim();
     customerLocation = (form.get("customerLocation") as string | null)?.trim().slice(0, 500);
     specialistNote = (form.get("specialistNote") as string | null)?.trim().slice(0, 500);
@@ -103,6 +117,7 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     specialistId = (body?.specialistId as string | undefined)?.trim();
     secondSpecialistId = (body?.secondSpecialistId as string | undefined)?.trim() || undefined;
+    serviceAssignments = readServiceAssignments(body?.serviceAssignments);
     driverId = (body?.driverId as string | undefined)?.trim();
     customerLocation = (body?.customerLocation as string | undefined)?.trim().slice(0, 500);
     specialistNote = (body?.specialistNote as string | undefined)?.trim().slice(0, 500);
@@ -154,6 +169,7 @@ export async function POST(
     const result = await dispatchBooking(id, {
       specialistId,
       secondSpecialistId,
+      serviceAssignments,
       driverId,
       customerLocation: customerLocation as string,
       specialistNote: specialistNote || undefined,

@@ -319,7 +319,15 @@ export type OrderSummary = {
   /** Set when the order was raised from a Rekaz visit; the merge key. */
   rekaz_source_id?: string | null;
   expected_end_at?: string;
-  approved_services?: { sourceId: string | null; name: string; minutes: number }[];
+  approved_services?: {
+    /** `order_visit_services.id`; null for a Rekaz fallback row not yet captured. */
+    id?: string | null;
+    sourceId: string | null;
+    name: string;
+    minutes: number;
+    /** Set once the visit's work is split between two specialists. */
+    assignedSpecialistId?: string | null;
+  }[];
 };
 
 export type CustomerAnalysisResult = {
@@ -373,6 +381,8 @@ export type OrderPatch = {
 export type DispatchInput = {
   specialistId: string;
   secondSpecialistId?: string | null;
+  /** `{ serviceId: specialistId }` when the visit's work is split in two. */
+  serviceAssignments?: Record<string, string> | null;
   driverId: string;
   /** Settled at dispatch — the server refuses a blank or placeholder address. */
   customerLocation: string;

@@ -212,7 +212,15 @@ export interface DriverOrder {
    */
   rekaz_source_id?: string | null;
   expected_end_at?: string;
-  approved_services?: { sourceId: string | null; name: string; minutes: number }[];
+  approved_services?: {
+    /** `order_visit_services.id`; null for a Rekaz fallback row not yet captured. */
+    id?: string | null;
+    sourceId: string | null;
+    name: string;
+    minutes: number;
+    /** Set once the visit's work is split between two specialists. */
+    assignedSpecialistId?: string | null;
+  }[];
   /**
    * What the field team reads in the app. Dispatch composes these; nothing is
    * sent to a driver's or specialist's WhatsApp. Undefined on rows read before
