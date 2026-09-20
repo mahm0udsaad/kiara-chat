@@ -30,6 +30,10 @@ import {
   type TemplateKey,
 } from "@/lib/templates";
 import { findOrCreateConversation, saveMessage } from "@/lib/server-conversations";
+import { bookingStageOf } from "@/lib/booking-stage";
+import { contactOutcomeOf } from "@/lib/contact-outcome";
+import { conversationCsStatus } from "@/lib/mobile/conversations";
+import type { BookingStage, ContactOutcome, CsStatus } from "@/lib/types";
 
 export const DAILY_SEND_CAP = Number(process.env.BROADCAST_DAILY_CAP || 2000);
 const BATCH_SIZE = 20;
@@ -70,6 +74,9 @@ export interface BroadcastMark {
 }
 
 const digits = (p: string | null | undefined) => (p || "").replace(/\D/g, "");
+
+/** Phones are stored in several shapes; the national tail is what matches. */
+const phoneKey = (value: string | null | undefined) => digits(value).slice(-9);
 
 /** Sends across every campaign/broadcast in the last 24h — the number's cap. */
 export function globalSentLast24h(rows: CustomerRow[]): number {
@@ -398,6 +405,12 @@ export interface DrainResult {
 export async function sendBroadcastBatch(
   templateKey: TemplateKey,
   segment: Segment,
+  /**
+   * Exactly whom to send to, when the employee picked the numbers herself.
+   * Undefined keeps the old behaviour: everyone in the segment. An empty list
+   * is not the same thing — she selected nobody, so nothing is sent.
+   */
+  onlyPhones?: string[],
 ): Promise<DrainResult> {
   const admin = getAdminSupabaseClient();
   const provider = customerProvider();
@@ -421,8 +434,12 @@ export async function sendBroadcastBatch(
   let budget = Math.max(0, DAILY_SEND_CAP - sentLast24h);
   const dailyCapReached = budget <= 0;
 
+  const chosen = onlyPhones ? new Set(onlyPhones.map((phone) => phoneKey(phone))) : null;
   const pending = all.filter(
-    (r) => inSegment(r, segment) && marks(r)[templateKey]?.status !== "sent",
+    (r) =>
+      inSegment(r, segment) &&
+      marks(r)[templateKey]?.status !== "sent" &&
+      (!chosen || chosen.has(phoneKey(r.phone_number))),
   );
 
   const spec = templateSpec(templateKey);
@@ -489,5 +506,175 @@ export async function sendBroadcastBatch(
     dailyCapReached: dailyCapReached || budget <= 0,
     lastError,
     status: await broadcastStatus(templateKey, segment),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Picking the audience by hand.
+ *
+ * A segment answers "who booked recently"; it cannot answer "the women Huda
+ * has been talking to", or "everyone we marked as awaiting a booking". Those
+ * live on the conversation, which is where the inbox already files them — so
+ * the campaign screen reads the same labels, statuses, stages and outcomes the
+ * chat list filters by, and lets the employee tick the exact numbers on top.
+ *
+ * Deliberately a read: nothing here sends. The chosen phones are passed back
+ * to sendBroadcastBatch, which still enforces the daily cap and still skips
+ * anyone already sent to.
+ * ------------------------------------------------------------------ */
+
+export interface AudienceMember {
+  phone: string;
+  name: string | null;
+  lastBookingAt: string | null;
+  nextBookingAt: string | null;
+  bookings: number;
+  /** This template's send state for her, if it has been tried. */
+  state: "sent" | "failed" | null;
+  conversationId: string | null;
+  csStatus: CsStatus | null;
+  bookingStage: BookingStage | null;
+  contactOutcome: ContactOutcome | null;
+  labelIds: string[];
+}
+
+export interface AudienceFilters {
+  labelId?: string | null;
+  status?: CsStatus | null;
+  bookingStage?: BookingStage | null;
+  contactOutcome?: ContactOutcome | null;
+  /** Name or number, matched the way the inbox search does. */
+  search?: string | null;
+  /** Off by default: a campaign list is about who has NOT been sent to yet. */
+  includeSent?: boolean;
+}
+
+
+async function conversationIndex(): Promise<
+  Map<
+    string,
+    {
+      id: string;
+      csStatus: CsStatus;
+      bookingStage: BookingStage | null;
+      contactOutcome: ContactOutcome | null;
+      labelIds: string[];
+    }
+  >
+> {
+  const admin = getAdminSupabaseClient();
+  const index = new Map<
+    string,
+    {
+      id: string;
+      csStatus: CsStatus;
+      bookingStage: BookingStage | null;
+      contactOutcome: ContactOutcome | null;
+      labelIds: string[];
+    }
+  >();
+  const byId = new Map<string, string>();
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await admin
+      .from("conversations")
+      .select("id, customer_phone, status, metadata, last_message_at")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .order("last_message_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const batch = data ?? [];
+    for (const row of batch) {
+      const key = phoneKey(row.customer_phone as string);
+      // A number may carry several threads; the newest is the live one, and
+      // the ordering above means it is the one already in the map.
+      if (!key || index.has(key)) continue;
+      const conversation = row as unknown as Parameters<typeof conversationCsStatus>[0] &
+        Parameters<typeof bookingStageOf>[0];
+      index.set(key, {
+        id: row.id as string,
+        csStatus: conversationCsStatus(conversation),
+        bookingStage: bookingStageOf(conversation),
+        contactOutcome: contactOutcomeOf(conversation),
+        labelIds: [],
+      });
+      byId.set(row.id as string, key);
+    }
+    if (batch.length < pageSize) break;
+  }
+
+  const { data: assignments } = await admin
+    .from("conversation_label_assignments")
+    .select("conversation_id, label_id");
+  for (const row of assignments ?? []) {
+    const key = byId.get(row.conversation_id as string);
+    const entry = key ? index.get(key) : null;
+    if (entry) entry.labelIds.push(row.label_id as string);
+  }
+  return index;
+}
+
+export async function listAudience(
+  templateKey: TemplateKey,
+  segment: Segment,
+  filters: AudienceFilters = {},
+): Promise<{ members: AudienceMember[]; labels: { id: string; name: string; color: string }[] }> {
+  const admin = getAdminSupabaseClient();
+  const [all, conversations, labelRows] = await Promise.all([
+    loadAllCustomers(),
+    conversationIndex(),
+    admin
+      .from("conversation_labels")
+      .select("id, name, color")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .order("name"),
+  ]);
+
+  const search = (filters.search ?? "").trim().toLocaleLowerCase("ar");
+  const searchDigits = digits(filters.search ?? "");
+  const members: AudienceMember[] = [];
+  for (const row of all) {
+    if (!inSegment(row, segment)) continue;
+    const phone = (row.phone_number || "").trim();
+    if (!phone) continue;
+    const mark = marks(row)[templateKey];
+    if (mark?.status === "sent" && !filters.includeSent) continue;
+
+    const conversation = conversations.get(phoneKey(phone)) ?? null;
+    if (filters.status && conversation?.csStatus !== filters.status) continue;
+    if (filters.bookingStage && conversation?.bookingStage !== filters.bookingStage) continue;
+    if (filters.contactOutcome && conversation?.contactOutcome !== filters.contactOutcome) continue;
+    if (filters.labelId && !conversation?.labelIds.includes(filters.labelId)) continue;
+    if (search || searchDigits) {
+      const name = (row.full_name ?? "").toLocaleLowerCase("ar");
+      const matches =
+        (search && name.includes(search)) ||
+        (searchDigits && digits(phone).includes(searchDigits));
+      if (!matches) continue;
+    }
+
+    members.push({
+      phone,
+      name: row.full_name,
+      lastBookingAt: lastBooking(row),
+      nextBookingAt: nextBooking(row),
+      bookings: bookingCount(row),
+      state: mark?.status ?? null,
+      conversationId: conversation?.id ?? null,
+      csStatus: conversation?.csStatus ?? null,
+      bookingStage: conversation?.bookingStage ?? null,
+      contactOutcome: conversation?.contactOutcome ?? null,
+      labelIds: conversation?.labelIds ?? [],
+    });
+  }
+
+  // Newest booking first: the women most recently in the salon are the ones an
+  // employee recognises, and the ones an offer is most likely aimed at.
+  members.sort((left, right) =>
+    (right.lastBookingAt ?? "").localeCompare(left.lastBookingAt ?? ""),
+  );
+  return {
+    members,
+    labels: (labelRows.data ?? []) as { id: string; name: string; color: string }[],
   };
 }

@@ -15,6 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import { BroadcastAnalyticsView } from "@/components/broadcast-analytics-view";
+import { BroadcastAudience } from "@/components/broadcast-audience";
 
 type Segment = "all" | "week" | "month" | "upcoming" | "dormant" | "repeat_idle";
 
@@ -32,6 +33,11 @@ const SEGMENTS: { key: Segment; label: string; hint: string }[] = [
 ];
 
 const TEMPLATE_OPTIONS = [
+  {
+    key: "kiara_national_day_offers",
+    label: "عروض اليوم الوطني (تفاصيل العروض / طلب المساعدة)",
+    desc: "عروض اليوم الوطني مستمرة والتوصيل مجاني للأحياء القريبة",
+  },
   {
     key: "kiara_offer_verified_196",
     label: "عرض توثيق الواتساب (مساج لشخصين ١٩٦ ريال)",
@@ -86,6 +92,9 @@ export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { 
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // Exactly whom to send to, when the employee picked numbers herself. Empty
+  // keeps the old behaviour: the whole segment.
+  const [selectedPhones, setSelectedPhones] = useState<string[]>([]);
   const runningRef = useRef(false);
 
   const load = useCallback(
@@ -103,6 +112,7 @@ export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { 
   useEffect(() => {
     void load(activeTemplate, segment);
   }, [load, activeTemplate, segment]);
+
 
   const sync = useCallback(async () => {
     setSyncing(true);
@@ -144,7 +154,9 @@ export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { 
         const res = await fetch(`/api/broadcasts/${activeTemplate}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ segment }),
+          body: JSON.stringify(
+            selectedPhones.length ? { segment, phones: selectedPhones } : { segment },
+          ),
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -169,6 +181,13 @@ export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { 
         setNote("اكتمل الإرسال لهذه الفئة 🌿");
         break;
       }
+      // `remaining` counts the whole segment, so a hand-picked send would loop
+      // on forever waiting for it to reach zero. Nothing attempted means the
+      // chosen numbers are done.
+      if (selectedPhones.length && result.attempted === 0) {
+        setNote("اكتمل الإرسال للأرقام المحددة 🌿");
+        break;
+      }
       if (result.dailyCapReached) {
         setNote(
           `تم بلوغ الحد اليومي (${result.status.dailyCap} رسالة). تابعي غدًا لإرسال البقية.`,
@@ -179,7 +198,7 @@ export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { 
     }
     runningRef.current = false;
     setRunning(false);
-  }, [activeTemplate, segment]);
+  }, [activeTemplate, segment, selectedPhones]);
 
   const pct = status && status.total ? Math.round((status.sent / status.total) * 100) : 0;
   const counts = status?.segmentCounts;
@@ -205,7 +224,11 @@ export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { 
           </label>
           <select
             value={activeTemplate}
-            onChange={(e) => setActiveTemplate(e.target.value)}
+            onChange={(e) => {
+              // A selection belongs to the list it was made from.
+              setSelectedPhones([]);
+              setActiveTemplate(e.target.value);
+            }}
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 shadow-2xs focus:border-[var(--brand)] focus:outline-hidden"
           >
             {TEMPLATE_OPTIONS.map((t) => (
@@ -292,7 +315,10 @@ export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { 
                         key={s.key}
                         type="button"
                         disabled={running}
-                        onClick={() => setSegment(s.key)}
+                        onClick={() => {
+                          setSelectedPhones([]);
+                          setSegment(s.key);
+                        }}
                         className={`flex flex-col gap-0.5 rounded-lg border p-3 text-right transition disabled:opacity-60 ${
                           active
                             ? "border-[var(--brand,#12505c)] bg-[var(--brand-soft,#edf0ff)]"
@@ -311,6 +337,14 @@ export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { 
                   })}
                 </div>
               </div>
+
+              <BroadcastAudience
+                templateKey={activeTemplate}
+                segment={segment}
+                disabled={running}
+                selected={selectedPhones}
+                onSelectedChange={setSelectedPhones}
+              />
 
               {/* Progress + send for the chosen segment */}
               <div className="rounded-2xl border bg-[var(--surface)] p-6 shadow-xs">
@@ -356,13 +390,18 @@ export function BroadcastClient({ initialTemplateKey = "open_conversation" }: { 
                   <button
                     type="button"
                     onClick={run}
-                    disabled={!status.approvedConfigured || status.remaining <= 0}
+                    disabled={
+                      !status.approvedConfigured ||
+                      (!selectedPhones.length && status.remaining <= 0)
+                    }
                     className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand)] px-5 py-2.5 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50 shadow-xs"
                   >
                     <Send className="size-4" />
-                    {status.remaining <= 0
-                      ? "لا يوجد متبقٍّ في هذه الفئة"
-                      : `بدء إرسال الدفعة إلى ${status.remaining} عميلة`}
+                    {selectedPhones.length
+                      ? `إرسال إلى ${selectedPhones.length} رقمًا محددًا`
+                      : status.remaining <= 0
+                        ? "لا يوجد متبقٍّ في هذه الفئة"
+                        : `بدء إرسال الدفعة إلى ${status.remaining} عميلة`}
                   </button>
                 )}
                 {running && (

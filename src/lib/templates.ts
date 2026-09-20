@@ -26,7 +26,8 @@ export type TemplateKey =
   | "conversation_opener"
   | "number_notice"
   | "open_conversation"
-  | "kiara_offer_verified_196";
+  | "kiara_offer_verified_196"
+  | "kiara_national_day_offers";
 
 export interface TemplateVariableSpec {
   /** Positional key as Twilio wants it: "1", "2", … */
@@ -132,6 +133,19 @@ const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
     body:
       "عرض جديد من كيارا سبا 🍃\n⏳ العرض لمدة ثلاثة أيام فقط\n\n📌 ملاحظة: إذا لم تتمكنوا من مراسلتنا على هذا الرقم قم بحذف الرقم واضافته من جديد\n📞 أو الاتصال على: 0508421748 \n\nKiara Spa | كيارا سبا 🌿",
     buttons: [],
+    variables: [],
+  },
+  kiara_national_day_offers: {
+    env: "TWILIO_CONTENT_SID_KIARA_NATIONAL_DAY_OFFERS",
+    metaEnv: "META_TEMPLATE_NAME_KIARA_NATIONAL_DAY_OFFERS",
+    metaName: "kiara_national_day_offers",
+    label: "عروض اليوم الوطني",
+    description:
+      "تذكير بأن عروض اليوم الوطني مستمرة والتوصيل مجاني للأحياء القريبة، مع زرّين: تفاصيل العروض وطلب المساعدة.",
+    category: "marketing",
+    body:
+      "🌿 كيارا سبا\nعروض اليوم الوطني مستمرة 🇸🇦\nوالتوصيل مجاني للأحياء القريبة 🚗✨\nاختاري الخيار المناسب بالأسفل لمعرفة التفاصيل أو لطلب المساعدة.",
+    buttons: ["تفاصيل العروض", "طلب المساعدة"],
     variables: [],
   },
 };

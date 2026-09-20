@@ -64,7 +64,12 @@ export async function POST(
   const body = (await request.json().catch(() => ({}))) as {
     segment?: string;
     action?: string;
+    /** Exactly the numbers the employee ticked, when she picked them herself. */
+    phones?: unknown;
   };
+  const phones = Array.isArray(body.phones)
+    ? body.phones.filter((phone): phone is string => typeof phone === "string" && Boolean(phone.trim()))
+    : undefined;
   const segment: Segment =
     body.segment && isSegment(body.segment) ? body.segment : segmentOf(request);
 
@@ -76,7 +81,15 @@ export async function POST(
         status: await broadcastStatus(key, segment),
       });
     }
-    return NextResponse.json(await sendBroadcastBatch(key, segment));
+    // An empty selection is a real answer — she ticked nobody — and must not
+    // be read as "send to the whole segment".
+    if (phones && !phones.length) {
+      return NextResponse.json(
+        { error: "اختاري رقمًا واحدًا على الأقل قبل الإرسال" },
+        { status: 400 },
+      );
+    }
+    return NextResponse.json(await sendBroadcastBatch(key, segment, phones));
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "تعذّر الإرسال" },
