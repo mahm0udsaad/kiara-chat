@@ -1306,7 +1306,9 @@ async function loadDispatchContext(
         ? (await fetchSpecialist(id, "id, full_name, phone")).data
         : result.data
   );
-  const [specialist, secondSpecialist, { data: driver }, { data: conv }, services] = await Promise.all([
+  let services: VisitService[];
+  const [specialist, secondSpecialist, { data: driver }, { data: conv }, loadedServices] =
+    await Promise.all([
     specialistFor(input.specialistId),
     input.secondSpecialistId ? specialistFor(input.secondSpecialistId) : Promise.resolve(null),
     supabase
@@ -1323,6 +1325,24 @@ async function loadDispatchContext(
       .maybeSingle(),
     servicesForOrder(order).catch(() => [] as VisitService[]),
   ]);
+  services = loadedServices;
+
+  // Assigning a service needs a row to write the assignee onto. Orders raised
+  // before the snapshot existed read their services straight from Rekaz, which
+  // carries no row id — so capture them now, once, rather than offering a split
+  // that cannot be saved. A customer with no Rekaz booking at all simply has no
+  // services to divide.
+  if (services.length && !services.some((service) => service.id)) {
+    await snapshotRekazVisitServices({
+      orderId: order.id,
+      customerPhone: order.customer_phone,
+      arrivalAt: order.arrival_at,
+    }).catch((error) =>
+      console.error("Failed to capture visit services before dispatch", error),
+    );
+    const captured = await servicesForOrder(order).catch(() => [] as VisitService[]);
+    if (captured.some((service) => service.id)) services = captured;
+  }
   if (!specialist) throw new Error("Specialist not found");
   if (input.secondSpecialistId && !secondSpecialist) throw new Error("Second specialist not found");
   // A phone is the driver's app login, not a delivery address any more, so a

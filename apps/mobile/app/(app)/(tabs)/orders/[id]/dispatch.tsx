@@ -201,7 +201,20 @@ function ServiceSplit({
 }) {
   const { colors } = useTheme();
   const assignable = services.filter((service) => service.id);
-  if (!assignable.length) return null;
+  // A visit booked over WhatsApp has no service list to divide. Saying so is
+  // the honest answer; rendering nothing reads as a screen that failed.
+  if (!assignable.length) {
+    return (
+      <View style={{ gap: spacing.xs }}>
+        <Text style={{ ...type.calloutStrong, color: colors.text, ...rtlText }}>
+          توزيع الخدمات
+        </Text>
+        <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
+          لا توجد خدمات مسجلة لهذه الزيارة، وستصل الرسالة نفسها للأخصائيتين.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={{ gap: spacing.md }}>
