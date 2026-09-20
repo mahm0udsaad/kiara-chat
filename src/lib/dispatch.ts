@@ -770,6 +770,36 @@ export async function servicesForOrder(
     : [];
 }
 
+/**
+ * Hand a Rekaz reservation back after its order was cancelled.
+ *
+ * `driver_orders_rekaz_source_key` is unique on the link and counts cancelled
+ * rows, so one cancelled order kept its reservation claimed forever: raising
+ * the visit again answered "تم إنشاء طلب لهذا الحجز بالفعل — حدّثي التقويم"
+ * and no refresh could clear it, because the blocker was a dead row rather
+ * than a live visit. A cancelled order has no further claim on the booking —
+ * it keeps its own history, it just stops owning the reservation.
+ *
+ * Returns true when a link was released, so the caller can retry its insert.
+ */
+async function releaseCancelledRekazLink(
+  admin: ReturnType<typeof getAdminSupabaseClient>,
+  sourceId: string,
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from("driver_orders")
+    .update({ rekaz_source_id: null, updated_at: new Date().toISOString() })
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("rekaz_source_id", sourceId)
+    .or("status.eq.cancelled,dispatch_state.eq.cancelled")
+    .select("id");
+  if (error) {
+    console.error("[dispatch] Could not release a cancelled Rekaz link", error.message);
+    return false;
+  }
+  return Boolean(data?.length);
+}
+
 export async function createBookingFromReservation(
   userId: string,
   sourceId: string
@@ -941,25 +971,34 @@ export async function createBookingFromReservation(
       )?.id ?? null;
   }
 
-  const { data: created, error: insErr } = await admin
-    .from("driver_orders")
-    .insert({
-      restaurant_id: KIARA_RESTAURANT_ID,
-      conversation_id: conversation.id,
-      specialist_id: rekazSpecialistId,
-      driver_id: null,
-      arrival_at: visit.startsAt,
-      customer_location: location,
-      customer_phone: conversation.customer_phone as string,
-      duration_minutes: durationMinutes,
-      trip_type: "round_trip",
-      price: null,
-      status: "pending",
-      created_by: userId,
-      rekaz_source_id: sourceId,
-    })
-    .select(ORDER_COLS_WITH_REKAZ)
-    .single();
+  const insertOrder = () =>
+    admin
+      .from("driver_orders")
+      .insert({
+        restaurant_id: KIARA_RESTAURANT_ID,
+        conversation_id: conversation.id,
+        specialist_id: rekazSpecialistId,
+        driver_id: null,
+        arrival_at: visit.startsAt,
+        customer_location: location,
+        customer_phone: conversation.customer_phone as string,
+        duration_minutes: durationMinutes,
+        trip_type: "round_trip",
+        price: null,
+        status: "pending",
+        created_by: userId,
+        rekaz_source_id: sourceId,
+      })
+      .select(ORDER_COLS_WITH_REKAZ)
+      .single();
+
+  let { data: created, error: insErr } = await insertOrder();
+  // The live visit was already ruled out above, so a clash here is either a
+  // cancelled order still holding the reservation — release it and try once
+  // more — or two employees tapping "طلب سائق" at the same moment.
+  if (insErr?.code === "23505" && (await releaseCancelledRekazLink(admin, sourceId))) {
+    ({ data: created, error: insErr } = await insertOrder());
+  }
 
   if (insErr) {
     // The partial unique index is the race barrier: two employees tapping
@@ -968,6 +1007,7 @@ export async function createBookingFromReservation(
     if (missingRekazLink(insErr)) throw new RekazBookingError("REKAZ_LINK_UNAVAILABLE");
     throw new Error(insErr.message);
   }
+  if (!created) throw new Error("تعذّر إنشاء الطلب");
 
   await snapshotRekazVisitServices({
     orderId: String(created.id),
