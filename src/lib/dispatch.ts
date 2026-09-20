@@ -493,6 +493,8 @@ export async function createBooking(
 }
 
 export class RekazBookingError extends Error {
+  /** A specific explanation shown to the employee instead of the generic one. */
+  public detail?: string;
   constructor(public readonly code:
     | "RESERVATION_NOT_FOUND"
     | "RESERVATION_CANCELLED"
@@ -860,6 +862,50 @@ async function releaseCancelledRekazClaim(
   return true;
 }
 
+const BLOCKING_DAY_FMT = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  timeZone: "Asia/Riyadh",
+});
+
+/**
+ * The order standing between this reservation and a new one.
+ *
+ * A booking moved to another day is the case that reaches here: the visit for
+ * the new day finds no order (the existing one is filed under the old date),
+ * tries to insert, and is refused by the reservation's unique link. Saying
+ * "حدّثي التقويم" to that is useless — no refresh will ever clear it — so name
+ * the day the order is actually on, which is where she can fix it.
+ */
+async function blockingOrderFor(
+  admin: ReturnType<typeof getAdminSupabaseClient>,
+  sourceId: string,
+): Promise<{ id: string; arrival_at: string; status: string } | null> {
+  const { data: linked } = await admin
+    .from("driver_orders")
+    .select("id, arrival_at, status")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("rekaz_source_id", sourceId)
+    .limit(1);
+  if (linked?.length) return linked[0] as { id: string; arrival_at: string; status: string };
+
+  const { data: captured } = await admin
+    .from("order_visit_services")
+    .select("order_id")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("source_id", sourceId)
+    .limit(1);
+  if (!captured?.length) return null;
+  const { data: order } = await admin
+    .from("driver_orders")
+    .select("id, arrival_at, status")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("id", captured[0].order_id as string)
+    .maybeSingle();
+  return (order as { id: string; arrival_at: string; status: string } | null) ?? null;
+}
+
 export async function createBookingFromReservation(
   userId: string,
   sourceId: string
@@ -1061,6 +1107,41 @@ export async function createBookingFromReservation(
     insErr?.code === "23505" || /RESERVATION_ALREADY_LINKED/.test(insErr?.message ?? "");
   if (blockedByStaleClaim && (await releaseCancelledRekazClaim(admin, sourceId))) {
     ({ data: created, error: insErr } = await insertOrder());
+  }
+
+  // Still blocked: a live order holds this booking, and it is not on the day
+  // the visit now sits on — the booking was moved in Rekaz after the order was
+  // raised. An order nobody has been told about yet can simply follow the
+  // booking to its new day; one already sent belongs to a driver and a
+  // specialist who agreed a time, so that one is the employee's call.
+  if (insErr && blockedByStaleClaim) {
+    const blocking = await blockingOrderFor(admin, sourceId);
+    if (blocking && blocking.status === "pending") {
+      const { data: moved, error: moveError } = await admin
+        .from("driver_orders")
+        .update({
+          arrival_at: visit.startsAt,
+          duration_minutes: durationMinutes,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .eq("id", blocking.id)
+        .eq("status", "pending")
+        .is("sent_at", null)
+        .select(ORDER_COLS_WITH_REKAZ)
+        .maybeSingle();
+      if (!moveError && moved) {
+        await clearBookingRequest(conversation.id).catch(() => {});
+        return moved as unknown as DriverOrder;
+      }
+    }
+    if (blocking) {
+      const error = new RekazBookingError("ORDER_ALREADY_LINKED");
+      error.detail = `هذا الحجز مرتبط بطلب يوم ${BLOCKING_DAY_FMT.format(
+        new Date(blocking.arrival_at),
+      )}${blocking.status === "sent" ? " تم إرساله" : ""}. افتحي ذلك الطلب وعدّلي موعده بدل إنشاء طلب جديد.`;
+      throw error;
+    }
   }
 
   if (insErr) {

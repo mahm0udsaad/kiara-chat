@@ -66,7 +66,9 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof RekazBookingError) {
       const mapped = ERROR_STATUS[error.code];
-      return mobileError(mapped.status, error.code, mapped.message);
+      // The specific reason when the server knows one — "this booking belongs
+      // to the order on Friday" beats "refresh the calendar", which cannot help.
+      return mobileError(mapped.status, error.code, error.detail ?? mapped.message);
     }
     return mobileServerError(
       error,
