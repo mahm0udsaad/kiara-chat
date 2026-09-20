@@ -773,31 +773,81 @@ export async function servicesForOrder(
 /**
  * Hand a Rekaz reservation back after its order was cancelled.
  *
- * `driver_orders_rekaz_source_key` is unique on the link and counts cancelled
- * rows, so one cancelled order kept its reservation claimed forever: raising
- * the visit again answered "تم إنشاء طلب لهذا الحجز بالفعل — حدّثي التقويم"
- * and no refresh could clear it, because the blocker was a dead row rather
- * than a live visit. A cancelled order has no further claim on the booking —
- * it keeps its own history, it just stops owning the reservation.
+ * A cancelled order kept its booking claimed twice over: through the unique
+ * `driver_orders_rekaz_source_key` link, and through the `order_visit_services`
+ * rows the capture trigger froze onto it — the trigger refuses a new order with
+ * `RESERVATION_ALREADY_LINKED` while another order still holds those rows.
+ * Neither claim could be cleared from the app, so raising the visit again only
+ * ever answered "تم إنشاء طلب لهذا الحجز بالفعل — حدّثي التقويم" and the
+ * customer could not be dispatched at all.
  *
- * Returns true when a link was released, so the caller can retry its insert.
+ * A cancelled order has no further claim on the booking. It keeps its own row
+ * and history; it gives up the link and the frozen service list, which only
+ * describe work that is no longer happening. Live orders are never touched, so
+ * a genuine double-raise still fails.
+ *
+ * Returns true when something was released, so the caller can retry its insert.
  */
-async function releaseCancelledRekazLink(
+async function releaseCancelledRekazClaim(
   admin: ReturnType<typeof getAdminSupabaseClient>,
   sourceId: string,
 ): Promise<boolean> {
-  const { data, error } = await admin
-    .from("driver_orders")
-    .update({ rekaz_source_id: null, updated_at: new Date().toISOString() })
-    .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq("rekaz_source_id", sourceId)
-    .or("status.eq.cancelled,dispatch_state.eq.cancelled")
-    .select("id");
-  if (error) {
-    console.error("[dispatch] Could not release a cancelled Rekaz link", error.message);
+  const [linked, captured] = await Promise.all([
+    admin
+      .from("driver_orders")
+      .select("id, status, dispatch_state")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .eq("rekaz_source_id", sourceId),
+    admin
+      .from("order_visit_services")
+      .select("order_id")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .eq("source_id", sourceId),
+  ]);
+  if (linked.error) {
+    console.error("[dispatch] Could not read the Rekaz link", linked.error.message);
     return false;
   }
-  return Boolean(data?.length);
+  const candidateIds = new Set<string>((linked.data ?? []).map((row) => String(row.id)));
+  // The capture trigger is keyed on the service rows, which may sit on an order
+  // whose own link was already cleared.
+  for (const row of captured.data ?? []) candidateIds.add(String(row.order_id));
+  if (!candidateIds.size) return false;
+
+  const { data: orders, error: ordersError } = await admin
+    .from("driver_orders")
+    .select("id, status, dispatch_state")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .in("id", [...candidateIds]);
+  if (ordersError) {
+    console.error("[dispatch] Could not read the blocking orders", ordersError.message);
+    return false;
+  }
+  const cancelledIds = (orders ?? [])
+    .filter((row) => row.status === "cancelled" || row.dispatch_state === "cancelled")
+    .map((row) => String(row.id));
+  if (!cancelledIds.length) return false;
+
+  const [unlink, drop] = await Promise.all([
+    admin
+      .from("driver_orders")
+      .update({ rekaz_source_id: null, updated_at: new Date().toISOString() })
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .in("id", cancelledIds),
+    admin
+      .from("order_visit_services")
+      .delete()
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .in("order_id", cancelledIds),
+  ]);
+  if (unlink.error || drop.error) {
+    console.error(
+      "[dispatch] Could not release a cancelled Rekaz claim",
+      unlink.error?.message ?? drop.error?.message,
+    );
+    return false;
+  }
+  return true;
 }
 
 export async function createBookingFromReservation(
@@ -993,17 +1043,22 @@ export async function createBookingFromReservation(
       .single();
 
   let { data: created, error: insErr } = await insertOrder();
-  // The live visit was already ruled out above, so a clash here is either a
+  // The live visit was already ruled out above, so a refusal here is either a
   // cancelled order still holding the reservation — release it and try once
-  // more — or two employees tapping "طلب سائق" at the same moment.
-  if (insErr?.code === "23505" && (await releaseCancelledRekazLink(admin, sourceId))) {
+  // more — or two employees tapping "طلب سائق" at the same moment. The unique
+  // link fails as 23505; the capture trigger raises RESERVATION_ALREADY_LINKED.
+  const blockedByStaleClaim =
+    insErr?.code === "23505" || /RESERVATION_ALREADY_LINKED/.test(insErr?.message ?? "");
+  if (blockedByStaleClaim && (await releaseCancelledRekazClaim(admin, sourceId))) {
     ({ data: created, error: insErr } = await insertOrder());
   }
 
   if (insErr) {
     // The partial unique index is the race barrier: two employees tapping
     // "طلب سائق" on the same visit produce one order, not two.
-    if (insErr.code === "23505") throw new RekazBookingError("ORDER_ALREADY_LINKED");
+    if (insErr.code === "23505" || /RESERVATION_ALREADY_LINKED/.test(insErr.message ?? "")) {
+      throw new RekazBookingError("ORDER_ALREADY_LINKED");
+    }
     if (missingRekazLink(insErr)) throw new RekazBookingError("REKAZ_LINK_UNAVAILABLE");
     throw new Error(insErr.message);
   }
