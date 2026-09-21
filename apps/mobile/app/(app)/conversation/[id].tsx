@@ -708,6 +708,17 @@ export default function ConversationScreen() {
             tone={contactOutcomeTone[current.contactOutcome]}
           />
         ) : null}
+        {/* In the strip rather than behind the actions menu: deciding to call
+            is a mid-chat decision, and this is also the only place that says
+            whether calling is possible at all — and, once one is up, the only
+            place the call is visible. Not on a group — its `customer_phone` is
+            a jid, and there is nobody to call.
+
+            Kept at this end of the strip, with the number and حجز between it
+            and the actions pencil: the two used to sit side by side, and staff
+            reaching for the pencil to set the chat's status were hitting
+            "طلب إذن الاتصال" instead — a message that goes to the customer. */}
+        <CallControl conversationId={id} enabled={!isGroup} />
         <Text
           selectable
           numberOfLines={1}
@@ -770,12 +781,6 @@ export default function ConversationScreen() {
             </>
           )}
         </Pressable>
-        {/* Sits beside حجز rather than behind the actions menu: deciding to
-            call is a mid-chat decision, and this is also the only place that
-            says whether calling is possible at all — and, once one is up, the
-            only place the call is visible. Not on a group — its
-            `customer_phone` is a jid, and there is nobody to call. */}
-        <CallControl conversationId={id} enabled={!isGroup} />
         <ConversationActionsButton
           conversationId={id}
           csStatus={current.csStatus}
