@@ -9,6 +9,41 @@ import { reportInteger } from "@/lib/operations-report";
 import { useTheme } from "@/providers/theme-provider";
 import type { CustomerServiceEmployee, CustomerServiceReport } from "@/types/api";
 
+/**
+ * One number and what it counts, side by side.
+ *
+ * Deliberately plainer than `Metric`: a row of these has to be read at a
+ * glance while standing up, so no icons, no tiles, and nothing derived — the
+ * owner asked for counts she can act on, not rates she has to interpret.
+ */
+function Figure({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  /** Booking figures carry the outcome, so they take the accent. */
+  highlight?: boolean;
+}) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ flexDirection: "row-reverse", alignItems: "baseline", gap: 4 }}>
+      <Text
+        selectable
+        style={{
+          ...type.bodyStrong,
+          ...numeric,
+          color: highlight ? colors.brand : colors.text,
+        }}
+      >
+        {value}
+      </Text>
+      <Text style={{ ...type.caption, color: colors.textTertiary }}>{label}</Text>
+    </View>
+  );
+}
+
 function Metric({
   icon,
   label,
@@ -113,29 +148,36 @@ function EmployeeRow({
                 </Text>
               </View>
             </View>
-            <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
-              {reportInteger.format(employee.handledConversations)} محادثة · {reportInteger.format(employee.messagesSent)} رد · {reportInteger.format(employee.actions)} إجراء
-            </Text>
-            {employee.rekazBookings ? (
-              // What came of the chats. Most bookings are typed straight into
-              // Rekaz, so this is the only place the two halves of her day meet.
-              <Text
-                selectable
-                style={{ ...type.caption, ...numeric, ...rtlText, color: colors.brand }}
-              >
-                {reportInteger.format(employee.rekazBookings)} حجز في ركاز
-                {employee.bookingsFromHerChats
-                  ? ` · ${reportInteger.format(employee.bookingsFromHerChats)} من محادثاتها`
-                  : ""}
-                {typeof employee.chatToBookingRate === "number"
-                  ? ` · تحويل ${Math.round(employee.chatToBookingRate * 100)}%`
-                  : ""}
-              </Text>
-            ) : null}
+            {/* Five plain counts, no averages and no rates: the owner reads
+                this list to run a shift, and every figure here is something
+                she can act on without doing arithmetic first. */}
+            <View
+              style={{
+                flexDirection: "row-reverse",
+                flexWrap: "wrap",
+                columnGap: spacing.md,
+                rowGap: 2,
+              }}
+            >
+              <Figure
+                label="في التطبيق"
+                value={employee.activeMinutes ? durationLabel(employee.activeMinutes) : "—"}
+              />
+              <Figure label="محادثة" value={reportInteger.format(employee.handledConversations)} />
+              <Figure
+                label="حجز في ركاز"
+                value={reportInteger.format(employee.rekazBookings ?? 0)}
+                highlight
+              />
+              <Figure
+                label="ر.س"
+                value={employee.bookedRevenue ? reportInteger.format(employee.bookedRevenue) : "—"}
+                highlight
+              />
+              <Figure label="مسندة الآن" value={reportInteger.format(employee.currentAssigned)} />
+            </View>
             <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
-              {employee.activeMinutes ? `${durationLabel(employee.activeMinutes)} داخل التطبيق · ` : ""}
-              {reportInteger.format(employee.currentAssigned)} مسندة الآن
-              {lastActivity ? ` · آخر نشاط ${relativeTimeLabel(lastActivity)}` : " · لا يوجد نشاط مسجل"}
+              {lastActivity ? `آخر نشاط ${relativeTimeLabel(lastActivity)}` : "لا يوجد نشاط مسجل"}
             </Text>
           </View>
           <IconSymbol name="chevron.left" size={20} color={colors.textTertiary} />
@@ -172,27 +214,20 @@ export function CustomerServiceTeam({ report }: { report: CustomerServiceReport 
       ) : null}
 
       <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
-        <Metric icon="person.2" label="الموظفات" value={report.totals.employees} />
         <Metric icon="checkmark.circle" label="نشطات الآن" value={report.totals.activeNow} />
-        <Metric icon="message" label="محادثات" value={report.totals.handledConversations} />
-        <Metric icon="paperplane.fill" label="ردود" value={report.totals.messagesSent} />
-        <Metric icon="pencil" label="إجراءات" value={report.totals.actions} />
-        <Metric icon="tray" label="مسند الآن" value={report.totals.currentAssigned} />
         <Metric
           icon="clock"
           label="وقت الفريق بالتطبيق"
           value={report.totals.activeMinutes ? durationLabel(report.totals.activeMinutes) : "—"}
         />
+        <Metric icon="message" label="محادثات" value={report.totals.handledConversations} />
+        <Metric icon="calendar" label="حجوزات ركاز" value={report.totals.rekazBookings ?? 0} />
         <Metric
-          icon="calendar"
-          label="حجوزات ركاز"
-          value={report.totals.rekazBookings ?? 0}
+          icon="banknote"
+          label="قيمة الحجوزات"
+          value={report.totals.bookedRevenue ? reportInteger.format(report.totals.bookedRevenue) : "—"}
         />
-        <Metric
-          icon="sparkles"
-          label="حجوزات من المحادثات"
-          value={report.totals.bookingsFromHerChats ?? 0}
-        />
+        <Metric icon="tray" label="مسند الآن" value={report.totals.currentAssigned} />
       </View>
 
       <Card padded={false}>
