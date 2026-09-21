@@ -53,10 +53,17 @@ export async function POST(
   }
   const expectedVersion = Number(body?.expectedVersion);
   const idempotencyKey = String(body?.idempotencyKey ?? "").trim();
+  // An app old enough to predate the done/not-done sheet sends no outcome at
+  // all: its button said "أؤكد انتهاء الخدمة ومغادرتي منزل العميلة", which is
+  // "done" in every sense but the field name. Refusing those left three
+  // specialists unable to finish a visit for ten days — their binaries cannot
+  // take an update, so the server is the only place this can be met.
   const completionOutcome =
     body?.completionOutcome === "done" || body?.completionOutcome === "not_done"
       ? body.completionOutcome
-      : null;
+      : action === "complete_order"
+        ? "done"
+        : null;
   const completionNote = String(body?.completionNote ?? "").trim() || null;
   if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
     return mobileError(
@@ -72,13 +79,7 @@ export async function POST(
       "idempotencyKey must be a UUID",
     );
   }
-  if (action === "complete_order" && !completionOutcome) {
-    return mobileError(
-      400,
-      "FIELD_COMPLETION_OUTCOME_REQUIRED",
-      "Choose whether the service was completed",
-    );
-  }
+
   if (completionNote && completionNote.length > 500) {
     return mobileError(
       400,
