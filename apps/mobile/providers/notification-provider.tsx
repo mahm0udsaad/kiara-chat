@@ -25,6 +25,10 @@ import { useAuth } from "@/providers/auth-provider";
 
 /** Alert kinds the server sends for the inbox — see `lib/inbox-notifications`. */
 const INBOX_ALERTS = new Set(["inbox_message", "inbox_unassigned", "inbox_danger"]);
+// Sent to the office coordinator when the field team moves a visit forward.
+// It is an operations alert, not an inbox one: it opens the order, and the
+// counts it changes are the orders list's, not the chat tabs'.
+const ORDER_ALERTS = new Set(["order_step"]);
 const FIELD_ALERTS = new Set(["field_order", "field_push_test"]);
 
 /**
@@ -226,6 +230,15 @@ export function NotificationProvider({ children }: PropsWithChildren) {
         }
         return;
       }
+      if (ORDER_ALERTS.has(data.type)) {
+        void queryClient.invalidateQueries({ queryKey: ["orders"] });
+        if (typeof data.orderId === "string") {
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.order(data.orderId),
+          });
+        }
+        return;
+      }
       if (!INBOX_ALERTS.has(data.type)) return;
       // Every inbox alert changes at least one list count (new, unassigned,
       // danger), so the tab badges are refreshed even when the alert is about
@@ -250,6 +263,11 @@ export function NotificationProvider({ children }: PropsWithChildren) {
         router.push(url as never);
       } else if (url === "/field/account") {
         router.push("/field/account");
+      } else if (typeof url === "string" && url.startsWith("/orders/")) {
+        const orderId = url.slice("/orders/".length);
+        if (orderId) {
+          router.push({ pathname: "/orders/[id]", params: { id: orderId } });
+        }
       } else if (typeof url === "string" && url.startsWith("/inbox/")) {
         // The server still addresses a thread as `/inbox/<id>`, and so do
         // notifications already sitting on older installs. The screen moved

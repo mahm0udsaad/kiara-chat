@@ -4,6 +4,7 @@ import { fetchWithTimeout } from "@/lib/http-timeout";
 import { routedToOf } from "@/lib/conversation-meta";
 import { conversationDangerMinutes } from "@/lib/mobile/conversations";
 import { normalizePhone } from "@/lib/phone";
+import type { FieldOrderAction } from "@/lib/field-staff";
 import { listSpecialistLabeledConversationIds } from "@/lib/specialist-conversations";
 import type { Conversation } from "@/lib/types";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
@@ -223,12 +224,19 @@ async function disableInvalidToken(token: string): Promise<void> {
     .eq("expo_token", token);
 }
 
-/** The three things the phone is allowed to wake someone up for. */
-export type InboxAlertKind = "inbox_message" | "inbox_unassigned" | "inbox_danger";
+/** What the phone is allowed to wake someone up for. */
+export type InboxAlertKind =
+  | "inbox_message"
+  | "inbox_unassigned"
+  | "inbox_danger"
+  | "order_step";
 
 async function sendPush(input: {
   teamMemberIds: string | string[];
-  conversationId: string;
+  /** The thread the alert opens. */
+  conversationId?: string;
+  /** The visit the alert opens, for the execution-step alerts. */
+  orderId?: string;
   kind: InboxAlertKind;
   title: string;
   body: string;
@@ -236,15 +244,25 @@ async function sendPush(input: {
   const tokens = await activeInboxTokens(input.teamMemberIds);
   if (!tokens.length) return;
 
+  // An order alert opens the visit; everything else opens the chat. Both
+  // carry their id beside the url so the app can route without parsing it.
+  const data = input.orderId
+    ? {
+        type: input.kind,
+        orderId: input.orderId,
+        url: `/orders/${input.orderId}`,
+      }
+    : {
+        type: input.kind,
+        conversationId: input.conversationId,
+        url: `/inbox/${input.conversationId}`,
+      };
+
   const messages = tokens.map((to) => ({
     to,
     title: input.title,
     body: input.body,
-    data: {
-      type: input.kind,
-      conversationId: input.conversationId,
-      url: `/inbox/${input.conversationId}`,
-    },
+    data,
     sound: "default",
     priority: "high",
     channelId: "default",
@@ -515,4 +533,89 @@ async function rosterContactPhoneSet(): Promise<ReadonlySet<string>> {
       .map((row) => normalizePhone(String(row.phone ?? "")))
       .filter(Boolean)
   );
+}
+
+/**
+ * Who follows a visit's execution steps from the office.
+ *
+ * Deliberately a list of team-member ids rather than a role: this is one
+ * employee's job, not a rank. سعاد coordinates the visits, so she is told
+ * every time the driver or the specialist moves the order forward, while the
+ * rest of the floor keeps only its own chats' alerts. Override with
+ * `ORDER_STEP_WATCHERS` (comma-separated team-member ids) to hand the job to
+ * someone else without a deploy; an empty value turns the alerts off.
+ */
+const DEFAULT_ORDER_STEP_WATCHERS = ["22764e6e-822c-4bc5-969a-2c3eab3bc5a8"];
+
+function orderStepWatcherIds(): string[] {
+  const configured = process.env.ORDER_STEP_WATCHERS;
+  if (configured === undefined) return DEFAULT_ORDER_STEP_WATCHERS;
+  return configured
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+/** The six steps, in the words the office uses for them. */
+const ORDER_STEP_COPY: Record<
+  FieldOrderAction,
+  (input: { driver: string; specialist: string }) => string
+> = {
+  confirm_ride: ({ driver }) => `${driver} أكّد الرحلة وانطلق.`,
+  driver_arrived: ({ driver, specialist }) =>
+    `${driver} وصل إلى مقر ${specialist}.`,
+  confirm_pickup: ({ specialist }) =>
+    `${specialist} ركبت مع السائق — في الطريق إلى العميلة.`,
+  start_service: ({ specialist }) => `${specialist} بدأت الخدمة عند العميلة.`,
+  complete_order: ({ specialist }) => `${specialist} أنهت الخدمة.`,
+  driver_return: ({ driver }) => `${driver} أنهى الرحلة وعاد.`,
+};
+
+/**
+ * Tell the office that a visit moved a step.
+ *
+ * Fired from the field route beside the push that goes to the driver and the
+ * specialist, so the coordinator sees the visit progress without opening the
+ * app to look. Never throws: the step is already committed by the time this
+ * runs, and a push outage must not turn into a failed field action.
+ */
+export async function notifyOrderStepWatchers(input: {
+  orderId: string;
+  action: FieldOrderAction;
+  customerName: string | null;
+  driverName: string | null;
+  specialistName: string | null;
+  /** Set when the specialist closed the visit, so the alert can say how. */
+  completionOutcome?: "done" | "not_done" | null;
+  completionNote?: string | null;
+}): Promise<void> {
+  const watchers = orderStepWatcherIds();
+  if (!watchers.length) return;
+
+  const customer = input.customerName?.trim() || "العميلة";
+  let body = ORDER_STEP_COPY[input.action]({
+    driver: input.driverName?.trim() || "السائق",
+    specialist: input.specialistName?.trim() || "الأخصائية",
+  });
+  if (input.action === "complete_order") {
+    // "Finished" and "could not be done" are the same step and need very
+    // different follow-up, so the outcome rides in the alert itself.
+    body =
+      input.completionOutcome === "not_done"
+        ? `${input.specialistName?.trim() || "الأخصائية"} أنهت الزيارة دون تنفيذ الخدمة.`
+        : body;
+    if (input.completionNote) body = `${body}\n${input.completionNote}`;
+  }
+
+  try {
+    await sendPush({
+      teamMemberIds: watchers,
+      orderId: input.orderId,
+      kind: "order_step",
+      title: `تحديث تنفيذ — ${customer}`,
+      body,
+    });
+  } catch (cause) {
+    console.error("[inbox-notifications] order step alert failed", input.orderId, cause);
+  }
 }

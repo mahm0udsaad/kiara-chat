@@ -4,6 +4,7 @@ import {
   type FieldOrderAction,
 } from "@/lib/field-staff";
 import { notifyFieldDriverArrived, notifyNextFieldStep } from "@/lib/field-push";
+import { notifyOrderStepWatchers } from "@/lib/inbox-notifications";
 import {
   authorizeFieldStaffRequest,
   mobileData,
@@ -94,6 +95,18 @@ export async function POST(
         body?.location && typeof body.location === "object"
           ? body.location
           : null,
+      completionOutcome,
+      completionNote,
+    });
+    // The office coordinator follows every step, not only the two the field
+    // team is pushed about. Fired before the field fan-out and awaited on its
+    // own inside, so neither delivery can delay or fail the other.
+    void notifyOrderStepWatchers({
+      orderId: order.id,
+      action,
+      customerName: order.customerName,
+      driverName: order.driverName,
+      specialistName: order.specialistName,
       completionOutcome,
       completionNote,
     });
