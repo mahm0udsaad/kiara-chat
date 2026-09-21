@@ -848,7 +848,7 @@ export function useSetConversationRouting(id: string) {
   );
 }
 
-/** Owner-only: file the thread under a section, or clear it. */
+/** Whole team: file the thread under a section, or clear it. */
 export function useSetConversationSection(id: string) {
   return useConversationMutation(id, (section: ConversationSection | null) =>
     apiRequest<{ conversation: ConversationSummary }>(

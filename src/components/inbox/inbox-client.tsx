@@ -2483,29 +2483,32 @@ export function InboxClient({
                   </section>
                 </div>
 
-                {/* Owner-only desk routing. Employees never see this block —
-                    and the API rejects them even if they find the endpoint. */}
-                {isAdmin ? (
-                  <section className="flex flex-col gap-2 rounded-xl border p-4">
-                    <h3 className="flex items-center gap-1.5 text-xs font-semibold text-[var(--subtle)]">
-                      <Inbox size={13} aria-hidden="true" /> القسم والتوجيه
-                    </h3>
-                    <select
-                      value={sectionOf(selected) ?? ""}
-                      disabled={busy}
-                      onChange={(e) =>
-                        act("section", { section: e.target.value || null })
-                      }
-                      aria-label="قسم المحادثة"
-                      className="min-h-11 w-full rounded-lg border bg-white px-3 text-sm"
-                    >
-                      <option value="">بدون قسم</option>
-                      {SECTION_ORDER.map((s) => (
-                        <option key={s} value={s}>
-                          {SECTION_LABEL[s]}
-                        </option>
-                      ))}
-                    </select>
+                {/* Filing is open to the whole team: a section only sorts the
+                    thread, it never takes it out of anyone's inbox. Exclusive
+                    routing below it stays owner-only — and the API rejects
+                    employees even if they find that endpoint. */}
+                <section className="flex flex-col gap-2 rounded-xl border p-4">
+                  <h3 className="flex items-center gap-1.5 text-xs font-semibold text-[var(--subtle)]">
+                    <Inbox size={13} aria-hidden="true" />{" "}
+                    {isAdmin ? "القسم والتوجيه" : "قسم المحادثة"}
+                  </h3>
+                  <select
+                    value={sectionOf(selected) ?? ""}
+                    disabled={busy}
+                    onChange={(e) =>
+                      act("section", { section: e.target.value || null })
+                    }
+                    aria-label="قسم المحادثة"
+                    className="min-h-11 w-full rounded-lg border bg-white px-3 text-sm"
+                  >
+                    <option value="">بدون قسم</option>
+                    {SECTION_ORDER.map((s) => (
+                      <option key={s} value={s}>
+                        {SECTION_LABEL[s]}
+                      </option>
+                    ))}
+                  </select>
+                  {isAdmin ? (
                     <div className="flex items-center gap-2">
                       <Lock
                         size={16}
@@ -2531,13 +2534,15 @@ export function InboxClient({
                         ))}
                       </select>
                     </div>
+                  ) : null}
+                  {isAdmin ? (
                     <p className="text-[11px] leading-5 text-[var(--subtle)]">
                       {routedToOf(selected)
                         ? "هذه المحادثة تظهر لهذا الموظف وللمديرين فقط — لا يراها بقية الموظفين ولا تصلهم إشعاراتها."
                         : "اختاري موظفًا لتوجيه المحادثة له وحده؛ عندها تختفي عن بقية الموظفين."}
                     </p>
-                  </section>
-                ) : null}
+                  ) : null}
+                </section>
 
                 <section className="flex flex-col gap-2">
                   <h3 className="flex items-center gap-1.5 text-xs font-semibold text-[var(--subtle)]">

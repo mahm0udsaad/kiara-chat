@@ -12,7 +12,8 @@ import {
 
 /**
  * PUT /api/mobile/v1/conversations/:id/section — file the chat under
- * قسم الطلبات / قسم الردود, or clear it. Owner-only, as on the web.
+ * قسم الطلبات / قسم الردود, or clear it. Open to the whole team, as on the
+ * web: filing only sorts a thread, it never hides it from anyone.
  *
  * Body: { section: "orders" | "replies" | null }
  */
@@ -22,9 +23,6 @@ export async function PUT(
 ) {
   const auth = await authorizeMobileRequest(request);
   if (auth.response) return auth.response;
-  if (auth.session.role !== "admin") {
-    return mobileError(403, "ADMIN_REQUIRED", "تحديد القسم للمديرة فقط");
-  }
 
   const body = (await request.json().catch(() => null)) as {
     section?: unknown;
@@ -35,7 +33,12 @@ export async function PUT(
   }
 
   const { id } = await params;
-  const viewer = { isAdmin: true, teamMemberId: auth.session.teamMemberId };
+  // Not admin-forced any more: an employee may only file a thread her own
+  // inbox can see, so exclusive routing still holds.
+  const viewer = {
+    isAdmin: auth.session.role === "admin",
+    teamMemberId: auth.session.teamMemberId,
+  };
 
   try {
     const conversation = await getConversationById(id, viewer);

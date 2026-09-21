@@ -4,15 +4,14 @@ import { setConversationSection } from "@/lib/interactions";
 import { isConversationSection } from "@/lib/conversation-meta";
 import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
 
-/** Owner-only: file the chat under قسم الطلبات / قسم الردود (or clear it). */
+/** Whole team: file the chat under قسم الطلبات / قسم الردود (or clear it).
+ *  Filing only sorts a thread — it never takes it out of anyone's inbox. */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getKiaraSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (session.role !== "admin")
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
   const body = await request.json().catch(() => ({}));

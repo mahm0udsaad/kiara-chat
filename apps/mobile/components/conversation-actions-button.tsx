@@ -1155,72 +1155,72 @@ export function ConversationActionsButton({
                 </View>
               </ActionSection>
 
-              {/* Filing and exclusive routing are blunt: a routed thread
-                  disappears from every other inbox, which is also what stops it
-                  notifying anyone. Owner-only, exactly as on the web. */}
-              {isAdmin ? (
-                <>
-                  <ActionSection title="قسم المحادثة">
-                    <View
-                      style={{
-                        flexDirection: "row-reverse",
-                        flexWrap: "wrap",
-                        gap: spacing.sm,
+              {/* Filing is open to the whole team: a section only sorts the
+                  thread, it never takes it out of anyone's inbox. */}
+              <ActionSection title="قسم المحادثة">
+                <View
+                  style={{
+                    flexDirection: "row-reverse",
+                    flexWrap: "wrap",
+                    gap: spacing.sm,
+                  }}
+                >
+                  {SECTION_OPTIONS.map((option) => (
+                    <ChoiceChip
+                      key={option.label}
+                      testID={`conversation-actions-section-${option.value ?? "none"}`}
+                      label={option.label}
+                      selected={(section ?? null) === option.value}
+                      disabled={busy}
+                      onPress={() => {
+                        tapFeedback();
+                        sectionMutation.mutate(option.value);
                       }}
-                    >
-                      {SECTION_OPTIONS.map((option) => (
-                        <ChoiceChip
-                          key={option.label}
-                          testID={`conversation-actions-section-${option.value ?? "none"}`}
-                          label={option.label}
-                          selected={(section ?? null) === option.value}
-                          disabled={busy}
-                          onPress={() => {
-                            tapFeedback();
-                            sectionMutation.mutate(option.value);
-                          }}
-                        />
-                      ))}
-                    </View>
-                  </ActionSection>
+                    />
+                  ))}
+                </View>
+              </ActionSection>
 
-                  <ActionSection
-                    title="توجيه حصري"
-                    subtitle="تظهر لهذه الموظفة وللمديرة فقط"
+              {/* Exclusive routing stays owner-only: a routed thread disappears
+                  from every other inbox, which is also what stops it notifying
+                  anyone. Exactly as on the web. */}
+              {isAdmin ? (
+                <ActionSection
+                  title="توجيه حصري"
+                  subtitle="تظهر لهذه الموظفة وللمديرة فقط"
+                >
+                  <View
+                    style={{
+                      flexDirection: "row-reverse",
+                      flexWrap: "wrap",
+                      gap: spacing.sm,
+                    }}
                   >
-                    <View
-                      style={{
-                        flexDirection: "row-reverse",
-                        flexWrap: "wrap",
-                        gap: spacing.sm,
+                    <ChoiceChip
+                      testID="conversation-actions-routing-none"
+                      label="بدون توجيه"
+                      selected={!routedTo}
+                      disabled={busy}
+                      onPress={() => {
+                        tapFeedback();
+                        routing.mutate(null);
                       }}
-                    >
+                    />
+                    {agents.map((agent) => (
                       <ChoiceChip
-                        testID="conversation-actions-routing-none"
-                        label="بدون توجيه"
-                        selected={!routedTo}
+                        key={agent.id}
+                        testID={`conversation-actions-routing-${agent.id}`}
+                        label={agentName(agent)}
+                        selected={routedTo === agent.id}
                         disabled={busy}
                         onPress={() => {
                           tapFeedback();
-                          routing.mutate(null);
+                          routing.mutate(agent.id);
                         }}
                       />
-                      {agents.map((agent) => (
-                        <ChoiceChip
-                          key={agent.id}
-                          testID={`conversation-actions-routing-${agent.id}`}
-                          label={agentName(agent)}
-                          selected={routedTo === agent.id}
-                          disabled={busy}
-                          onPress={() => {
-                            tapFeedback();
-                            routing.mutate(agent.id);
-                          }}
-                        />
-                      ))}
-                    </View>
-                  </ActionSection>
-                </>
+                    ))}
+                  </View>
+                </ActionSection>
               ) : null}
 
               <NotesSection conversationId={conversationId} enabled={open} />
