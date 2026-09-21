@@ -14,7 +14,7 @@ import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { durationLabel, relativeTimeLabel } from "@/lib/format";
-import { REPORT_LOCALE, reportDecimal, reportInteger } from "@/lib/operations-report";
+import { REPORT_LOCALE, reportInteger } from "@/lib/operations-report";
 import {
   useBootstrap,
   useAnalyzeCustomerServiceAgent,
@@ -128,18 +128,6 @@ export default function CustomerServiceEmployeeReportScreen() {
 
   const employee = report.data?.employees.find((item) => item.teamMemberId === personId);
   const name = employee?.name ?? fallbackName;
-  const breakdown = employee
-    ? [
-        ["استلام المحادثات", employee.claims],
-        ["إطلاق المحادثات", employee.releases],
-        ["التحويلات", employee.transfers],
-        ["السحب من موظفة أخرى", employee.takeovers],
-        ["تغييرات الحالة", employee.statusChanges],
-        ["إجراءات الحجز", employee.bookingActions],
-        ["الملاحظات الداخلية", employee.notesAdded],
-        ["الطلبات المنشأة", employee.ordersCreated],
-      ] as const
-    : [];
 
   const handledChats = activitiesQuery.data?.pages.flatMap((page) => page.chats) ?? [];
 
@@ -215,54 +203,19 @@ export default function CustomerServiceEmployeeReportScreen() {
                 label="وقتها داخل التطبيق"
                 value={employee.activeMinutes ? durationLabel(employee.activeMinutes) : "—"}
               />
-              <Metric icon="message" label="محادثات تعاملت معها" value={employee.handledConversations} />
-              <Metric icon="paperplane.fill" label="ردود أرسلتها" value={employee.messagesSent} />
-              <Metric icon="pencil" label="إجراءات نفّذتها" value={employee.actions} />
-              <Metric icon="checkmark.circle" label="أغلقتها خلال الفترة" value={employee.resolvedConversations} />
-              <Metric
-                icon="clock"
-                label="متوسط أول رد"
-                value={
-                  employee.averageFirstResponseMinutes == null
-                    ? "—"
-                    : `${reportDecimal.format(employee.averageFirstResponseMinutes)} د`
-                }
-              />
-              <Metric icon="tray" label="مسندة الآن" value={employee.currentAssigned} />
-              <Metric icon="clock" label="جارية الآن" value={employee.currentRunning} />
-              <Metric icon="checkmark.circle" label="منتهية الآن" value={employee.currentResolved} />
+              <Metric icon="message" label="محادثات ردّت عليها" value={employee.handledConversations} />
               {/* What came of the chats. Rekaz stamps each reservation with the
-                  name of whoever entered it, so her bookings can sit beside the
+                  name of whoever entered it, so her bookings sit beside the
                   work that produced them. */}
               <Metric icon="calendar" label="حجوزات أدخلتها في ركاز" value={employee.rekazBookings ?? 0} />
-              <Metric
-                icon="sparkles"
-                label="منها من محادثاتها"
-                value={employee.bookingsFromHerChats ?? 0}
-              />
-              <Metric
-                icon="arrow.up.circle.fill"
-                label="تحويل المحادثة إلى حجز"
-                value={
-                  typeof employee.chatToBookingRate === "number"
-                    ? `${Math.round(employee.chatToBookingRate * 100)}%`
-                    : "—"
-                }
-              />
               <Metric
                 icon="banknote"
                 label="قيمة حجوزاتها"
                 value={employee.bookedRevenue ? reportInteger.format(employee.bookedRevenue) : "—"}
               />
-              <Metric
-                icon="clock"
-                label="وسيط الرد حتى الحجز"
-                value={
-                  employee.medianHoursToBooking == null
-                    ? "—"
-                    : `${reportDecimal.format(employee.medianHoursToBooking)} س`
-                }
-              />
+              <Metric icon="tray" label="مسندة عليها الآن" value={employee.currentAssigned} />
+              <Metric icon="paperplane.fill" label="ردود أرسلتها" value={employee.messagesSent} />
+              <Metric icon="checkmark.circle" label="أغلقتها خلال الفترة" value={employee.resolvedConversations} />
             </View>
 
             <Card variant="raised">
@@ -322,34 +275,6 @@ export default function CustomerServiceEmployeeReportScreen() {
                 loading={agentAnalysis.isPending}
                 onPress={() => agentAnalysis.mutate()}
               />
-            </Card>
-
-            <Card>
-              <View style={{ gap: spacing.xs }}>
-                <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>تفصيل الإجراءات</Text>
-                <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
-                  الردود منفصلة عن الإجراءات حتى لا يتضاعف الرقم.
-                </Text>
-              </View>
-              <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
-                {breakdown.map(([label, value]) => (
-                  <View
-                    key={label}
-                    style={{
-                      minWidth: "46%",
-                      flex: 1,
-                      padding: spacing.md,
-                      borderRadius: radius.md,
-                      backgroundColor: colors.surfaceSunken,
-                    }}
-                  >
-                    <Text style={{ ...type.caption, ...rtlText, color: colors.textSecondary }}>{label}</Text>
-                    <Text selectable style={{ ...type.headline, ...numeric, ...rtlText, color: colors.text }}>
-                      {reportInteger.format(value)}
-                    </Text>
-                  </View>
-                ))}
-              </View>
             </Card>
 
             <Card>
