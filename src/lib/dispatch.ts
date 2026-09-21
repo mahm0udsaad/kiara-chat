@@ -2319,7 +2319,7 @@ async function withNames(
     teamMemberNames(supabase, uniq(orders.map((o) => o.updated_by))),
     fieldProgressFor(orders.map((o) => o.id)),
     getAdminSupabaseClient().from("order_visit_services")
-      .select("id, order_id, source_id, name, minutes, assigned_specialist_id")
+      .select("id, order_id, source_id, name, minutes, starts_at, assigned_specialist_id")
       .eq("restaurant_id", KIARA_RESTAURANT_ID).in("order_id", orders.map(o => o.id)).order("starts_at"),
   ]);
 
@@ -2332,7 +2332,40 @@ async function withNames(
     detailServiceFallback = await servicesForOrder(orders[0]).catch(() => []);
   }
 
-  return orders.map((o) => {
+  // A visit that gains a service after the order was raised — the customer
+  // adds a wax to her massage — used to keep the duration it was booked with:
+  // the detail screen listed three services adding up to an hour and 45 while
+  // "مدة الجلسة" still read "ساعة و30 د", and the driver was planned around
+  // the short number. Booking and dispatch already stretch a not-yet-sent
+  // order to cover its services; the detail read now does the same, so the
+  // correction happens when staff open the order rather than only when they
+  // reach the dispatch preview. Only ever lengthens, and never touches an
+  // order already on its way — same rules as the other two call sites.
+  const stretched = new Map<string, number>();
+  if (orders.length === 1) {
+    const visit = detailServiceFallback.length
+      ? detailServiceFallback
+      : (services.data ?? [])
+          .filter((s) => s.order_id === orders[0].id)
+          .map((s) => ({
+            id: s.id as string,
+            sourceId: s.source_id,
+            name: s.name,
+            startsAt: s.starts_at as string,
+            minutes: s.minutes,
+            assignedSpecialistId:
+              (s.assigned_specialist_id as string | null) ?? null,
+          }));
+    const covered = await coverVisitServices(orders[0], visit);
+    if (covered.duration_minutes !== orders[0].duration_minutes) {
+      stretched.set(orders[0].id, covered.duration_minutes);
+    }
+  }
+
+  return orders.map((order) => {
+    const o = stretched.has(order.id)
+      ? { ...order, duration_minutes: stretched.get(order.id)! }
+      : order;
     const driver = o.driver_id ? drivers.get(o.driver_id) : undefined;
     const customer = customers.get(o.conversation_id);
     return {
