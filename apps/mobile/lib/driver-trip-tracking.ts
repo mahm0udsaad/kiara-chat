@@ -26,6 +26,10 @@ import { Platform } from "react-native";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { PunctualitySummary } from "@/types/api";
 
+/** Master switch for driver GPS telemetry. Off while the field app is being
+ *  kept as simple as possible for the team. */
+const TRIP_TRACKING_ENABLED = false;
+
 const TASK = "kiara-driver-trip";
 const TRIP_KEY = "kiara.driverTrip.v1";
 /** One fix per 20 s is plenty to catch a 125 m fence at city speeds. */
@@ -195,6 +199,16 @@ export function useDriverTripTracking(
   }, [onUpdate, orderId]);
 
   useEffect(() => {
+    // Switched off with the step-time location capture. This is telemetry —
+    // the server already judges a visit from the step taps when GPS is missing
+    // — and while the field team cannot finish visits, nothing on their screen
+    // should be asking for a position, holding a foreground service open, or
+    // raising a permission dialog over a button they are trying to press.
+    // Flip TRIP_TRACKING_ENABLED back to true to restore it.
+    if (!TRIP_TRACKING_ENABLED) {
+      void stopTripFor(orderId);
+      return;
+    }
     if (!orderId || active === null) return;
     if (!active) {
       void stopTripFor(orderId);

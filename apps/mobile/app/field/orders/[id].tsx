@@ -2,6 +2,12 @@ import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-au
 import { PLAYBACK_AUDIO_MODE } from "@/components/inbox/media-attachment";
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Animated, {
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import {
   Alert,
   Image,
@@ -24,7 +30,7 @@ import { Card, Divider } from "@/components/ui/card";
 import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Segmented } from "@/components/ui/segmented";
-import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
+import { duration as motionDuration, hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   formatPhone,
   locationLabel,
@@ -59,38 +65,159 @@ const REASON_OPTIONS: { code: LateReasonCode; label: string }[] = [
 
 function PunctualityCard({ value, onReason }: { value: PunctualitySummary; onReason: () => void }) {
   const { colors } = useTheme();
+  const reduceMotion = useReducedMotion();
+  const [railWidth, setRailWidth] = useState(0);
+  const markerOffset = useSharedValue(0);
+  const routeProgress = value.clientArrivedAt || value.serviceStartedAt
+    ? 1
+    : value.specialistPickupAt
+      ? 0.64
+      : value.specialistArrivedAt
+        ? 0.5
+        : value.driverDepartedAt
+          ? 0.22
+          : 0;
+  const currentStage = value.serviceStartedAt
+    ? "بدأت الخدمة لدى العميلة"
+    : value.clientArrivedAt
+      ? "وصل السائق إلى منزل العميلة"
+      : value.specialistPickupAt
+        ? "السائق والأخصائية في الطريق إلى العميلة"
+        : value.specialistArrivedAt
+          ? "السائق عند مقر الأخصائية"
+          : value.driverDepartedAt
+            ? "السائق في الطريق إلى الأخصائية"
+            : "بانتظار انطلاق السائق";
   const milestones = [
-    [value.specialistArrivalSource === "driver_step" ? "وصول السائق للأخصائية (حسب تأكيده)" : "وصول السائق للأخصائية", value.plannedSpecialistArrivalAt, value.specialistArrivedAt],
     ["انطلاق السائق", value.plannedDriverDepartureAt, value.driverDepartedAt],
+    [value.specialistArrivalSource === "driver_step" ? "وصول السائق للأخصائية (حسب تأكيده)" : "وصول السائق للأخصائية", value.plannedSpecialistArrivalAt, value.specialistArrivedAt],
     ["ركوب الأخصائية", null, value.specialistPickupAt],
     [value.clientArrivalSource === "service_start" ? "الوصول للعميلة (حسب بدء الخدمة)" : "الوصول للعميلة", null, value.clientArrivedAt],
     ["بدء الخدمة", null, value.serviceStartedAt],
   ] as const;
   const time = (iso: string | null) => iso ? new Intl.DateTimeFormat("ar-SA", { hour: "numeric", minute: "2-digit" }).format(new Date(iso)) : "—";
+  const distance = (metres: number | null) => metres === null
+    ? "غير متاح"
+    : metres < 1000
+      ? `${Math.round(metres)} م`
+      : `${(metres / 1000).toFixed(1)} كم`;
+  const travelTime = (seconds: number | null) => seconds === null ? "غير متاح" : `نحو ${Math.ceil(seconds / 60)} د`;
+  const markerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: -markerOffset.value }],
+  }));
+
+  useEffect(() => {
+    const target = Math.max(0, railWidth - 36) * routeProgress;
+    markerOffset.value = reduceMotion
+      ? target
+      : withTiming(target, { duration: motionDuration.slow });
+  }, [markerOffset, railWidth, reduceMotion, routeProgress]);
+
   return (
     <View style={{ gap: spacing.sm }}>
-      <SectionHeader title="الالتزام بالمواعيد" />
-      <Card style={{ gap: spacing.md }}>
-        <Badge
-          label={CLASSIFICATION_LABEL[value.classification]}
-          tone={value.classification === "on_time" ? "success" : value.requiresLateReason ? "danger" : "warning"}
-          icon={value.classification === "on_time" ? "checkmark.circle" : "clock"}
-        />
-        {value.specialistClientDistanceMetres !== null ? (
-          <Text selectable style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
-            إلى العميلة: {(value.specialistClientDistanceMetres / 1000).toFixed(1)} كم · نحو {Math.ceil((value.specialistClientDurationSeconds ?? 0) / 60)} د · {value.routeSource === "osrm" ? "مسار OSRM" : "تقدير احتياطي"}
+      <SectionHeader title="متابعة التنفيذ" />
+      <Card variant="raised" style={{ gap: spacing.lg }}>
+        <View style={{ flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: spacing.sm }}>
+          <Badge
+            label={CLASSIFICATION_LABEL[value.classification]}
+            tone={value.classification === "on_time" ? "success" : value.requiresLateReason ? "danger" : "warning"}
+            icon={value.classification === "on_time" ? "checkmark.circle" : "clock"}
+          />
+          {value.trackingActive ? (
+            <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.xs }}>
+              <View style={{ width: 8, height: 8, borderRadius: radius.full, backgroundColor: colors.success }} />
+              <Text style={{ ...type.caption, color: colors.onSuccessSoft, ...rtlText }}>تتبع GPS نشط</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={{ gap: spacing.xs }}>
+          <Text selectable style={{ ...type.headline, color: colors.text, ...rtlText }}>{currentStage}</Text>
+          <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
+            يتحرك مؤشر السائق حسب مراحل الرحلة المؤكدة
           </Text>
-        ) : null}
+        </View>
+
+        <View
+          accessible
+          accessibilityLabel={`${currentStage}. تقدم الرحلة ${Math.round(routeProgress * 100)} بالمائة`}
+          onLayout={(event) => setRailWidth(event.nativeEvent.layout.width)}
+          style={{ height: 104, position: "relative" }}
+        >
+          <View style={{ position: "absolute", top: 29, left: 18, right: 18, height: 4, borderRadius: radius.full, backgroundColor: colors.borderStrong }} />
+          <View style={{ position: "absolute", top: 29, right: 18, width: Math.max(0, railWidth - 36) * routeProgress, height: 4, borderRadius: radius.full, backgroundColor: colors.brand }} />
+
+          {[
+            { key: "start", label: "نقطة الانطلاق", position: { right: 10 }, done: Boolean(value.driverDepartedAt) },
+            { key: "specialist", label: "مقر الأخصائية", position: { left: Math.max(10, railWidth / 2 - 10) }, done: Boolean(value.specialistArrivedAt) },
+            { key: "client", label: "منزل العميلة", position: { left: 10 }, done: Boolean(value.clientArrivedAt || value.serviceStartedAt) },
+          ].map((stop) => (
+            <View key={stop.key} style={{ position: "absolute", top: 21, alignItems: "center", width: 18, ...stop.position }}>
+              <View style={{ width: 20, height: 20, borderRadius: radius.full, borderWidth: 3, borderColor: stop.done ? colors.brand : colors.borderStrong, backgroundColor: colors.surface }} />
+            </View>
+          ))}
+
+          <Animated.View
+            style={[
+              {
+                position: "absolute",
+                top: 8,
+                right: 0,
+                width: 36,
+                height: 36,
+                borderRadius: radius.full,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: colors.brand,
+                borderWidth: 3,
+                borderColor: colors.surface,
+                zIndex: 2,
+              },
+              markerStyle,
+            ]}
+          >
+            <IconSymbol name="car" size={18} color={colors.onBrand} />
+          </Animated.View>
+
+          <View style={{ position: "absolute", top: 52, left: 0, right: 0, flexDirection: "row-reverse", justifyContent: "space-between" }}>
+            <Text style={{ width: 82, ...type.caption, color: colors.textSecondary, textAlign: "right" }}>نقطة الانطلاق</Text>
+            <Text style={{ width: 82, ...type.caption, color: colors.textSecondary, textAlign: "center" }}>مقر الأخصائية</Text>
+            <Text style={{ width: 82, ...type.caption, color: colors.textSecondary, textAlign: "left" }}>منزل العميلة</Text>
+          </View>
+        </View>
+
+        <View style={{ flexDirection: "row-reverse", gap: spacing.sm }}>
+          <View style={{ flex: 1, padding: spacing.md, gap: spacing.xs, borderRadius: radius.md, backgroundColor: colors.surfaceSunken }}>
+            <Text style={{ ...type.caption, color: colors.textSecondary, ...rtlText }}>من الانطلاق إلى الأخصائية</Text>
+            <Text selectable style={{ ...type.calloutStrong, ...numeric, color: colors.text, ...rtlText }}>
+              {distance(value.driverStartDistanceMetres)} · {travelTime(value.driverStartDurationSeconds)}
+            </Text>
+          </View>
+          <View style={{ flex: 1, padding: spacing.md, gap: spacing.xs, borderRadius: radius.md, backgroundColor: colors.surfaceSunken }}>
+            <Text style={{ ...type.caption, color: colors.textSecondary, ...rtlText }}>من الأخصائية إلى العميلة</Text>
+            <Text selectable style={{ ...type.calloutStrong, ...numeric, color: colors.text, ...rtlText }}>
+              {distance(value.specialistClientDistanceMetres)} · {travelTime(value.specialistClientDurationSeconds)}
+            </Text>
+          </View>
+        </View>
+
+        <Divider />
         {milestones.map(([label, planned, actual]) => (
           <View key={label} style={{ flexDirection: "row-reverse", justifyContent: "space-between", gap: spacing.sm }}>
             <Text selectable style={{ flex: 1, ...type.footnote, color: colors.text, ...rtlText }}>{label}</Text>
-            <Text selectable style={{ ...type.caption, color: colors.textSecondary, fontVariant: ["tabular-nums"] }}>
+            <Text selectable style={{ ...type.caption, ...numeric, color: colors.textSecondary }}>
               {planned ? `مخطط ${time(planned)} · ` : ""}فعلي {time(actual)}
             </Text>
           </View>
         ))}
+        <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.xs }}>
+          <IconSymbol name="mappin.and.ellipse" size={15} color={colors.textTertiary} />
+          <Text selectable style={{ flex: 1, ...type.caption, color: colors.textTertiary, ...rtlText }}>
+            آخر قراءة GPS {value.locationFreshnessSeconds === null ? "غير متاحة" : `منذ ${value.locationFreshnessSeconds} ث`} · دقة الوصول ضمن {value.geofenceMetres} م
+          </Text>
+        </View>
         <Text selectable style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
-          حد الموقع {value.geofenceMetres} م · سماح {value.graceMinutes} د · آخر موقع {value.locationFreshnessSeconds === null ? "غير متاح" : `منذ ${value.locationFreshnessSeconds} ث`}
+          زمن المسار {value.routeSource === "osrm" ? "محسوب من الطريق" : "تقدير تقريبي"} · سماح التأخير {value.graceMinutes} د
         </Text>
         {value.lateReasonCode ? (
           <Text selectable style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
@@ -526,7 +653,9 @@ export default function FieldOrderDetailScreen() {
             {t("automaticReminder")}
           </Text>
         </View>
-        {action.error ? <InlineAlert message={t("actionFailed")} /> : null}
+        {action.error ? (
+          <InlineAlert message={(action.error as Error).message || t("actionFailed")} />
+        ) : null}
       </ScrollView>
 
       <ActionBar bottomInset={insets.bottom}>
@@ -646,7 +775,9 @@ export default function FieldOrderDetailScreen() {
                 {completionNote.length}/500
               </Text>
             </View>
-            {action.error ? <InlineAlert message={t("actionFailed")} /> : null}
+            {action.error ? (
+              <InlineAlert message={(action.error as Error).message || t("actionFailed")} />
+            ) : null}
             <PrimaryButton
               label={t("confirmCompletion")}
               icon="checkmark.circle"

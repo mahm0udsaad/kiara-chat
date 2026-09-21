@@ -73,7 +73,6 @@ import type {
   TripType,
 } from "@/types/api";
 import { publicApiRequest } from "@/lib/api";
-import { captureFieldLocation, exceptionEvidence } from "@/lib/field-location";
 
 export const queryKeys = {
   bootstrap: ["bootstrap"] as const,
@@ -1249,20 +1248,23 @@ export function useFieldOrderAction(id: string) {
       completionOutcome?: "done" | "not_done";
       completionNote?: string;
     }) => {
-      // Evidence is gathered here rather than in the screen so every caller of
-      // this mutation records a position — a step confirmed from a screen that
-      // forgot to ask is exactly the gap the audit exists to close.
-      const capture = await captureFieldLocation();
-      const location = capture.ok
-        ? capture.evidence
-        : exceptionEvidence(capture, input.exceptionReason);
+      // Location capture is switched off. It used to run before every step —
+      // a permission check, sometimes an OS dialog, then up to six seconds
+      // waiting for a fix — and the field team could not finish visits: three
+      // specialists recorded 23 started services in a row with no completion.
+      // The step itself is what the salon runs on, so it no longer waits on
+      // anything. The server accepts a step without a position and simply
+      // records no checkpoint for it.
+      //
+      // To restore it, send `location` again from `captureFieldLocation()` —
+      // but put the request behind the step rather than in front of it, so a
+      // phone that cannot fix a position can still advance the order.
       return apiRequest<{ order: FieldOrder }>(`/field/orders/${id}`, {
         method: "POST",
         body: JSON.stringify({
           action: input.action,
           expectedVersion: input.expectedVersion,
           idempotencyKey: Crypto.randomUUID(),
-          location,
           completionOutcome: input.completionOutcome,
           completionNote: input.completionNote?.trim() || undefined,
         }),
