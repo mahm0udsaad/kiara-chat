@@ -23,8 +23,21 @@ export async function POST(request: Request) {
   if (!contentSid.startsWith("HX") && !contentSid.startsWith("meta:")) {
     return mobileError(400, "BAD_TEMPLATE", "قالب غير صالح.");
   }
+  // Ticked women, when the employee picked the audience by hand. The queue
+  // already honours this list; leaving it out sends to the whole segment, so
+  // an empty array has to be refused rather than silently widened.
+  const customerIds = Array.isArray(b.customerIds)
+    ? b.customerIds.filter(
+        (id): id is string => typeof id === "string" && id.trim().length > 0,
+      )
+    : null;
+  if (Array.isArray(b.customerIds) && !customerIds?.length) {
+    return mobileError(400, "EMPTY_AUDIENCE", "اختاري عميلة واحدة على الأقل.");
+  }
   const campaign = await createCampaign({
-    contentSid, templateName, category, segment, createdBy: auth.session.email ?? null,
+    contentSid, templateName, category, segment,
+    customerIds,
+    createdBy: auth.session.email ?? null,
   });
   after(() => drainCampaigns().catch(() => undefined));
   return mobileData({ campaign });

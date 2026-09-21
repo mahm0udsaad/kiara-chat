@@ -8,13 +8,15 @@ import { radius, rtlText, spacing, type } from "@/constants/theme";
 import { successFeedback, tapFeedback } from "@/lib/haptics";
 import { useCreateCampaign } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
+import { CampaignAudience } from "@/components/campaigns/campaign-audience";
 import { SEGMENT_META, TEMPLATE_TYPE_META } from "@/components/campaigns/meta";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import type { CampaignSegment, CampaignTemplate, CampaignsResponse } from "@/types/api";
 
 /**
- * Create an استهداف: pick an approved template, pick a segment, send. The send
- * runs server-side, so this only needs to fire the request and close.
+ * Create an استهداف: pick an approved template, pick a segment, optionally tick
+ * the exact women to reach, send. The send runs server-side, so this only needs
+ * to fire the request and close.
  */
 export function NewCampaignSheet({
   open,
@@ -36,10 +38,23 @@ export function NewCampaignSheet({
   const approved = useMemo(() => templates.filter((t) => t.status === "approved"), [templates]);
   const [templateSid, setTemplateSid] = useState<string | null>(null);
   const [segment, setSegment] = useState<CampaignSegment>("all");
+  const [customerIds, setCustomerIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const template = approved.find((t) => t.sid === templateSid) ?? null;
-  const close = () => { setTemplateSid(null); setSegment("all"); setError(null); onClose(); };
+  const close = () => {
+    setTemplateSid(null);
+    setSegment("all");
+    setCustomerIds([]);
+    setError(null);
+    onClose();
+  };
+
+  // A selection belongs to the template and segment it was made under: the
+  // list behind it changes with both, so keeping it would send to names the
+  // employee can no longer see.
+  const chooseTemplate = (sid: string) => { setTemplateSid(sid); setCustomerIds([]); };
+  const chooseSegment = (key: CampaignSegment) => { setSegment(key); setCustomerIds([]); };
 
   const submit = () => {
     setError(null);
@@ -50,6 +65,9 @@ export function NewCampaignSheet({
         templateName: template.name,
         category: template.category ?? "MARKETING",
         segment,
+        // Omitted entirely when nothing is ticked, which sends to the whole
+        // segment exactly as before.
+        ...(customerIds.length ? { customerIds } : {}),
       },
       {
         onSuccess: () => { successFeedback(); close(); },
@@ -91,7 +109,7 @@ export function NewCampaignSheet({
                   {approved.map((t) => (
                     <Pressable
                       key={t.sid}
-                      onPress={() => { tapFeedback(); setTemplateSid(t.sid); }}
+                      onPress={() => { tapFeedback(); chooseTemplate(t.sid); }}
                       style={{
                         padding: spacing.lg,
                         borderRadius: radius.lg,
@@ -126,7 +144,7 @@ export function NewCampaignSheet({
                   {segments.map((s) => (
                     <Pressable
                       key={s.key}
-                      onPress={() => { tapFeedback(); setSegment(s.key); }}
+                      onPress={() => { tapFeedback(); chooseSegment(s.key); }}
                       style={{
                         flexDirection: "row-reverse",
                         alignItems: "center",
@@ -158,8 +176,24 @@ export function NewCampaignSheet({
                   ))}
                 </View>
 
+                <Text style={{ ...type.caption, color: colors.textSecondary, ...rtlText }}>
+                  العميلات
+                </Text>
+                <CampaignAudience
+                  contentSid={template?.sid ?? null}
+                  segment={segment}
+                  selected={customerIds}
+                  onChange={setCustomerIds}
+                />
+
                 <PrimaryButton
-                  label={create.isPending ? "جارٍ البدء…" : "بدء الاستهداف"}
+                  label={
+                    create.isPending
+                      ? "جارٍ البدء…"
+                      : customerIds.length
+                        ? `بدء الاستهداف لـ ${customerIds.length} عميلة`
+                        : "بدء الاستهداف للفئة كاملة"
+                  }
                   onPress={submit}
                   disabled={create.isPending || !template}
                 />

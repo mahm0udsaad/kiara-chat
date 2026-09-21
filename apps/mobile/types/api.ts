@@ -1148,6 +1148,49 @@ export type CampaignTemplate = {
 };
 export type CampaignTemplatesResponse = { templates: CampaignTemplate[]; configured: boolean };
 
+/** One woman the campaign could reach, with what the inbox knows about her. */
+export type CampaignAudienceMember = {
+  /** `customers.id` — what a hand-picked campaign is sent against. */
+  id: string;
+  phone: string;
+  name: string | null;
+  lastBookingAt: string | null;
+  nextBookingAt: string | null;
+  bookings: number;
+  /** This template's send state for her, if it has been tried. */
+  state: "sent" | "failed" | null;
+  conversationId: string | null;
+  csStatus: CsStatus | null;
+  bookingStage: BookingStage | null;
+  contactOutcome: ContactOutcome | null;
+  labelIds: string[];
+};
+
+export type CampaignAudienceResponse = {
+  members: CampaignAudienceMember[];
+  labels: { id: string; name: string; color: string }[];
+};
+
+/** The chat list's own vocabulary, narrowing who a campaign would reach. */
+export type CampaignAudienceFilters = {
+  labelId: string | null;
+  status: CsStatus | null;
+  bookingStage: BookingStage | null;
+  contactOutcome: ContactOutcome | null;
+  search: string;
+  /** Include women this template already reached. Off by default. */
+  includeSent: boolean;
+};
+
+export const EMPTY_CAMPAIGN_AUDIENCE_FILTERS: CampaignAudienceFilters = {
+  labelId: null,
+  status: null,
+  bookingStage: null,
+  contactOutcome: null,
+  search: "",
+  includeSent: false,
+};
+
 export type CampaignSegment = "all" | "week" | "month" | "upcoming" | "dormant";
 
 export type Campaign = {

@@ -170,6 +170,33 @@ export function isTemplateKey(value: string): value is TemplateKey {
   return Object.prototype.hasOwnProperty.call(TEMPLATES, value);
 }
 
+/**
+ * The registry key for a content SID, or null for a template Kiara knows
+ * nothing about.
+ *
+ * The campaign screens list whatever Twilio or Meta has approved, which is a
+ * wider set than this registry: an employee can send an approved template that
+ * has no spec here. Only the per-template send history is keyed by registry
+ * key, so callers use this to look it up and carry on without it when the
+ * lookup comes back empty.
+ */
+export function templateKeyForContentSid(sid: string): TemplateKey | null {
+  const needle = sid.trim();
+  if (!needle) return null;
+  if (isTemplateKey(needle)) return needle;
+  for (const key of Object.keys(TEMPLATES) as TemplateKey[]) {
+    if (contentSidFor(key) === needle) return key;
+    // A Meta SID carries the template name: `meta:<name>:ar`. Match on the
+    // name too, so a language variant still resolves.
+    if (needle.startsWith(META_TEMPLATE_PREFIX)) {
+      const name = needle.slice(META_TEMPLATE_PREFIX.length).split(":")[0];
+      const configured = process.env[TEMPLATES[key].metaEnv]?.trim() || TEMPLATES[key].metaName;
+      if (name && name === configured) return key;
+    }
+  }
+  return null;
+}
+
 /** What the composer lists. Only templates that can actually be sent appear. */
 export function listSendableTemplates(): (TemplateSpec & { key: TemplateKey })[] {
   return (Object.keys(TEMPLATES) as TemplateKey[])
