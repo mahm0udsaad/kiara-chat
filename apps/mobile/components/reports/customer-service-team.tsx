@@ -116,6 +116,22 @@ function EmployeeRow({
             <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
               {reportInteger.format(employee.handledConversations)} محادثة · {reportInteger.format(employee.messagesSent)} رد · {reportInteger.format(employee.actions)} إجراء
             </Text>
+            {employee.rekazBookings ? (
+              // What came of the chats. Most bookings are typed straight into
+              // Rekaz, so this is the only place the two halves of her day meet.
+              <Text
+                selectable
+                style={{ ...type.caption, ...numeric, ...rtlText, color: colors.brand }}
+              >
+                {reportInteger.format(employee.rekazBookings)} حجز في ركاز
+                {employee.bookingsFromHerChats
+                  ? ` · ${reportInteger.format(employee.bookingsFromHerChats)} من محادثاتها`
+                  : ""}
+                {typeof employee.chatToBookingRate === "number"
+                  ? ` · تحويل ${Math.round(employee.chatToBookingRate * 100)}%`
+                  : ""}
+              </Text>
+            ) : null}
             <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
               {employee.activeMinutes ? `${durationLabel(employee.activeMinutes)} داخل التطبيق · ` : ""}
               {reportInteger.format(employee.currentAssigned)} مسندة الآن
@@ -166,6 +182,16 @@ export function CustomerServiceTeam({ report }: { report: CustomerServiceReport 
           icon="clock"
           label="وقت الفريق بالتطبيق"
           value={report.totals.activeMinutes ? durationLabel(report.totals.activeMinutes) : "—"}
+        />
+        <Metric
+          icon="calendar"
+          label="حجوزات ركاز"
+          value={report.totals.rekazBookings ?? 0}
+        />
+        <Metric
+          icon="sparkles"
+          label="حجوزات من المحادثات"
+          value={report.totals.bookingsFromHerChats ?? 0}
         />
       </View>
 

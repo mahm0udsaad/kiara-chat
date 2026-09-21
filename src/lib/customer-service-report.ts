@@ -8,6 +8,11 @@ import {
   validateOperationsReportInput,
 } from "@/lib/operations-report";
 import { normalizePhone } from "@/lib/phone";
+import {
+  creditRekazBookings,
+  EMPTY_REKAZ_CREDIT,
+  type RekazBookingRow,
+} from "@/lib/rekaz-booking-credit";
 
 const PAGE_SIZE = 1_000;
 export const EMPLOYEE_ONLINE_WINDOW_SECONDS = 120;
@@ -74,6 +79,20 @@ export type CustomerServiceEmployee = {
   bookingActions: number;
   notesAdded: number;
   ordersCreated: number;
+  /**
+   * Bookings she entered into Rekaz in the period, and how many of those were
+   * for a customer she had answered herself. Most of the salon's bookings are
+   * typed straight into Rekaz rather than raised from a chat, so this is what
+   * turns the counts above into an outcome.
+   */
+  rekazBookings: number;
+  bookingsFromHerChats: number;
+  /** `bookingsFromHerChats` over the chats she handled, 0–1. */
+  chatToBookingRate: number | null;
+  /** Booked value in the period, cancelled reservations excluded. */
+  bookedRevenue: number;
+  /** Typical gap between her first reply and the booking. */
+  medianHoursToBooking: number | null;
   /** Foreground app time across the whole selected period. */
   activeMinutes: number;
   /** Distinct stretches of use across the period — a rough shift count. */
@@ -98,6 +117,9 @@ export type CustomerServiceReport = {
     messagesSent: number;
     actions: number;
     activeMinutes: number;
+    rekazBookings: number;
+    bookingsFromHerChats: number;
+    bookedRevenue: number;
   };
   last24Hours: {
     inboundMessages: number;
@@ -339,6 +361,7 @@ export async function getCustomerServiceReport(
     orders,
     last24Messages,
     last24OutcomeEvents,
+    reservations,
     specialistsResult,
     driversResult,
   ] = await Promise.all([
@@ -455,6 +478,20 @@ export async function getCustomerServiceReport(
           .order("occurred_at", { ascending: true })
           .range(from, to),
       ),
+      // Rekaz bookings for the period. `bookedAt` lives inside the payload and
+      // is not indexed, so the window is applied on `first_seen_at` — when the
+      // sync first saw the row, minutes after it was made — and the exact
+      // booking time is honoured in memory. The grace day covers a reservation
+      // created just before the window and synced just inside it.
+      pageRows<RekazBookingRow>((from, to) =>
+        admin
+          .from("rekaz_reservations")
+          .select("payload, customer_phone, first_seen_at, removed_at")
+          .eq("restaurant_id", KIARA_RESTAURANT_ID)
+          .gte("first_seen_at", new Date(rangeStartMs - 86_400_000).toISOString())
+          .order("first_seen_at", { ascending: true })
+          .range(from, to),
+      ),
       admin
         .from("specialists")
         .select("phone")
@@ -537,6 +574,11 @@ export async function getCustomerServiceReport(
       bookingActions: 0,
       notesAdded: 0,
       ordersCreated: 0,
+      rekazBookings: 0,
+      bookingsFromHerChats: 0,
+      chatToBookingRate: null,
+      bookedRevenue: 0,
+      medianHoursToBooking: null,
       activeMinutes: 0,
       sessions: 0,
       daily: [],
@@ -724,9 +766,43 @@ export async function getCustomerServiceReport(
     employee.sessions += Number(row.sessions) || 0;
   }
 
+  // Who spoke to whom first, so a booking can be traced back to the chat that
+  // produced it. Keyed by phone rather than conversation: Rekaz knows the
+  // customer's number, not our thread id.
+  const firstReplyAt = new Map<string, string>();
+  for (const row of messages) {
+    if (row.role !== "agent" || !row.sender_team_member_id) continue;
+    if (!insideWindow(row.created_at, startMinute, endMinute)) continue;
+    const conversation = conversationById.get(row.conversation_id);
+    if (!conversation) continue;
+    const phone = normalizePhone(conversation.customer_phone);
+    if (!phone) continue;
+    const key = `${row.sender_team_member_id}:${phone}`;
+    const seen = firstReplyAt.get(key);
+    if (!seen || row.created_at < seen) firstReplyAt.set(key, row.created_at);
+  }
+
+  const bookingCredits = creditRekazBookings({
+    reservations,
+    namesByMemberId: new Map(members.map((member) => [member.id, member.full_name])),
+    firstReplyAt,
+    fromMs: rangeStartMs,
+    toMs: rangeEndMs,
+  });
+
   for (const employee of employees.values()) {
+    const credit = bookingCredits.get(employee.teamMemberId) ?? EMPTY_REKAZ_CREDIT;
+    employee.rekazBookings = credit.bookings;
+    employee.bookingsFromHerChats = credit.bookingsFromHerChats;
+    employee.bookedRevenue = credit.bookedRevenue;
+    employee.medianHoursToBooking = credit.medianHoursToBooking;
     employee.activeMinutes = Math.round(employee.activeMinutes);
     employee.handledConversations = employee.handledIds.size;
+    // Conversion is against the chats she actually worked, so a quiet day with
+    // three chats and two bookings reads as the good day it was.
+    employee.chatToBookingRate = employee.handledIds.size
+      ? Math.min(1, employee.bookingsFromHerChats / employee.handledIds.size)
+      : null;
     employee.resolvedConversations = employee.resolvedIds.size;
     employee.averageFirstResponseMinutes = employee.responseSamples
       ? Math.round((employee.responseMinutesTotal / employee.responseSamples) * 10) / 10
@@ -778,6 +854,12 @@ export async function getCustomerServiceReport(
       messagesSent: output.reduce((sum, employee) => sum + employee.messagesSent, 0),
       actions: output.reduce((sum, employee) => sum + employee.actions, 0),
       activeMinutes: output.reduce((sum, employee) => sum + employee.activeMinutes, 0),
+      rekazBookings: output.reduce((sum, employee) => sum + employee.rekazBookings, 0),
+      bookingsFromHerChats: output.reduce(
+        (sum, employee) => sum + employee.bookingsFromHerChats,
+        0,
+      ),
+      bookedRevenue: output.reduce((sum, employee) => sum + employee.bookedRevenue, 0),
     },
     last24Hours: {
       inboundMessages: customerLast24Messages.length,

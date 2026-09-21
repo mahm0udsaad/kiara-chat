@@ -231,6 +231,38 @@ export default function CustomerServiceEmployeeReportScreen() {
               <Metric icon="tray" label="مسندة الآن" value={employee.currentAssigned} />
               <Metric icon="clock" label="جارية الآن" value={employee.currentRunning} />
               <Metric icon="checkmark.circle" label="منتهية الآن" value={employee.currentResolved} />
+              {/* What came of the chats. Rekaz stamps each reservation with the
+                  name of whoever entered it, so her bookings can sit beside the
+                  work that produced them. */}
+              <Metric icon="calendar" label="حجوزات أدخلتها في ركاز" value={employee.rekazBookings ?? 0} />
+              <Metric
+                icon="sparkles"
+                label="منها من محادثاتها"
+                value={employee.bookingsFromHerChats ?? 0}
+              />
+              <Metric
+                icon="arrow.up.circle.fill"
+                label="تحويل المحادثة إلى حجز"
+                value={
+                  typeof employee.chatToBookingRate === "number"
+                    ? `${Math.round(employee.chatToBookingRate * 100)}%`
+                    : "—"
+                }
+              />
+              <Metric
+                icon="banknote"
+                label="قيمة حجوزاتها"
+                value={employee.bookedRevenue ? reportInteger.format(employee.bookedRevenue) : "—"}
+              />
+              <Metric
+                icon="clock"
+                label="وسيط الرد حتى الحجز"
+                value={
+                  employee.medianHoursToBooking == null
+                    ? "—"
+                    : `${reportDecimal.format(employee.medianHoursToBooking)} س`
+                }
+              />
             </View>
 
             <Card variant="raised">

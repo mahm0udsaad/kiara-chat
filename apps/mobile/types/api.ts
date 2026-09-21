@@ -665,6 +665,16 @@ export type CustomerServiceEmployee = {
   bookingActions: number;
   notesAdded: number;
   ordersCreated: number;
+  /**
+   * Bookings she entered into Rekaz, and how many were for a customer she had
+   * answered herself. Absent on reports served before these existed.
+   */
+  rekazBookings?: number;
+  bookingsFromHerChats?: number;
+  /** `bookingsFromHerChats` over the chats she handled, 0–1. */
+  chatToBookingRate?: number | null;
+  bookedRevenue?: number;
+  medianHoursToBooking?: number | null;
   /** Foreground app time across the period. Absent on older report responses. */
   activeMinutes?: number;
   sessions?: number;
@@ -718,6 +728,10 @@ export type CustomerServiceReport = {
     actions: number;
     /** Team app time across the period. Absent on older report responses. */
     activeMinutes?: number;
+    /** Rekaz bookings the team entered. Absent on older report responses. */
+    rekazBookings?: number;
+    bookingsFromHerChats?: number;
+    bookedRevenue?: number;
   };
   last24Hours?: {
     inboundMessages: number;
