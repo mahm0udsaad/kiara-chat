@@ -15,6 +15,7 @@
  * (`metadata.last_booking_at` / `next_booking_at`) so a segment is a cheap read
  * rather than a join on every request.
  */
+import { normalizePhone } from "@/lib/phone";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import {
@@ -524,6 +525,11 @@ export async function sendBroadcastBatch(
  * ------------------------------------------------------------------ */
 
 export interface AudienceMember {
+  /**
+   * `customers.id`. The web batch send addresses women by phone, but a queued
+   * campaign stores `customerIds`, so the picker has to hand back ids too.
+   */
+  id: string;
   phone: string;
   name: string | null;
   lastBookingAt: string | null;
@@ -614,8 +620,13 @@ async function conversationIndex(): Promise<
   return index;
 }
 
+/**
+ * `templateKey` may be null for an approved template Kiara has no spec for:
+ * then nobody carries a send state for it, and `includeSent` has nothing to
+ * hide.
+ */
 export async function listAudience(
-  templateKey: TemplateKey,
+  templateKey: TemplateKey | null,
   segment: Segment,
   filters: AudienceFilters = {},
 ): Promise<{ members: AudienceMember[]; labels: { id: string; name: string; color: string }[] }> {
@@ -631,13 +642,17 @@ export async function listAudience(
   ]);
 
   const search = (filters.search ?? "").trim().toLocaleLowerCase("ar");
-  const searchDigits = digits(filters.search ?? "");
+  // Numbers are stored E.164 (+966558618706) and typed nationally (0558618706),
+  // so a raw digit-substring match found nothing for the way staff actually
+  // type a number — the trunk zero is never in the stored value. Fold the
+  // needle the way the inbox search folds it, and compare national tails.
+  const searchDigits = normalizePhone(filters.search ?? "");
   const members: AudienceMember[] = [];
   for (const row of all) {
     if (!inSegment(row, segment)) continue;
     const phone = (row.phone_number || "").trim();
     if (!phone) continue;
-    const mark = marks(row)[templateKey];
+    const mark = templateKey ? marks(row)[templateKey] : undefined;
     if (mark?.status === "sent" && !filters.includeSent) continue;
 
     const conversation = conversations.get(phoneKey(phone)) ?? null;
@@ -649,11 +664,12 @@ export async function listAudience(
       const name = (row.full_name ?? "").toLocaleLowerCase("ar");
       const matches =
         (search && name.includes(search)) ||
-        (searchDigits && digits(phone).includes(searchDigits));
+        (searchDigits && phoneKey(phone).includes(searchDigits));
       if (!matches) continue;
     }
 
     members.push({
+      id: row.id,
       phone,
       name: row.full_name,
       lastBookingAt: lastBooking(row),

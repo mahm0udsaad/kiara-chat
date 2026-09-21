@@ -51,6 +51,8 @@ import type {
   FieldOrderListView,
   InternalNote,
   MessageTemplatesResponse,
+  CampaignAudienceFilters,
+  CampaignAudienceResponse,
   CampaignTemplatesResponse,
   CampaignsResponse,
   OrderDetailResponse,
@@ -1516,6 +1518,49 @@ export function useCampaigns(enabled = true) {
   });
 }
 
+/**
+ * Who this campaign would reach, narrowed the way the chat list is read.
+ *
+ * Kept off until a template is chosen: the send state that hides women this
+ * template already reached is per template, so a list built before one is
+ * picked would be the wrong list.
+ */
+export function useCampaignAudience(input: {
+  contentSid: string | null;
+  segment: string;
+  filters: CampaignAudienceFilters;
+  enabled?: boolean;
+}) {
+  const { contentSid, segment, filters } = input;
+  return useQuery({
+    queryKey: [
+      "campaign-audience",
+      contentSid ?? "",
+      segment,
+      filters.labelId ?? "",
+      filters.status ?? "",
+      filters.bookingStage ?? "",
+      filters.contactOutcome ?? "",
+      filters.search,
+      filters.includeSent ? "1" : "",
+    ] as const,
+    queryFn: () => {
+      const params = new URLSearchParams({ contentSid: contentSid ?? "", segment });
+      if (filters.labelId) params.set("labelId", filters.labelId);
+      if (filters.status) params.set("status", filters.status);
+      if (filters.bookingStage) params.set("bookingStage", filters.bookingStage);
+      if (filters.contactOutcome) params.set("contactOutcome", filters.contactOutcome);
+      if (filters.search.trim()) params.set("search", filters.search.trim());
+      if (filters.includeSent) params.set("includeSent", "1");
+      return apiRequest<CampaignAudienceResponse>(`/campaigns/audience?${params}`);
+    },
+    enabled: Boolean(contentSid) && input.enabled !== false,
+    // The whole customer list is scanned server-side; it does not change from
+    // one second to the next, and the sheet re-asks on every filter change.
+    staleTime: 60_000,
+  });
+}
+
 export function useCreateCampaign() {
   const qc = useQueryClient();
   return useMutation({
@@ -1524,6 +1569,8 @@ export function useCreateCampaign() {
       templateName: string;
       category: string;
       segment: string;
+      /** Ticked women. Omitted entirely when the whole segment is the target. */
+      customerIds?: string[];
     }) =>
       apiRequest<{ campaign: unknown }>("/campaigns", {
         method: "POST",
