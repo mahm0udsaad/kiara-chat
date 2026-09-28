@@ -40,6 +40,8 @@ export type OperationsEvent = {
   status: string;
   completed: boolean;
   completedAt: string | null;
+  /** Manually recorded driver trip fee for the operational order. */
+  tripCost: number | null;
   punctualityClassification: string | null;
   lateReasonCode: string | null;
   lateReasonNote: string | null;
@@ -91,6 +93,7 @@ type OrderRow = {
   duration_minutes: number;
   customer_phone: string;
   rekaz_source_id: string | null;
+  price: number | null;
 };
 type ProgressRow = {
   order_id: string;
@@ -285,7 +288,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         .lte("arrival_at", rangeEnd),
       admin
         .from("driver_orders")
-        .select("id, sent_at, specialist_id, driver_id, arrival_at, duration_minutes, customer_phone, rekaz_source_id")
+        .select("id, sent_at, specialist_id, driver_id, arrival_at, duration_minutes, customer_phone, rekaz_source_id, price")
         .eq("restaurant_id", KIARA_RESTAURANT_ID)
         .gte("arrival_at", rangeStart)
         .lte("arrival_at", rangeEnd),
@@ -451,6 +454,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         status: reservation.status || row.status,
         completed,
         completedAt,
+        tripCost: linkedOrder?.price == null ? null : Number(linkedOrder.price),
         ...punctualityFields(linkedOrder?.id ?? null),
       });
     }
@@ -476,6 +480,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         status: completedAt ? "Done" : "Scheduled",
         completed: Boolean(completedAt),
         completedAt,
+        tripCost: order.price == null ? null : Number(order.price),
         ...punctualityFields(order.id),
       });
     }
@@ -514,6 +519,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
       status: completedAt ? "Done" : "Scheduled",
       completed: Boolean(completedAt),
       completedAt,
+      tripCost: order.price == null ? null : Number(order.price),
       ...punctualityFields(order.id),
     });
   }
