@@ -22,6 +22,7 @@ export type FieldAuditAction =
   | "confirm_ride"
   | "driver_arrived"
   | "confirm_pickup"
+  | "driver_client_arrived"
   | "start_service"
   | "complete_order"
   | "driver_return";
@@ -30,6 +31,7 @@ const ACTION_LABEL: Record<FieldAuditAction, string> = {
   confirm_ride: "تأكيد الرحلة والانطلاق",
   driver_arrived: "وصول السائق لمقر الأخصائية",
   confirm_pickup: "ركوب الأخصائية مع السائق",
+  driver_client_arrived: "وصول السائق إلى منزل العميلة",
   start_service: "بدء الخدمة",
   complete_order: "إنهاء الخدمة",
   driver_return: "عودة السائق",
@@ -40,6 +42,7 @@ const ACTION_ROLE: Record<FieldAuditAction, "driver" | "specialist"> = {
   confirm_ride: "driver",
   driver_arrived: "driver",
   confirm_pickup: "specialist",
+  driver_client_arrived: "driver",
   start_service: "specialist",
   complete_order: "specialist",
   driver_return: "driver",
@@ -109,6 +112,7 @@ const STEP_AT: Record<FieldAuditAction, (p: FieldOrderProgressState) => string |
   confirm_ride: (p) => p.driverConfirmedAt,
   driver_arrived: (p) => p.driverArrivedAt,
   confirm_pickup: (p) => p.specialistPickupAt,
+  driver_client_arrived: (p) => p.driverClientArrivedAt,
   start_service: (p) => p.serviceStartedAt,
   complete_order: (p) => p.completedAt,
   driver_return: (p) => p.driverReturnedAt,
@@ -154,6 +158,8 @@ export async function getFieldAudit(orderId: string): Promise<FieldAudit | null>
     driverConfirmedAt: (row.driver_confirmed_at as string | null) ?? null,
     driverArrivedAt: (row.driver_arrived_at as string | null) ?? null,
     specialistPickupAt: (row.specialist_pickup_at as string | null) ?? null,
+    driverClientArrivedAt:
+      (row.driver_client_arrived_at as string | null) ?? null,
     serviceStartedAt: (row.service_started_at as string | null) ?? null,
     completedAt: (row.completed_at as string | null) ?? null,
     completionOutcome:

@@ -149,13 +149,15 @@ export interface FieldSessionState {
  * Distinct from {@link FieldSessionState}, which is the older two-timestamp
  * mirror kept on the conversation for the magic-link flow. This is the real
  * chain the driver and specialist advance through in the app:
- *   confirm_ride → driver_arrived → confirm_pickup → start_service →
- *   complete_order → driver_return.
+ *   confirm_ride → driver_arrived → confirm_pickup →
+ *   driver_client_arrived → start_service → complete_order →
+ *   driver_return.
  */
 export interface FieldOrderProgressState {
   driverConfirmedAt: string | null;
   driverArrivedAt: string | null;
   specialistPickupAt: string | null;
+  driverClientArrivedAt: string | null;
   serviceStartedAt: string | null;
   completedAt: string | null;
   /** What the specialist reported when closing the service. */

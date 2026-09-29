@@ -19,6 +19,7 @@ const ACTIONS = new Set<FieldOrderAction>([
   "confirm_ride",
   "driver_arrived",
   "confirm_pickup",
+  "driver_client_arrived",
   "start_service",
   "complete_order",
   "driver_return",

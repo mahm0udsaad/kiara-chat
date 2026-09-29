@@ -8,8 +8,9 @@ import type {
 /**
  * Reading an order's execution the way the office needs it.
  *
- * The field app advances a six-link chain — confirm_ride → driver_arrived →
- * confirm_pickup → start_service → complete_order → driver_return. The office screens only
+ * The field app advances a seven-link chain — confirm_ride → driver_arrived →
+ * confirm_pickup → driver_client_arrived → start_service → complete_order →
+ * driver_return. The office screens only
  * ever ask two things of that chain: how far has it got, and who is holding it
  * up. Both answers live here so the orders list, the order detail and the
  * status screen never disagree about a visit.
@@ -24,6 +25,7 @@ export type ExecutionStepId =
   | "confirm_ride"
   | "driver_arrived"
   | "confirm_pickup"
+  | "driver_client_arrived"
   | "start_service"
   | "complete_order"
   | "driver_return";
@@ -46,6 +48,7 @@ export type ExecutionStage =
   | "driver_on_the_way"
   | "driver_waiting"
   | "on_the_way_to_customer"
+  | "at_customer"
   | "service_running"
   | "awaiting_driver_return"
   | "completed";
@@ -74,6 +77,7 @@ const STAGE_LABEL: Record<ExecutionStage, string> = {
   driver_on_the_way: "السائق في الطريق للأخصائية",
   driver_waiting: "السائق ينتظر الأخصائية",
   on_the_way_to_customer: "في الطريق إلى العميلة",
+  at_customer: "وصل الفريق إلى العميلة",
   service_running: "الجلسة جارية",
   awaiting_driver_return: "بانتظار عودة السائق",
   completed: "اكتمل الطلب",
@@ -85,6 +89,7 @@ const STAGE_TONE: Record<ExecutionStage, ExecutionState["tone"]> = {
   driver_on_the_way: "info",
   driver_waiting: "warning",
   on_the_way_to_customer: "info",
+  at_customer: "info",
   service_running: "brand",
   awaiting_driver_return: "warning",
   completed: "success",
@@ -95,6 +100,7 @@ const STEP_LABEL: Record<ExecutionStepId, string> = {
   confirm_ride: "تأكيد الرحلة",
   driver_arrived: "الوصول للأخصائية",
   confirm_pickup: "ركوب الأخصائية",
+  driver_client_arrived: "الوصول للعميلة",
   start_service: "بدء الخدمة",
   complete_order: "إنهاء الخدمة",
   driver_return: "عودة السائق",
@@ -104,6 +110,7 @@ const STEP_ACTION_LABEL: Record<ExecutionStepId, string> = {
   confirm_ride: "تأكيد الرحلة والانطلاق",
   driver_arrived: "الوصول لمقر الأخصائية",
   confirm_pickup: "ركوب الأخصائية مع السائق",
+  driver_client_arrived: "تأكيد الوصول إلى منزل العميلة",
   start_service: "بدء الخدمة عند العميلة",
   complete_order: "إنهاء الخدمة والمغادرة",
   driver_return: "إنهاء الرحلة والعودة",
@@ -113,6 +120,7 @@ const STEP_OWNER: Record<ExecutionStepId, FieldSessionRole> = {
   confirm_ride: "driver",
   driver_arrived: "driver",
   confirm_pickup: "specialist",
+  driver_client_arrived: "driver",
   start_service: "specialist",
   complete_order: "specialist",
   driver_return: "driver",
@@ -122,6 +130,7 @@ const STEP_ORDER: ExecutionStepId[] = [
   "confirm_ride",
   "driver_arrived",
   "confirm_pickup",
+  "driver_client_arrived",
   "start_service",
   "complete_order",
   "driver_return",
@@ -145,6 +154,7 @@ function progressFromSessions(
     driverConfirmedAt: driver?.started_at ?? null,
     driverArrivedAt: specialist?.started_at ?? null,
     specialistPickupAt: specialist?.started_at ?? null,
+    driverClientArrivedAt: specialist?.started_at ?? null,
     serviceStartedAt: specialist?.started_at ?? null,
     completedAt: specialist?.completed_at ?? null,
     completionOutcome: specialist?.completed_at ? "done" : null,
@@ -172,6 +182,8 @@ function stampOf(
       return progress.driverArrivedAt;
     case "confirm_pickup":
       return progress.specialistPickupAt;
+    case "driver_client_arrived":
+      return progress.driverClientArrivedAt;
     case "start_service":
       return progress.serviceStartedAt;
     case "complete_order":
@@ -193,8 +205,10 @@ function stageOf(
       return "driver_on_the_way";
     case "confirm_pickup":
       return "driver_waiting";
-    case "start_service":
+    case "driver_client_arrived":
       return "on_the_way_to_customer";
+    case "start_service":
+      return "at_customer";
     case "complete_order":
       return "service_running";
     case "driver_return":

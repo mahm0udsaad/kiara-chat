@@ -74,7 +74,7 @@ type Settings = typeof DEFAULTS;
 export const TRACKING_STOP_CODES = ["TRIP_NOT_ACTIVE", "TRACKING_NOT_ENABLED"] as const;
 
 const PROGRESS_COLS =
-  "driver_confirmed_at, driver_arrived_at, specialist_pickup_at, service_started_at, completed_at";
+  "driver_confirmed_at, driver_arrived_at, specialist_pickup_at, driver_client_arrived_at, service_started_at, completed_at";
 
 async function routeBetween(a: Point, b: Point, speedKph: number): Promise<RouteEstimate> {
   const base = process.env.OSRM_BASE_URL?.replace(/\/$/, "");
@@ -278,10 +278,17 @@ function evidenceOf(plan: Row, progress: Row | null) {
   const specialistArrivalSource: SpecialistArrivalSource | null = plan.specialist_geofence_at
     ? "geofence"
     : progress?.driver_arrived_at ? "driver_step" : null;
-  const clientArrivedAt = (plan.client_geofence_at ?? progress?.service_started_at ?? null) as string | null;
+  const clientArrivedAt = (
+    plan.client_geofence_at ??
+    progress?.driver_client_arrived_at ??
+    progress?.service_started_at ??
+    null
+  ) as string | null;
   const clientArrivalSource: ClientArrivalSource | null = plan.client_geofence_at
     ? "geofence"
-    : progress?.service_started_at ? "service_start" : null;
+    : progress?.driver_client_arrived_at
+      ? "driver_step"
+      : progress?.service_started_at ? "service_start" : null;
   return { specialistArrivedAt, specialistArrivalSource, clientArrivedAt, clientArrivalSource };
 }
 
@@ -354,7 +361,7 @@ async function orderAndProgress(orderId: string) {
 function trackingActive(plan: Row, progress: Row | null, status: string): boolean {
   return status === "sent" &&
     Boolean(progress?.driver_confirmed_at) &&
-    !progress?.service_started_at &&
+    !progress?.driver_client_arrived_at &&
     !progress?.completed_at &&
     !plan.client_geofence_at;
 }

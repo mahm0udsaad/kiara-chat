@@ -142,13 +142,24 @@ begin
     'a stale progress version is rejected'
   );
 
+  -- Arrival at the specialist is a required driver checkpoint before pickup.
+  perform public.kiara_command_field_order_step(
+    '2ba8f6c8-aff9-4147-8f13-cdcb732de698'::uuid,
+    'e0000000-0000-0000-0000-000000000001'::uuid,
+    2, gen_random_uuid(),
+    '44444444-4444-4444-4444-444444444444'::uuid,
+    'f0000000-0000-0000-0000-000000000001'::uuid,
+    'driver', 'c0000000-0000-0000-0000-000000000001'::uuid,
+    'driver_arrived', null
+  );
+
   -- A manual location exception must carry a reason; an empty one is refused
   -- by the evidence constraint rather than stored as unexplained absence.
   perform kiara_test.raises(
     $q$select public.kiara_command_field_order_step(
         '2ba8f6c8-aff9-4147-8f13-cdcb732de698'::uuid,
         'e0000000-0000-0000-0000-000000000001'::uuid,
-        2, gen_random_uuid(),
+        3, gen_random_uuid(),
         '55555555-5555-5555-5555-555555555555'::uuid,
         'f0000000-0000-0000-0000-000000000002'::uuid,
         'specialist', 'b0000000-0000-0000-0000-000000000001'::uuid,
@@ -161,7 +172,7 @@ begin
   v_result := public.kiara_command_field_order_step(
     '2ba8f6c8-aff9-4147-8f13-cdcb732de698'::uuid,
     'e0000000-0000-0000-0000-000000000001'::uuid,
-    2, gen_random_uuid(),
+    3, gen_random_uuid(),
     '55555555-5555-5555-5555-555555555555'::uuid,
     'f0000000-0000-0000-0000-000000000002'::uuid,
     'specialist', 'b0000000-0000-0000-0000-000000000001'::uuid,

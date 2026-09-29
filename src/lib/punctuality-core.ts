@@ -7,7 +7,7 @@ export type PunctualityClassification =
   | "uncertain";
 
 export type SpecialistArrivalSource = "geofence" | "driver_step";
-export type ClientArrivalSource = "geofence" | "service_start";
+export type ClientArrivalSource = "geofence" | "driver_step" | "service_start";
 
 export type Point = { lat: number; lng: number };
 export type RouteEstimate = {

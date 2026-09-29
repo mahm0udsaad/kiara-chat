@@ -158,6 +158,7 @@ export async function apiRequest<T>(
       signal: controller.signal,
       headers: {
         Accept: "application/json",
+        "X-Kiara-Field-Workflow": "2",
         ...(requestInit.body ? { "Content-Type": "application/json" } : {}),
         ...requestInit.headers,
         Authorization: `Bearer ${accessToken}`,

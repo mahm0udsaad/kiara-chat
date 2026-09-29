@@ -3,8 +3,8 @@
 -- exercised while specialist_pickup_at is still null.
 --
 -- Invariants proven here:
---   * driver_arrived is a NON-blocking side event: driver-only, valid only
---     between the ride confirmation and the pickup, and never a linear step.
+--   * driver_arrived gates specialist pickup.
+--   * driver_client_arrived is driver-only, follows pickup, and gates service.
 --   * driver_return is the new terminal step: driver-only, and only after the
 --     specialist has finished the service.
 
@@ -43,7 +43,7 @@ begin
         %L, %L, 1, gen_random_uuid(), %L, %L, 'driver', %L, 'driver_arrived', null)$q$,
       v_tenant, v_order, v_driver_user, v_driver_acct, v_driver_roster),
     'FIELD_ACTION_OUT_OF_SEQUENCE',
-    'the arrival ping cannot precede the ride confirmation'
+    'arrival at the specialist cannot precede the ride confirmation'
   );
 
   -- Driver confirms departure.
@@ -72,10 +72,10 @@ begin
   );
   perform kiara_test.ok(
     (select specialist_pickup_at from public.field_order_progress where order_id = v_order) is null,
-    'the arrival ping does not advance the specialist pickup (non-blocking)'
+    'driver arrival does not impersonate the specialist pickup'
   );
 
-  -- The specialist can still confirm pickup normally after the ping.
+  -- The specialist can confirm pickup after the driver arrives.
   select version into v_ver from public.field_order_progress where order_id = v_order;
   perform public.kiara_command_field_order_step(
     v_tenant, v_order, v_ver, gen_random_uuid(), v_spec_user, v_spec_acct,
@@ -91,6 +91,31 @@ begin
     'the arrival ping is refused once the specialist is picked up'
   );
 
+  -- The new client-arrival checkpoint belongs to the driver.
+  select version into v_ver from public.field_order_progress where order_id = v_order;
+  perform kiara_test.raises(
+    format($q$select public.kiara_command_field_order_step(
+        %L, %L, %s, gen_random_uuid(), %L, %L, 'specialist', %L, 'driver_client_arrived', null)$q$,
+      v_tenant, v_order, v_ver, v_spec_user, v_spec_acct, v_spec_roster),
+    'FIELD_ACTION_FORBIDDEN',
+    'a specialist cannot confirm driver arrival at the customer'
+  );
+  perform kiara_test.raises(
+    format($q$select public.kiara_command_field_order_step(
+        %L, %L, %s, gen_random_uuid(), %L, %L, 'specialist', %L, 'start_service', null)$q$,
+      v_tenant, v_order, v_ver, v_spec_user, v_spec_acct, v_spec_roster),
+    'FIELD_ACTION_OUT_OF_SEQUENCE',
+    'service cannot start before the driver confirms customer arrival'
+  );
+  perform public.kiara_command_field_order_step(
+    v_tenant, v_order, v_ver, gen_random_uuid(), v_driver_user, v_driver_acct,
+    'driver', v_driver_roster, 'driver_client_arrived', null);
+  perform kiara_test.ok(
+    (select driver_client_arrived_at from public.field_order_progress where order_id = v_order) is not null,
+    'driver_client_arrived_at is recorded'
+  );
+
+  select version into v_ver from public.field_order_progress where order_id = v_order;
   perform public.kiara_command_field_order_step(
     v_tenant, v_order, v_ver, gen_random_uuid(), v_spec_user, v_spec_acct,
     'specialist', v_spec_roster, 'start_service', null);
@@ -143,12 +168,5 @@ begin
     'a fully-returned order accepts no further steps'
   );
 
-  -- And the original order 0001, whose pickup happened in 40_field_steps.sql
-  -- with no arrival ping, confirms the ping was never a prerequisite.
-  perform kiara_test.ok(
-    (select driver_arrived_at from public.field_order_progress
-      where order_id = 'e0000000-0000-0000-0000-000000000001') is null,
-    'pickup on order 0001 advanced without any arrival ping'
-  );
 end
 $$;

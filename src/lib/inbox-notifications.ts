@@ -556,7 +556,7 @@ function orderStepWatcherIds(): string[] {
     .filter(Boolean);
 }
 
-/** The six steps, in the words the office uses for them. */
+/** The seven steps, in the words the office uses for them. */
 const ORDER_STEP_COPY: Record<
   FieldOrderAction,
   (input: { driver: string; specialist: string }) => string
@@ -566,6 +566,8 @@ const ORDER_STEP_COPY: Record<
     `${driver} وصل إلى مقر ${specialist}.`,
   confirm_pickup: ({ specialist }) =>
     `${specialist} ركبت مع السائق — في الطريق إلى العميلة.`,
+  driver_client_arrived: ({ driver }) =>
+    `${driver} وصل إلى منزل العميلة.`,
   start_service: ({ specialist }) => `${specialist} بدأت الخدمة عند العميلة.`,
   complete_order: ({ specialist }) => `${specialist} أنهت الخدمة.`,
   driver_return: ({ driver }) => `${driver} أنهى الرحلة وعاد.`,

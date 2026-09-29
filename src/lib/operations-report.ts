@@ -100,6 +100,7 @@ type ProgressRow = {
   driver_confirmed_at: string | null;
   driver_arrived_at: string | null;
   specialist_pickup_at: string | null;
+  driver_client_arrived_at: string | null;
   service_started_at: string | null;
   completed_at: string | null;
   driver_returned_at: string | null;
@@ -295,7 +296,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
       admin
         .from("field_order_progress")
         .select(
-          "order_id, driver_confirmed_at, driver_arrived_at, specialist_pickup_at, service_started_at, completed_at, driver_returned_at",
+          "order_id, driver_confirmed_at, driver_arrived_at, specialist_pickup_at, driver_client_arrived_at, service_started_at, completed_at, driver_returned_at",
         )
         .eq("restaurant_id", KIARA_RESTAURANT_ID),
       admin
@@ -371,6 +372,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
     ["driver_confirmed_at", "confirm_ride"],
     ["driver_arrived_at", "driver_arrived"],
     ["specialist_pickup_at", "confirm_pickup"],
+    ["driver_client_arrived_at", "driver_client_arrived"],
     ["service_started_at", "start_service"],
     ["completed_at", "complete_order"],
     ["driver_returned_at", "driver_return"],
@@ -399,6 +401,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
             driverConfirmedAt: row.driver_confirmed_at,
             driverArrivedAt: row.driver_arrived_at,
             specialistPickupAt: row.specialist_pickup_at,
+            driverClientArrivedAt: row.driver_client_arrived_at,
             serviceStartedAt: row.service_started_at,
             completedAt: row.completed_at,
             completionOutcome: row.completed_at ? "done" : null,

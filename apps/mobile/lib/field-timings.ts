@@ -13,7 +13,8 @@ export type FieldLegKey =
   | "dispatch_to_confirm"
   | "confirm_to_arrival"
   | "arrival_to_pickup"
-  | "pickup_to_service"
+  | "pickup_to_client"
+  | "client_to_service"
   | "service"
   | "service_to_return";
 
@@ -48,9 +49,15 @@ const LEGS: {
     to: (p) => p.specialistPickupAt,
   },
   {
-    key: "pickup_to_service",
-    label: "من الركوب حتى بدء الخدمة",
+    key: "pickup_to_client",
+    label: "من الركوب حتى الوصول للعميلة",
     from: (p) => p.specialistPickupAt,
+    to: (p) => p.driverClientArrivedAt,
+  },
+  {
+    key: "client_to_service",
+    label: "من الوصول للعميلة حتى بدء الخدمة",
+    from: (p) => p.driverClientArrivedAt,
     to: (p) => p.serviceStartedAt,
   },
   {

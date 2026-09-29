@@ -180,6 +180,8 @@ export type ConversationFilters = {
   bookingStage: BookingStage | null;
   /** Who has dealt with the thread so far — المتابعة. */
   handling: ConversationHandling | null;
+  /** Riyadh calendar day (YYYY-MM-DD) of the thread's latest activity. */
+  date: string | null;
 };
 
 /**
@@ -189,8 +191,8 @@ export type ConversationFilters = {
  */
 export type ConversationHandling = "whatsapp" | "unread" | "read_unclaimed";
 
-/** قسم الطلبات / قسم الردود — how the owner files a thread. */
-export type ConversationSection = "orders" | "replies";
+/** قسم الطلبات / قسم الردود / قسم الشكاوى — how the team files a thread. */
+export type ConversationSection = "orders" | "replies" | "complaints";
 
 export type InternalNote = {
   id: string;
@@ -361,6 +363,12 @@ export type OrderDetailResponse = {
   order: OrderSummary;
 };
 
+export type OrderCustomerReminder = {
+  body: string;
+  status: "ready" | "sending" | "sent" | "failed" | "uncertain";
+  sentAt: string | null;
+};
+
 export type DispatchOptionsResponse = {
   specialists: RosterOption[];
   drivers: RosterOption[];
@@ -497,6 +505,7 @@ export type OperationsEvent = {
   status: string;
   completed: boolean;
   completedAt: string | null;
+  tripCost: number | null;
   punctualityClassification: string | null;
   lateReasonCode: string | null;
   lateReasonNote: string | null;
@@ -741,7 +750,17 @@ export type CustomerServiceReport = {
     noReply: number;
     awaitingOutcome: number;
   };
+  last24HourConversations?: CustomerServiceLast24Conversation[];
   employees: CustomerServiceEmployee[];
+};
+
+export type CustomerServiceLast24Conversation = {
+  conversationId: string;
+  customerName: string | null;
+  customerPhone: string;
+  inboundMessages: number;
+  lastInboundAt: string;
+  outcome: "booked" | "not_booked" | "no_reply" | null;
 };
 
 /**
@@ -890,6 +909,7 @@ export type FieldOrderAction =
   | "confirm_ride"
   | "driver_arrived"
   | "confirm_pickup"
+  | "driver_client_arrived"
   | "start_service"
   | "complete_order"
   | "driver_return";
@@ -900,6 +920,7 @@ export type FieldOrderProgress = {
   driverConfirmedAt: string | null;
   driverArrivedAt: string | null;
   specialistPickupAt: string | null;
+  driverClientArrivedAt: string | null;
   serviceStartedAt: string | null;
   completedAt: string | null;
   completionOutcome: "done" | "not_done" | null;
@@ -1029,7 +1050,7 @@ export type PunctualitySummary = {
   specialistPickupAt: string | null;
   clientArrivedAt: string | null;
   /** GPS fence, or the service-start tap as an upper bound. */
-  clientArrivalSource: "geofence" | "service_start" | null;
+  clientArrivalSource: "geofence" | "driver_step" | "service_start" | null;
   serviceStartedAt: string | null;
   specialistClientDistanceMetres: number | null;
   specialistClientDurationSeconds: number | null;
@@ -1293,6 +1314,8 @@ export type TeamMember = {
   email: string | null;
   isActive?: boolean;
   permissions: string[];
+  /** Added by newer servers; OTA clients must tolerate older API responses. */
+  assignedConversationCount?: number;
 };
 
 export type TeamResponse = {

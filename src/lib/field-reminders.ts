@@ -121,6 +121,7 @@ const EMPTY_PROGRESS: FieldOrderProgressState = {
   driverConfirmedAt: null,
   driverArrivedAt: null,
   specialistPickupAt: null,
+  driverClientArrivedAt: null,
   serviceStartedAt: null,
   completedAt: null,
   completionOutcome: null,
@@ -139,6 +140,8 @@ function progressOf(
     driverConfirmedAt: (row.driver_confirmed_at as string | null) ?? null,
     driverArrivedAt: (row.driver_arrived_at as string | null) ?? null,
     specialistPickupAt: (row.specialist_pickup_at as string | null) ?? null,
+    driverClientArrivedAt:
+      (row.driver_client_arrived_at as string | null) ?? null,
     serviceStartedAt: (row.service_started_at as string | null) ?? null,
     completedAt: (row.completed_at as string | null) ?? null,
     completionOutcome:

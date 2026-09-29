@@ -92,7 +92,15 @@ function PunctualityCard({ value, onReason }: { value: PunctualitySummary; onRea
     ["انطلاق السائق", value.plannedDriverDepartureAt, value.driverDepartedAt],
     [value.specialistArrivalSource === "driver_step" ? "وصول السائق للأخصائية (حسب تأكيده)" : "وصول السائق للأخصائية", value.plannedSpecialistArrivalAt, value.specialistArrivedAt],
     ["ركوب الأخصائية", null, value.specialistPickupAt],
-    [value.clientArrivalSource === "service_start" ? "الوصول للعميلة (حسب بدء الخدمة)" : "الوصول للعميلة", null, value.clientArrivedAt],
+    [
+      value.clientArrivalSource === "service_start"
+        ? "الوصول للعميلة (حسب بدء الخدمة)"
+        : value.clientArrivalSource === "driver_step"
+          ? "الوصول للعميلة (تأكيد السائق)"
+          : "الوصول للعميلة",
+      null,
+      value.clientArrivedAt,
+    ],
     ["بدء الخدمة", null, value.serviceStartedAt],
   ] as const;
   const time = (iso: string | null) => iso ? new Intl.DateTimeFormat("ar-SA", { hour: "numeric", minute: "2-digit" }).format(new Date(iso)) : "—";
@@ -238,6 +246,7 @@ function ProgressRail({ order }: { order: FieldOrder }) {
     t("stepConfirmRide"),
     t("stepDriverArrived"),
     t("stepPickup"),
+    t("stepClientArrived"),
     t("stepStartService"),
     t("stepCompleteService"),
     t("stepDriverReturn"),
@@ -246,6 +255,7 @@ function ProgressRail({ order }: { order: FieldOrder }) {
     Boolean(order.progress.driverConfirmedAt),
     Boolean(order.progress.driverArrivedAt),
     Boolean(order.progress.specialistPickupAt),
+    Boolean(order.progress.driverClientArrivedAt),
     Boolean(order.progress.serviceStartedAt),
     Boolean(order.progress.completedAt),
     Boolean(order.progress.driverReturnedAt),
@@ -273,7 +283,7 @@ function ProgressRail({ order }: { order: FieldOrder }) {
             )}
           </View>
           <Text
-            // Six steps share one row, so a translated label can be several
+            // Seven steps share one row, so a translated label can be several
             // words: let it wrap and shrink a little rather than end in "…".
             numberOfLines={3}
             adjustsFontSizeToFit

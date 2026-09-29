@@ -18,6 +18,7 @@ export type FieldOrderAction =
   | "confirm_ride"
   | "driver_arrived"
   | "confirm_pickup"
+  | "driver_client_arrived"
   | "start_service"
   | "complete_order"
   | "driver_return";
@@ -340,6 +341,8 @@ function progressOf(row: Record<string, unknown> | null | undefined): FieldOrder
     driverConfirmedAt: (row?.driver_confirmed_at as string | null) ?? null,
     driverArrivedAt: (row?.driver_arrived_at as string | null) ?? null,
     specialistPickupAt: (row?.specialist_pickup_at as string | null) ?? null,
+    driverClientArrivedAt:
+      (row?.driver_client_arrived_at as string | null) ?? null,
     serviceStartedAt: (row?.service_started_at as string | null) ?? null,
     completedAt: (row?.completed_at as string | null) ?? null,
     completionOutcome:
@@ -367,6 +370,13 @@ export function nextFieldAction(
   }
   if (!progress.specialistPickupAt) {
     return { action: "confirm_pickup", role: "specialist", label: "ركبتُ مع السائق" };
+  }
+  if (!progress.driverClientArrivedAt) {
+    return {
+      action: "driver_client_arrived",
+      role: "driver",
+      label: "تأكيد الوصول إلى منزل العميلة",
+    };
   }
   if (!progress.serviceStartedAt) {
     return { action: "start_service", role: "specialist", label: "بدء الخدمة عند العميلة" };
@@ -648,8 +658,18 @@ export async function updateFieldOrder(
   const currentOrder = await getFieldOrder(session, orderId);
   if (!currentOrder) throw new Error("الطلب غير موجود أو غير مخصص لك");
   const expected = nextFieldAction(currentOrder.progress);
-  if (expected.action !== action) throw new Error("هذه الخطوة غير متاحة الآن");
-  if (expected.role !== session.role) throw new Error("هذه الخطوة تخص عضو الفريق الآخر");
+  if (
+    action === "start_service" &&
+    !currentOrder.progress.driverClientArrivedAt
+  ) {
+    throw new Error("يجب أن يؤكد السائق وصوله إلى منزل العميلة أولًا");
+  }
+  if (expected.action !== action) {
+    throw new Error("هذه الخطوة غير متاحة الآن");
+  }
+  if (expected.role !== session.role) {
+    throw new Error("هذه الخطوة تخص عضو الفريق الآخر");
+  }
 
   const completionNote = command.completionNote?.trim() || null;
   if (action === "complete_order") {
@@ -688,11 +708,13 @@ export async function updateFieldOrder(
         ? progress?.driver_arrived_at
         : action === "confirm_pickup"
           ? progress?.specialist_pickup_at
-          : action === "start_service"
-            ? progress?.service_started_at
-            : action === "complete_order"
-              ? progress?.completed_at
-              : progress?.driver_returned_at;
+          : action === "driver_client_arrived"
+            ? progress?.driver_client_arrived_at
+            : action === "start_service"
+              ? progress?.service_started_at
+              : action === "complete_order"
+                ? progress?.completed_at
+                : progress?.driver_returned_at;
   const now = typeof actionTime === "string" ? actionTime : new Date().toISOString();
 
   await mirrorFieldProgressToConversation(orderId, action, now);
