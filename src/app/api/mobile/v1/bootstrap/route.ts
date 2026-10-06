@@ -42,6 +42,7 @@ export async function GET(request: Request) {
           canTakeConversations: false,
           canManageTeam: false,
           canViewOrderPrices: false,
+          canManageDistricts: false,
           canViewReports: false,
         },
         inbox: { dangerAfterSeconds: MOBILE_DANGER_AFTER_SECONDS, views: [] },
@@ -65,6 +66,7 @@ export async function GET(request: Request) {
         canTakeConversations: Boolean(session.teamMemberId),
         canManageTeam: session.role === "admin",
         canViewOrderPrices: session.role === "admin",
+        canManageDistricts: session.role === "admin",
         canViewReports: session.isOwner,
       },
       inbox: {

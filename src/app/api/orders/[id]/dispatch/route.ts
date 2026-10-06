@@ -8,6 +8,11 @@ import {
 import { isLocationUnset } from "@/lib/format";
 import { getKiaraSession } from "@/lib/tenant";
 import { OperationalCommandError } from "@/lib/operational-commands";
+import {
+  DISTRICT_UNAVAILABLE_MESSAGE,
+  isDistrictUnavailable,
+  parseOrderDistrictId,
+} from "@/lib/districts";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -53,6 +58,7 @@ export async function POST(
   let expectedVersion: number | undefined;
   let idempotencyKey: string | undefined;
   let tripType: DispatchBookingInput["tripType"];
+  let rawDistrictId: unknown;
   let specialistVoice: DispatchBookingInput["specialistVoice"];
   let doorPhoto: DispatchBookingInput["doorPhoto"];
 
@@ -75,6 +81,7 @@ export async function POST(
     specialistMessage = (form.get("specialistMessage") as string | null)?.trim().slice(0, 3000);
     expectedVersion = Number(form.get("expectedVersion"));
     idempotencyKey = (form.get("idempotencyKey") as string | null)?.trim();
+    rawDistrictId = form.get("districtId") ?? undefined;
     const formTripType = form.get("tripType");
     tripType =
       formTripType === "round_trip" || formTripType === "one_way"
@@ -126,6 +133,7 @@ export async function POST(
     specialistMessage = (body?.specialistMessage as string | undefined)?.trim().slice(0, 3000);
     expectedVersion = Number(body?.expectedVersion);
     idempotencyKey = (body?.idempotencyKey as string | undefined)?.trim();
+    rawDistrictId = body?.districtId;
     tripType =
       body?.tripType === "round_trip" || body?.tripType === "one_way"
         ? body.tripType
@@ -160,6 +168,14 @@ export async function POST(
     return NextResponse.json({ error: "معرّف العملية غير صحيح" }, { status: 400 });
   }
 
+  // Optional: an order can go out with no district and no trip cost.
+  let districtId: string | null;
+  try {
+    districtId = parseOrderDistrictId(rawDistrictId) ?? null;
+  } catch {
+    return NextResponse.json({ error: "الحي غير صحيح" }, { status: 400 });
+  }
+
   try {
     // Any employee may act on any order: the schedule is shared work, and the
     // inbox's exclusive routing governs reading a chat, not dispatching a car.
@@ -168,6 +184,7 @@ export async function POST(
     }
 
     const result = await dispatchBooking(id, {
+      districtId,
       specialistId,
       secondSpecialistId,
       serviceAssignments,
@@ -193,7 +210,7 @@ export async function POST(
       order:
         session.role === "admin"
           ? result.order
-          : { ...result.order, price: null },
+          : { ...result.order, price: null, return_price: null },
     });
   } catch (error) {
     if (error instanceof RekazBookingError) {
@@ -204,6 +221,9 @@ export async function POST(
         },
         { status: 409 },
       );
+    }
+    if (isDistrictUnavailable(error)) {
+      return NextResponse.json({ error: DISTRICT_UNAVAILABLE_MESSAGE }, { status: 400 });
     }
     if (error instanceof OperationalCommandError && error.isConflict) {
       return NextResponse.json(

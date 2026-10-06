@@ -73,6 +73,7 @@ import type {
   TeamResponse,
   TripType,
   OrderTracking,
+  District,
 } from "@/types/api";
 import { publicApiRequest } from "@/lib/api";
 
@@ -115,6 +116,7 @@ export const queryKeys = {
   order: (id: string) => ["order", id] as const,
   orderReminder: (id: string) => ["order-reminder", id] as const,
   dispatchOptions: ["dispatch-options"] as const,
+  districts: ["districts"] as const,
   fieldSession: (token: string) => ["field-session", token] as const,
   fieldOrders: (view?: FieldOrderListView, dayStart?: string) =>
     ["field-orders", view ?? "all", dayStart ?? ""] as const,
@@ -1346,6 +1348,7 @@ export function useDispatchOrder(id: string) {
               : {}),
             driverId: input.driverId,
             customerLocation: input.customerLocation,
+            ...(input.districtId ? { districtId: input.districtId } : {}),
             driverMessage: input.driverMessage,
             specialistMessage: input.specialistMessage,
             expectedVersion: String(input.expectedVersion),
@@ -1953,5 +1956,67 @@ export function useSendDriverLocationRequest(id: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["order-tracking", id] });
     },
+  });
+}
+
+/**
+ * Districts and their trip fares. Admins get every district with its price,
+ * archived ones included; everyone else gets the active names only.
+ */
+export function useDistricts(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.districts,
+    queryFn: () => apiRequest<{ districts: District[] }>("/districts"),
+    enabled,
+  });
+}
+
+/** The pickers read districts from dispatch options, so both refresh together. */
+function invalidateDistricts(queryClient: ReturnType<typeof useQueryClient>) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: queryKeys.districts }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.dispatchOptions }),
+  ]);
+}
+
+export function useCreateDistrict() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; tripPrice: string }) =>
+      apiRequest<{ district: District }>("/districts", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => invalidateDistricts(queryClient),
+  });
+}
+
+export function useUpdateDistrict() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...patch
+    }: {
+      id: string;
+      name?: string;
+      tripPrice?: string;
+      isActive?: boolean;
+    }) =>
+      apiRequest<{ district: District }>(`/districts/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: () => invalidateDistricts(queryClient),
+  });
+}
+
+/** Deletes an unused district; the server archives one that orders name. */
+export function useDeleteDistrict() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiRequest<{ archived: boolean }>(`/districts/${id}`, { method: "DELETE" }),
+    onSuccess: () => invalidateDistricts(queryClient),
   });
 }

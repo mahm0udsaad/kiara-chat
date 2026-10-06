@@ -51,6 +51,8 @@ export type BootstrapResponse = {
     canManageTeam: boolean;
     canViewOrderPrices: boolean;
     canViewReports: boolean;
+    /** Admins add, price and remove districts. Absent on older API builds. */
+    canManageDistricts?: boolean;
   };
   inbox: {
     dangerAfterSeconds: number;
@@ -254,6 +256,8 @@ export type CreateOrderInput = {
   customerLocation: string;
   durationMinutes: number;
   tripType: TripType;
+  /** Optional. Prices the trip; without it the order starts with no cost. */
+  districtId?: string | null;
 };
 
 export type ReminderConfirmationStatus =
@@ -302,6 +306,9 @@ export type OrderSummary = {
   return_driver_phone?: string | null;
   price: number | null;
   return_price?: number | null;
+  /** The customer's district, which prices the trip. Optional at every step. */
+  district_id?: string | null;
+  district_name?: string | null;
   door_photo_path?: string | null;
   sent_at: string | null;
   created_at: string;
@@ -374,9 +381,19 @@ export type OrderCustomerReminder = {
   sentAt: string | null;
 };
 
+/** A district and its trip fare. `trip_price` is null for non-admins. */
+export type District = {
+  id: string;
+  name: string;
+  trip_price: number | null;
+  is_active: boolean;
+};
+
 export type DispatchOptionsResponse = {
   specialists: RosterOption[];
   drivers: RosterOption[];
+  /** Active districts. Absent on API builds older than the districts change. */
+  districts?: District[];
 };
 
 export type OrderPatch = {
@@ -391,6 +408,8 @@ export type OrderPatch = {
   price?: number | null;
   /** Owner-entered fare for the return-only driver. */
   returnPrice?: number | null;
+  /** Any employee. The trip cost follows from it; null clears both. */
+  districtId?: string | null;
   expectedVersion: number;
 };
 
@@ -402,6 +421,8 @@ export type DispatchInput = {
   driverId: string;
   /** Settled at dispatch — the server refuses a blank or placeholder address. */
   customerLocation: string;
+  /** Optional. Prices the trip; without it the order goes out with no cost. */
+  districtId?: string | null;
   driverMessage: string;
   specialistMessage: string;
   expectedVersion: number;

@@ -120,8 +120,12 @@ export async function prepareOrderDispatchCommand(input: {
   secondSpecialistPhone: string | null;
   /** Null keeps the photo already on the order rather than clearing it. */
   doorPhotoPath: string | null;
+  /** Optional; prices the trip. Null leaves the order's district as it is. */
+  districtId?: string | null;
 }): Promise<Record<string, unknown>> {
-  return rpc("kiara_command_prepare_order_dispatch_v2", {
+  // v3 only when a district was chosen, so a dispatch without one keeps
+  // working on a database that has not received the districts migration.
+  const args = {
     p_restaurant_id: input.restaurantId,
     p_order_id: input.orderId,
     p_expected_version: input.expectedVersion,
@@ -142,7 +146,13 @@ export async function prepareOrderDispatchCommand(input: {
     p_specialist_phone: input.specialistPhone,
     p_second_specialist_phone: input.secondSpecialistPhone,
     p_door_photo_path: input.doorPhotoPath,
-  });
+  };
+  return input.districtId
+    ? rpc("kiara_command_prepare_order_dispatch_v3", {
+        ...args,
+        p_district_id: input.districtId,
+      })
+    : rpc("kiara_command_prepare_order_dispatch_v2", args);
 }
 
 export interface ClaimedOutboxEvent {

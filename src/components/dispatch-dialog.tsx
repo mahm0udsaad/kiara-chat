@@ -65,7 +65,7 @@ import {
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 import { formatDuration, isLocationUnset, TRIP_TYPE_LABEL } from "@/lib/format";
 import { nationalityOf } from "@/lib/nationalities";
-import type { Driver, DriverOrderRow, Specialist, TripType } from "@/lib/types";
+import type { District, Driver, DriverOrderRow, Specialist, TripType } from "@/lib/types";
 
 const TZ = "Asia/Riyadh";
 const DAY_FMT = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
@@ -138,6 +138,10 @@ export function DispatchDialog({
   const [secondSpecialistId, setSecondSpecialistId] = useState("");
   const [pendingSpecialistId, setPendingSpecialistId] = useState<string | null>(null);
   const [driverId, setDriverId] = useState("");
+  // Optional: it prices the trip. Without one the order goes out with no cost
+  // and the district can be chosen later from the order.
+  const [districts, setDistricts] = useState<District[]>([]);
+  const [districtId, setDistrictId] = useState(order.district_id ?? "");
   const [tripType, setTripType] = useState<TripType>(order.trip_type);
   // The address is the first thing this form settles. An order raised from
   // ركاز arrives with the placeholder, which must not be offered as a value
@@ -186,6 +190,8 @@ export function DispatchDialog({
           : null;
         setSpecialists(options.specialists);
         setDrivers(options.drivers);
+        setDistricts(options.districts ?? []);
+        setDistrictId(order.district_id ?? "");
         const nextSpecialistId = order.specialist_id || preferred?.id || "";
         const nextSpecialist = options.specialists.find(
           (item) => item.id === nextSpecialistId
@@ -297,6 +303,7 @@ export function DispatchDialog({
     setSecondSpecialistId("");
     setPendingSpecialistId(null);
     setDriverId("");
+    setDistrictId(order.district_id ?? "");
     setTripType(order.trip_type);
     setCustomerLocation(
       isLocationUnset(order.customer_location) ? "" : order.customer_location
@@ -320,7 +327,7 @@ export function DispatchDialog({
     setSubmitting(false);
     setError(null);
     setResult(null);
-  }, [order.customer_location, order.trip_type]);
+  }, [order.customer_location, order.district_id, order.trip_type]);
 
   const changeOpen = useCallback(
     (nextOpen: boolean) => {
@@ -355,6 +362,7 @@ export function DispatchDialog({
         form.append("driverId", driverId);
         form.append("tripType", tripType);
         form.append("customerLocation", customerLocation.trim());
+        if (districtId) form.append("districtId", districtId);
         form.append("driverMessage", finalDriverMessage.trim());
         form.append("specialistMessage", specialistMessage.trim());
         form.append("expectedVersion", String(order.version));
@@ -371,6 +379,7 @@ export function DispatchDialog({
           driverId,
           tripType,
           customerLocation: customerLocation.trim(),
+          districtId: districtId || null,
           specialistNote: noteMode === "text" ? specialistNote : "",
           driverMessage: finalDriverMessage.trim(),
           specialistMessage: specialistMessage.trim(),
@@ -407,6 +416,7 @@ export function DispatchDialog({
   }, [
     confirmed,
     customerLocation,
+    districtId,
     doorPhoto,
     driverId,
     finalDriverMessage,
@@ -595,6 +605,38 @@ export function DispatchDialog({
                   {locationMissing
                     ? "لا يمكن اختيار الأخصائية والسائق قبل تحديد الموقع."
                     : "هذا هو العنوان الذي سيصل السائق إليه."}
+                </FieldDescription>
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor={`dispatch-district-${order.id}`}>
+                  الحي (اختياري)
+                </FieldLabel>
+                <Select
+                  value={districtId || "none"}
+                  onValueChange={(value) => setDistrictId(value === "none" ? "" : value)}
+                >
+                  <SelectTrigger
+                    id={`dispatch-district-${order.id}`}
+                    className="min-h-11 w-full"
+                  >
+                    <SelectValue placeholder="بدون حي" />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    <SelectGroup>
+                      <SelectItem value="none">بدون حي</SelectItem>
+                      {districts.map((district) => (
+                        <SelectItem key={district.id} value={district.id}>
+                          {district.trip_price != null
+                            ? `${district.name} — ${district.trip_price} ر.س`
+                            : district.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  تكلفة المشوار تُحسب من الحي. يمكن تركه الآن واختياره لاحقًا من الطلب.
                 </FieldDescription>
               </Field>
 

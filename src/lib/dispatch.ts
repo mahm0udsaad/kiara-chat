@@ -38,6 +38,7 @@ import {
 } from "@/lib/server-conversations";
 import { defaultOutboundProvider } from "@/lib/transport";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { districtNames } from "@/lib/districts";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { translateMessage } from "@/lib/translate";
 import {
@@ -97,6 +98,8 @@ const ORDER_COLS_WITH_DOOR = `${ORDER_COLS_WITH_NOTES}, door_photo_path`;
 const ORDER_COLS_WITH_SECOND_SPECIALIST = `${ORDER_COLS_WITH_DOOR}, second_specialist_id`;
 /** Adds the optional return-only driver and their independent fare. */
 const ORDER_COLS_WITH_RETURN_DRIVER = `${ORDER_COLS_WITH_SECOND_SPECIALIST}, return_driver_id, return_price`;
+/** Adds the district that prices the trip. Falls back until 20261006140000 runs. */
+const ORDER_COLS_WITH_DISTRICT = `${ORDER_COLS_WITH_RETURN_DRIVER}, district_id`;
 const operationalOrderScore = (row: Partial<DriverOrder>) =>
   (row.status === "sent" ? 8 : 0) +
   (row.driver_id ? 4 : 0) +
@@ -115,6 +118,8 @@ const missingReturnDriver = (err: { message: string } | null) =>
     err?.message.includes("return_driver_id") ||
       err?.message.includes("return_price"),
   );
+const missingDistrict = (err: { message: string } | null) =>
+  Boolean(err?.message.includes("district_id"));
 const missingDispatchNotes = (err: { message: string } | null) =>
   Boolean(
     err?.message.includes("driver_note") ||
@@ -407,6 +412,8 @@ export interface CreateBookingInput {
   customerLocation: string;
   durationMinutes: number;
   tripType: TripType;
+  /** Optional. Prices the trip (in the database); null leaves it without cost. */
+  districtId?: string | null;
 }
 
 /**
@@ -429,6 +436,17 @@ export async function createBooking(
     .maybeSingle();
   if (convErr) throw new Error(convErr.message);
   if (!conv) throw new Error("Conversation not found");
+
+  if (input.districtId) {
+    const { data: district } = await getAdminSupabaseClient()
+      .from("districts")
+      .select("id")
+      .eq("id", input.districtId)
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (!district) throw new Error("DISTRICT_NOT_AVAILABLE");
+  }
 
   // One customer has one operational visit per Riyadh day. Reuse it even when
   // the employee enters another one of its Rekaz services from the inbox.
@@ -476,6 +494,8 @@ export async function createBooking(
       duration_minutes: input.durationMinutes,
       trip_type: input.tripType,
       price: null,
+      // The insert trigger copies the district's fare into `price`.
+      ...(input.districtId ? { district_id: input.districtId } : {}),
       status: "pending",
       created_by: userId,
     })
@@ -1317,6 +1337,8 @@ export interface DispatchBookingInput {
   actor: OperationsActor;
   /** Rekaz does not carry this dispatch-only choice. */
   tripType?: TripType;
+  /** Optional. Prices the trip; without it the order goes out with no cost. */
+  districtId?: string | null;
   /** Optional staff note included in the translated specialist message. */
   specialistNote?: string;
   /**
@@ -1568,9 +1590,9 @@ async function loadDispatchContext(
     tripType,
     services: splitServices,
     customerLocation: input.customerLocation?.trim() || order.customer_location,
-    // Trip cost is now entered manually by the owner from the order detail.
-    // Preserve an amount she entered before dispatch; never replace it with
-    // the old one-way/round-trip tariff.
+    // Trip cost comes from the order's district (priced in the database when
+    // one is chosen). Preserve whatever the order already carries; never
+    // replace it with the old one-way/round-trip tariff.
     price: order.price,
     specialist,
     secondSpecialist,
@@ -1804,6 +1826,7 @@ export async function dispatchBooking(
     driverId: input.driverId,
     tripType: context.tripType,
     price: context.price,
+    districtId: input.districtId ?? null,
     customerLocation: context.customerLocation,
     driverNote: input.driverMessage.trim(),
     specialistNote: specialistMessage,
@@ -1956,7 +1979,10 @@ async function readOrders(
   supabase: AuthedClient,
   build: (cols: string) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
 ): Promise<DriverOrderRow[]> {
-  let { data, error } = await build(ORDER_COLS_WITH_RETURN_DRIVER);
+  let { data, error } = await build(ORDER_COLS_WITH_DISTRICT);
+  if (error && missingDistrict(error)) {
+    ({ data, error } = await build(ORDER_COLS_WITH_RETURN_DRIVER));
+  }
   if (error && missingReturnDriver(error)) {
     ({ data, error } = await build(ORDER_COLS_WITH_SECOND_SPECIALIST));
   }
@@ -2046,6 +2072,11 @@ export interface OrderPatch {
   returnPrice?: number | null;
   /** Storage path set only by the authenticated door-photo upload route. */
   doorPhotoPath?: string | null;
+  /**
+   * Any employee. The trip cost follows from it in the database; null clears
+   * both, leaving the order with no cost until a district is chosen again.
+   */
+  districtId?: string | null;
 }
 
 /**
@@ -2083,7 +2114,15 @@ export async function updateDriverOrder(
 
   // A trip-cost correction is private bookkeeping. It must remain audited,
   // but it is not an operational change and should not notify the field team.
-  if (Object.keys(patch).every((key) => key === "price" || key === "returnPrice")) return row;
+  // Choosing the district is the same thing: it prices the trip and changes
+  // nothing the driver or specialist does.
+  if (
+    Object.keys(patch).every(
+      (key) => key === "price" || key === "returnPrice" || key === "districtId",
+    )
+  ) {
+    return row;
+  }
 
   const customerName = row.customer_name;
   const specialistId = row.specialist_id;
@@ -2449,7 +2488,7 @@ async function withNames(
   const specialistIds = uniq(
     orders.flatMap((order) => [order.specialist_id, order.second_specialist_id]),
   );
-  const [specialists, drivers, customers, editors, progress, services] = await Promise.all([
+  const [specialists, drivers, customers, editors, progress, services, districts] = await Promise.all([
     rosterNames(supabase, "specialists", specialistIds),
     rosterNames(
       supabase,
@@ -2462,6 +2501,7 @@ async function withNames(
     getAdminSupabaseClient().from("order_visit_services")
       .select("id, order_id, source_id, name, minutes, starts_at, assigned_specialist_id")
       .eq("restaurant_id", KIARA_RESTAURANT_ID).in("order_id", orders.map(o => o.id)).order("starts_at"),
+    districtNames(uniq(orders.map((o) => o.district_id))),
   ]);
 
   // The detail endpoint enriches one order. Production had the snapshot table
@@ -2521,6 +2561,7 @@ async function withNames(
       driver_phone: driver?.phone ?? null,
       return_driver_name: returnDriver?.fullName ?? null,
       return_driver_phone: returnDriver?.phone ?? null,
+      district_name: (o.district_id && districts.get(o.district_id)) || null,
       customer_name: customer?.name ?? null,
       updated_by_name: (o.updated_by && editors.get(o.updated_by)) || null,
       specialist_session: fieldSessionStateOf(

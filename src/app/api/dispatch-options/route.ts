@@ -5,6 +5,7 @@ import {
   listDrivers,
   listSpecialists,
 } from "@/lib/dispatch";
+import { listDistricts } from "@/lib/districts";
 
 /**
  * The order sheet used to make separate requests for specialists, drivers, and
@@ -17,13 +18,15 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [specialists, drivers, settings] = await Promise.all([
+  const [specialists, drivers, settings, districts] = await Promise.all([
     listSpecialists({ activeOnly: true }),
     listDrivers({ activeOnly: true }),
     session.role === "admin"
       ? getDispatchSettings()
       : Promise.resolve(null),
+    // Every employee may pick one; only admins see what it costs.
+    listDistricts({ activeOnly: true, withPrice: session.role === "admin" }),
   ]);
 
-  return NextResponse.json({ specialists, drivers, settings });
+  return NextResponse.json({ specialists, drivers, settings, districts });
 }

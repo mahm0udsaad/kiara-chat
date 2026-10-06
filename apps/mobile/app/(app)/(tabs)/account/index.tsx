@@ -186,6 +186,38 @@ export default function AccountScreen() {
         </View>
       ) : null}
 
+      {/* Admin-only: districts price every trip, so a wrong fare here lands
+          on every order that picks the district. */}
+      {capabilities.canManageDistricts ? (
+        <View style={{ gap: spacing.sm }}>
+          <SectionHeader title="الطلبات" />
+          <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
+            <Pressable
+              accessibilityRole="button"
+              testID="account-districts"
+              onPress={() => router.push("/districts" as never)}
+              style={{
+                flexDirection: "row-reverse",
+                alignItems: "center",
+                justifyContent: "space-between",
+                paddingVertical: spacing.md,
+              }}
+            >
+              <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+                <IconSymbol name="mappin.and.ellipse" color={colors.brand} size={20} />
+                <View>
+                  <Text style={{ ...type.body, color: colors.text, ...rtlText }}>الأحياء وتكلفة المشاوير</Text>
+                  <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+                    أضيفي الأحياء وحددي تكلفة المشوار لكل حي
+                  </Text>
+                </View>
+              </View>
+              <IconSymbol name="chevron.left" color={colors.textTertiary} size={18} />
+            </Pressable>
+          </Card>
+        </View>
+      ) : null}
+
       {/* Notifications — a phone that never registered used to look identical
           to one that did, and simply received nothing. */}
       <View style={{ gap: spacing.sm }}>

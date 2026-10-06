@@ -7,6 +7,11 @@ import {
 } from "@/lib/dispatch";
 import { getKiaraSession } from "@/lib/tenant";
 import { OperationalCommandError } from "@/lib/operational-commands";
+import {
+  DISTRICT_UNAVAILABLE_MESSAGE,
+  isDistrictUnavailable,
+  parseOrderDistrictId,
+} from "@/lib/districts";
 import type { TripType } from "@/lib/types";
 
 const TRIP_TYPES: TripType[] = ["one_way", "round_trip"];
@@ -105,6 +110,14 @@ export async function PATCH(
     }
     patch.returnPrice = returnPrice;
   }
+  // Any member: the district is a fact about the address. Its fare is applied
+  // by the database, which keeps the price itself admin-only.
+  try {
+    const districtId = parseOrderDistrictId(body?.districtId);
+    if (districtId !== undefined) patch.districtId = districtId;
+  } catch {
+    return NextResponse.json({ error: "الحي غير صحيح" }, { status: 400 });
+  }
   if (
     patch.returnDriverId &&
     patch.driverId &&
@@ -144,6 +157,9 @@ export async function PATCH(
           : { ...order, price: null, return_price: null },
     });
   } catch (error) {
+    if (isDistrictUnavailable(error)) {
+      return NextResponse.json({ error: DISTRICT_UNAVAILABLE_MESSAGE }, { status: 400 });
+    }
     if (error instanceof OperationalCommandError && error.isConflict) {
       return NextResponse.json(
         {

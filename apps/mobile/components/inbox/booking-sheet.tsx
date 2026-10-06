@@ -30,7 +30,8 @@ import {
   tripTypeLabel,
 } from "@/lib/format";
 import { successFeedback, tapFeedback } from "@/lib/haptics";
-import { useCreateConversationOrder } from "@/lib/queries";
+import { useCreateConversationOrder, useDispatchOptions } from "@/lib/queries";
+import { DistrictPicker } from "@/components/orders/district-picker";
 import { useTheme } from "@/providers/theme-provider";
 import type { BookingRequest, SharedLocation, TripType } from "@/types/api";
 
@@ -242,6 +243,7 @@ export function BookingSheet({
   const insets = useSafeAreaInsets();
   const keyboard = useKeyboardPadding();
   const create = useCreateConversationOrder(conversationId);
+  const dispatchOptions = useDispatchOptions();
 
   const [arrival, setArrival] = useState(roundedDefault);
   const [location, setLocation] = useState(() =>
@@ -253,6 +255,9 @@ export function BookingSheet({
   // A visit is a round trip unless the employee says otherwise; one-way is
   // the exception, and the edit screen is where it gets set.
   const [tripType, setTripType] = useState<TripType>("round_trip");
+  // Optional. It prices the trip; skipped, the order has no cost until a
+  // district is chosen at dispatch or from the order.
+  const [districtId, setDistrictId] = useState<string | null>(null);
   const [picker, setPicker] = useState<"date" | "time" | null>(null);
   const [validation, setValidation] = useState<string | null>(null);
   const [createdOrderId, setCreatedOrderId] = useState<string | null>(null);
@@ -336,6 +341,7 @@ export function BookingSheet({
         customerLocation: location.trim(),
         durationMinutes,
         tripType,
+        ...(districtId ? { districtId } : {}),
       },
       {
         onSuccess: (data) => {
@@ -764,6 +770,15 @@ export function BookingSheet({
                   السائق.
                 </Text>
               </View>
+
+              {dispatchOptions.data?.districts?.length ? (
+                <DistrictPicker
+                  districts={dispatchOptions.data.districts}
+                  value={districtId}
+                  onChange={setDistrictId}
+                  hint="اختياري — تكلفة المشوار تُحسب من الحي، ويمكن اختياره لاحقًا."
+                />
+              ) : null}
 
               {create.error ? <InlineAlert message={create.error.message} /> : null}
             </ScrollView>

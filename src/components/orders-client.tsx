@@ -91,6 +91,7 @@ import type { ReservationsSnapshot } from "@/lib/reservations";
 import type { ReservationFollowUpMap } from "@/lib/reservation-follow-up";
 import type {
   Driver,
+  District,
   DriverOrderRow,
   DriverOrderStatus,
   Specialist,
@@ -836,7 +837,8 @@ function OrderDetailsSheet({
   const [tripType, setTripType] = useState<TripType>(order.trip_type);
   const [specialistId, setSpecialistId] = useState(order.specialist_id ?? "");
   const [driverId, setDriverId] = useState(order.driver_id ?? "");
-  const [price, setPrice] = useState(order.price == null ? "" : String(order.price));
+  const [districtId, setDistrictId] = useState(order.district_id ?? "");
+  const [districts, setDistricts] = useState<District[]>([]);
   const [specialists, setSpecialists] = useState<Specialist[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [saving, setSaving] = useState(false);
@@ -876,7 +878,7 @@ function OrderDetailsSheet({
     setTripType(order.trip_type);
     setSpecialistId(order.specialist_id ?? "");
     setDriverId(order.driver_id ?? "");
-    setPrice(order.price == null ? "" : String(order.price));
+    setDistrictId(order.district_id ?? "");
     setError(null);
     setSaved(false);
   }, [order]);
@@ -903,6 +905,7 @@ function OrderDetailsSheet({
         if (cancelled) return;
         setSpecialists(options.specialists);
         setDrivers(options.drivers);
+        setDistricts(options.districts ?? []);
       })
       .catch(() => {
         if (!cancelled) setError("تعذّر تحميل الأخصائيات والسائقين");
@@ -930,7 +933,7 @@ function OrderDetailsSheet({
     tripType !== order.trip_type ||
     (specialistId || null) !== order.specialist_id ||
     (driverId || null) !== order.driver_id ||
-    (isAdmin && (price === "" ? null : Number(price)) !== order.price);
+    (districtId || null) !== (order.district_id ?? null);
 
   const save = useCallback(async () => {
     setError(null);
@@ -953,7 +956,10 @@ function OrderDetailsSheet({
           driverId: driverId || null,
           expectedVersion: order.version,
           idempotencyKey: crypto.randomUUID(),
-          ...(isAdmin ? { price: price === "" ? null : Number(price) } : {}),
+          // Only when changed: choosing a district re-prices the trip.
+          ...((districtId || null) !== (order.district_id ?? null)
+            ? { districtId: districtId || null }
+            : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -972,8 +978,8 @@ function OrderDetailsSheet({
     tripType,
     specialistId,
     driverId,
-    price,
-    isAdmin,
+    districtId,
+    order.district_id,
     order.id,
     order.version,
     onUpdated,
@@ -1134,21 +1140,44 @@ function OrderDetailsSheet({
               ) : null}
             </Field>
 
-            {isAdmin ? (
-              <Field>
-                <FieldLabel htmlFor={`price-${order.id}`}>تكلفة المشوار حسب المسافة</FieldLabel>
-                <Input
-                  id={`price-${order.id}`}
-                  type="number"
-                  min={0}
-                  inputMode="decimal"
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  placeholder="بالريال"
-                  className="min-h-11"
-                />
-              </Field>
-            ) : null}
+            <Field>
+              <FieldLabel htmlFor={`district-${order.id}`}>الحي (اختياري)</FieldLabel>
+              <Select
+                value={districtId || "none"}
+                onValueChange={(value) => setDistrictId(value === "none" ? "" : value)}
+              >
+                <SelectTrigger id={`district-${order.id}`} className="min-h-11 w-full">
+                  <SelectValue placeholder="بدون حي" />
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  <SelectGroup>
+                    <SelectItem value="none">بدون حي</SelectItem>
+                    {/* An archived district stays visible on the order that uses it. */}
+                    {order.district_id && !districts.some((item) => item.id === order.district_id) ? (
+                      <SelectItem value={order.district_id}>
+                        {order.district_name ?? "حي مؤرشف"}
+                      </SelectItem>
+                    ) : null}
+                    {districts.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {isAdmin && item.trip_price != null
+                          ? `${item.name} — ${item.trip_price} ر.س`
+                          : item.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                {isAdmin
+                  ? order.price == null
+                    ? "تكلفة المشوار تُحسب تلقائيًا من الحي. بدون حي لا تُسجل تكلفة."
+                    : `تكلفة المشوار الحالية: ${order.price} ر.س${
+                        order.return_price != null ? ` · العودة: ${order.return_price} ر.س` : ""
+                      }`
+                  : "تكلفة المشوار تُحسب تلقائيًا من الحي."}
+              </FieldDescription>
+            </Field>
 
             {error ? <FieldError>{error}</FieldError> : null}
           </FieldGroup>

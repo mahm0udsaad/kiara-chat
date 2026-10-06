@@ -13,6 +13,11 @@ import {
 } from "@/lib/mobile/http";
 import { orderForMobileSession } from "@/lib/mobile/orders";
 import { OperationalCommandError } from "@/lib/operational-commands";
+import {
+  DISTRICT_UNAVAILABLE_MESSAGE,
+  isDistrictUnavailable,
+  parseOrderDistrictId,
+} from "@/lib/districts";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -152,6 +157,14 @@ export async function POST(
     return mobileError(400, "IDEMPOTENCY_KEY_REQUIRED", "idempotencyKey must be a UUID");
   }
 
+  // Optional: an order can go out with no district and no trip cost.
+  let districtId: string | null;
+  try {
+    districtId = parseOrderDistrictId(body.districtId) ?? null;
+  } catch {
+    return mobileError(400, "INVALID_DISTRICT", "الحي غير صحيح");
+  }
+
   const { id } = await params;
   try {
     if (!(await orderExists(id))) {
@@ -159,6 +172,7 @@ export async function POST(
     }
 
     const result = await dispatchBooking(id, {
+      districtId,
       specialistId,
       secondSpecialistId: secondSpecialistId || null,
       serviceAssignments,
@@ -199,6 +213,9 @@ export async function POST(
         error.code,
         "The order changed or another employee is dispatching it. Refresh before continuing.",
       );
+    }
+    if (isDistrictUnavailable(error)) {
+      return mobileError(400, "DISTRICT_NOT_AVAILABLE", DISTRICT_UNAVAILABLE_MESSAGE);
     }
     if (error instanceof Error && error.message.includes("تم إرسال هذا الطلب بالفعل")) {
       return mobileError(409, "ORDER_ALREADY_DISPATCHED", "The order was already dispatched");

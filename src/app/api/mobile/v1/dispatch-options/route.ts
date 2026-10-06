@@ -3,6 +3,7 @@ import {
   listDrivers,
   listSpecialists,
 } from "@/lib/dispatch";
+import { listDistricts } from "@/lib/districts";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -16,14 +17,16 @@ export async function GET(request: Request) {
   if (auth.response) return auth.response;
 
   try {
-    const [specialists, drivers, settings] = await Promise.all([
+    const [specialists, drivers, settings, districts] = await Promise.all([
       listSpecialists({ activeOnly: true }),
       listDrivers({ activeOnly: true }),
       auth.session.role === "admin"
         ? getDispatchSettings()
         : Promise.resolve(null),
+      // Every employee may pick one; only admins see what it costs.
+      listDistricts({ activeOnly: true, withPrice: auth.session.role === "admin" }),
     ]);
-    return mobileData({ specialists, drivers, settings });
+    return mobileData({ specialists, drivers, settings, districts });
   } catch (error) {
     return mobileServerError(
       error,

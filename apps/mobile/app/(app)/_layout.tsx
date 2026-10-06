@@ -54,6 +54,19 @@ export default function AppLayout() {
         }}
       />
       <Stack.Screen
+        name="districts/index"
+        options={{
+          headerShown: true,
+          title: "الأحياء وتكلفة المشاوير",
+          headerTintColor: colors.brand,
+          headerTitleStyle: { color: colors.text },
+          headerStyle: { backgroundColor: colors.surface },
+          headerShadowVisible: false,
+          headerBackButtonDisplayMode: "minimal",
+          contentStyle: { backgroundColor: colors.background },
+        }}
+      />
+      <Stack.Screen
         name="team/index"
         options={{
           headerShown: true,

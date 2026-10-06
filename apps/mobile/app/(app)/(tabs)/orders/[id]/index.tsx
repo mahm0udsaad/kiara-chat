@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
-import { TripCostEditor } from "@/components/orders/trip-cost-editor";
+import { TripDistrictCard } from "@/components/orders/trip-district-card";
 import { CustomerReminderCard } from "@/components/orders/customer-reminder-card";
 import { ServiceTimingCard } from "@/components/orders/service-timing-card";
 import { ErrorState, LoadingScreen } from "@/components/screen-state";
@@ -41,12 +41,6 @@ import { tapFeedback } from "@/lib/haptics";
 import { useBootstrap, useCreateExtraTeamOrder, useOrder } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { FieldSessionState } from "@/types/api";
-
-const priceFormatter = new Intl.NumberFormat("ar-SA", {
-  style: "currency",
-  currency: "SAR",
-  maximumFractionDigits: 2,
-});
 
 function executionLabel(state: FieldSessionState | undefined, noun: string) {
   if (state?.completed_at) {
@@ -241,7 +235,6 @@ export default function OrderDetailScreen() {
   const edited = wasEdited(order.created_at, order.updated_at);
   const canViewPrice = bootstrap.data?.capabilities.canViewOrderPrices === true;
   const isAdmin = bootstrap.data?.session.role === "admin";
-  const isOwner = bootstrap.data?.session.isOwner === true;
   const locationMissing = isLocationMissing(order.customer_location);
 
   return (
@@ -591,54 +584,18 @@ export default function OrderDetailScreen() {
           serviceStartedAt={order.field_progress?.serviceStartedAt ?? order.specialist_session?.started_at}
         />
 
-        {isOwner ? (
-          <View style={{ gap: spacing.md }}>
-            <TripCostEditor
-              key={`outbound-${order.version}-${order.price ?? "unset"}`}
-              orderId={order.id}
-              expectedVersion={order.version}
-              price={order.price}
-              driverName={order.driver_name}
-            />
-            {order.return_driver_id ? (
-              <TripCostEditor
-                key={`return-${order.version}-${order.return_price ?? "unset"}`}
-                orderId={order.id}
-                expectedVersion={order.version}
-                price={order.return_price ?? null}
-                driverName={order.return_driver_name ?? null}
-                leg="return"
-              />
-            ) : null}
-          </View>
-        ) : null}
+        {/* Any employee may set the district, now or after the visit; the trip
+            cost follows from it on the server. Only admins see the amount. */}
+        <TripDistrictCard
+          key={`district-${order.version}-${order.district_id ?? "none"}`}
+          order={order}
+          canViewPrice={canViewPrice}
+        />
 
         {/* Commercial and audit fields returned by the web order enrichment. */}
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title="بيانات الطلب" />
           <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
-            {canViewPrice && !isOwner ? (
-              <>
-                <DetailRow
-                  icon="banknote"
-                  label="تكلفة المشوار"
-                  value={order.price == null ? "غير محددة" : priceFormatter.format(order.price)}
-                  monospacedValue
-                />
-                <Divider inset={46} />
-                {order.return_driver_id ? (
-                  <>
-                    <DetailRow
-                      icon="banknote"
-                      label="تكلفة رحلة العودة"
-                      value={order.return_price == null ? "غير محددة" : priceFormatter.format(order.return_price)}
-                      monospacedValue
-                    />
-                    <Divider inset={46} />
-                  </>
-                ) : null}
-              </>
-            ) : null}
             <DetailRow
               icon="calendar"
               label="تاريخ إنشاء الطلب"

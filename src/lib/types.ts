@@ -195,7 +195,10 @@ export interface DriverOrder {
   customer_phone: string;
   duration_minutes: number;
   trip_type: TripType;
-  /** Owner-entered trip cost based on distance; null until Hanan records it. */
+  /**
+   * Trip cost. Copied from the district when one is chosen (see `district_id`);
+   * null while the order has no district. Older orders carry a hand-typed one.
+   */
   price: number | null;
   /** Separate fare paid to the return-only driver. */
   return_price?: number | null;
@@ -239,6 +242,8 @@ export interface DriverOrder {
   specialist_voice_path?: string | null;
   /** Photo of the customer's door, for the driver. Same storage convention. */
   door_photo_path?: string | null;
+  /** The customer's district, which prices the trip. Optional at every step. */
+  district_id?: string | null;
 }
 
 /**
@@ -253,6 +258,7 @@ export interface DriverOrderRow extends DriverOrder {
   driver_phone: string | null;
   return_driver_name?: string | null;
   return_driver_phone?: string | null;
+  district_name?: string | null;
   customer_name: string | null;
   /** Who last edited it, for the "عُدّل بواسطة …" line. */
   updated_by_name: string | null;
@@ -267,6 +273,15 @@ export interface DriverOrderRow extends DriverOrder {
 }
 
 /** Per-tenant dispatch pricing. Owner/manager-only (RLS blocks agents). */
+/** A district the admins price once, so an order's trip cost follows from it. */
+export interface District {
+  id: string;
+  name: string;
+  /** Admin-only. Stripped to null for everyone else. */
+  trip_price: number | null;
+  is_active: boolean;
+}
+
 export interface DispatchSettings {
   fullTripPrice: number; // ذهاب وعودة
   halfTripPrice: number; // ذهاب فقط

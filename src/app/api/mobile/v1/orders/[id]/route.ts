@@ -17,6 +17,11 @@ import {
   orderForMobileSession,
 } from "@/lib/mobile/orders";
 import { OperationalCommandError } from "@/lib/operational-commands";
+import {
+  DISTRICT_UNAVAILABLE_MESSAGE,
+  isDistrictUnavailable,
+  parseOrderDistrictId,
+} from "@/lib/districts";
 import type { TripType } from "@/lib/types";
 
 const TRIP_TYPES: TripType[] = ["one_way", "round_trip"];
@@ -233,6 +238,15 @@ export async function PATCH(
     patch.returnPrice = returnPrice;
   }
 
+  // Any member: the district is a fact about the address. Its fare is applied
+  // by the database, which keeps the price itself admin-only.
+  try {
+    const districtId = parseOrderDistrictId(body.districtId);
+    if (districtId !== undefined) patch.districtId = districtId;
+  } catch {
+    return mobileError(400, "INVALID_DISTRICT", "الحي غير صحيح");
+  }
+
   if (
     patch.returnDriverId &&
     patch.driverId &&
@@ -279,6 +293,9 @@ export async function PATCH(
       order: orderForMobileSession(order, auth.session),
     });
   } catch (error) {
+    if (isDistrictUnavailable(error)) {
+      return mobileError(400, "DISTRICT_NOT_AVAILABLE", DISTRICT_UNAVAILABLE_MESSAGE);
+    }
     if (error instanceof OperationalCommandError && error.isConflict) {
       return mobileError(
         409,

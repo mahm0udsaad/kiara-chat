@@ -199,6 +199,9 @@ function describe(eventType: string, payload: Payload): string | null {
         specialistId: "الأخصائية",
         driverId: "السائق",
         price: "الأجرة",
+        returnPrice: "أجرة العودة",
+        returnDriverId: "سائق العودة",
+        districtId: "الحي",
       };
       const changed = Object.keys(patch)
         .map((key) => fields[key])

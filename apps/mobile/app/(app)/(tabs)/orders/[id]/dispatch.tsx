@@ -22,6 +22,7 @@ import {
 } from "@/components/dispatch-voice-note";
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
 import { RosterPicker } from "@/components/roster-picker";
+import { DistrictPicker } from "@/components/orders/district-picker";
 import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-state";
 import { Card } from "@/components/ui/card";
 import { Segmented } from "@/components/ui/segmented";
@@ -340,6 +341,9 @@ function DispatchForm({
   const [serviceAssignments, setServiceAssignments] = useState<Record<string, string>>({});
   const [editingSpecialist, setEditingSpecialist] = useState(false);
   const [driverId, setDriverId] = useState<string | null>(null);
+  // Optional: it prices the trip. Left empty, the order goes out with no cost
+  // and the district can be chosen later from the order.
+  const [districtId, setDistrictId] = useState<string | null>(null);
   const [note, setNote] = useState("");
   /**
    * Typed instructions or spoken ones. A recording is sent as its own WhatsApp
@@ -384,6 +388,7 @@ function DispatchForm({
       setSpecialistId(order.data.order.specialist_id ?? preferred?.id ?? null);
       setSecondSpecialistId(order.data.order.second_specialist_id ?? null);
       setDriverId(order.data.order.driver_id);
+      setDistrictId(order.data.order.district_id ?? null);
       initializedAssignments.current = true;
     }
   }, [options.data, order.data, preferredSpecialistName]);
@@ -611,6 +616,7 @@ function DispatchForm({
         serviceAssignments,
         driverId,
         customerLocation: location.trim(),
+        districtId,
         driverMessage: driverMessage.trim(),
         specialistMessage: specialistMessage.trim(),
         specialistVoice:
@@ -727,6 +733,14 @@ function DispatchForm({
                 }
               />
             </View>
+
+            <DistrictPicker
+              districts={options.data.districts ?? []}
+              value={districtId}
+              currentName={current.district_name}
+              onChange={setDistrictId}
+              hint="تكلفة المشوار تُحسب من الحي. يمكن تركه الآن واختياره لاحقًا من صفحة الطلب."
+            />
 
             {/* A pin puts the driver on the street; the photo tells him which
                 gate. Optional — a missing one never holds up a dispatch. */}

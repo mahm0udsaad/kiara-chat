@@ -1,4 +1,9 @@
 import { createBooking } from "@/lib/dispatch";
+import {
+  DISTRICT_UNAVAILABLE_MESSAGE,
+  isDistrictUnavailable,
+  parseOrderDistrictId,
+} from "@/lib/districts";
 import { CONVERSATION_EVENTS, recordConversationEvent } from "@/lib/audit";
 import { contactOutcomeOf } from "@/lib/contact-outcome";
 import { setContactOutcome } from "@/lib/interactions";
@@ -41,6 +46,12 @@ export async function POST(
       : "";
   const durationMinutes = Number(body.durationMinutes);
   const tripType = body.tripType === "round_trip" ? "round_trip" : "one_way";
+  let districtId: string | null;
+  try {
+    districtId = parseOrderDistrictId(body.districtId) ?? null;
+  } catch {
+    return mobileError(400, "INVALID_DISTRICT", "الحي غير صحيح");
+  }
 
   if (!arrivalAt || Number.isNaN(Date.parse(arrivalAt))) {
     return mobileError(400, "INVALID_ARRIVAL", "موعد الوصول غير صحيح");
@@ -78,6 +89,7 @@ export async function POST(
       customerLocation,
       durationMinutes,
       tripType,
+      districtId,
     });
     if (contactOutcomeOf(conversation) !== "booked") {
       try {
@@ -100,6 +112,9 @@ export async function POST(
     }
     return mobileData({ order: { ...order, price: null } }, 201);
   } catch (error) {
+    if (isDistrictUnavailable(error)) {
+      return mobileError(400, "DISTRICT_NOT_AVAILABLE", DISTRICT_UNAVAILABLE_MESSAGE);
+    }
     return mobileServerError(
       error,
       "CONVERSATION_ORDER_FAILED",

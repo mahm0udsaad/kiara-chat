@@ -1,5 +1,6 @@
 import type {
   DispatchSettings,
+  District,
   Driver,
   Specialist,
 } from "@/lib/types";
@@ -8,6 +9,8 @@ export interface DispatchOptions {
   specialists: Specialist[];
   drivers: Driver[];
   settings: DispatchSettings | null;
+  /** Active districts. `trip_price` is null for non-admins. */
+  districts?: District[];
 }
 
 let cachedRequest: Promise<DispatchOptions> | null = null;

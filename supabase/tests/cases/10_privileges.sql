@@ -76,8 +76,8 @@ begin
       where n.nspname = 'public'
         and (p.proname like 'kiara_command_%'
           or p.proname in ('kiara_claim_outbox_event', 'kiara_apply_rekaz_snapshot'))
-    ) = 10,
-    'all ten command functions exist'
+    ) = 11,
+    'all eleven command functions exist'
   );
 end
 $$;
