@@ -12,6 +12,15 @@ const MAP_LINK =
   /https?:\/\/(?:maps\.app\.goo\.gl\/\S+|goo\.gl\/maps\/\S+|(?:www\.)?google\.[a-z.]+\/maps\S*|maps\.google\.[a-z.]+\/\S*|(?:www\.)?waze\.com\/\S+)/i;
 const ANY_LINK = /https?:\/\/\S+/i;
 const COORDINATES = /(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/;
+/**
+ * Coordinates inferred from an ordinary text message must look like a real
+ * map position, not a decimal written with a comma. Indonesian appointment
+ * copy commonly contains durations such as `1,5 jam`; the permissive pin
+ * parser used to read that as latitude 1, longitude 5 and replace the whole
+ * outbound text with a location card.
+ */
+const TEXT_COORDINATES =
+  /(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})/;
 
 const ADDRESS_WORDS = new Set(
   [
@@ -42,7 +51,7 @@ function normalizeArabic(text: string): string {
 }
 
 function looksLikeAddress(text: string): boolean {
-  if (PLUS_CODE.test(text) || COORDINATES.test(text)) return true;
+  if (PLUS_CODE.test(text) || TEXT_COORDINATES.test(text)) return true;
   const normalized = normalizeArabic(text);
   if (ADDRESS_PHRASES.some((phrase) => normalized.includes(phrase))) return true;
   return normalized
@@ -91,7 +100,10 @@ function coordinatesFrom(message: ConversationMessage): Coordinates | null {
     }
   }
 
-  const match = COORDINATES.exec(message.content ?? "");
+  const coordinatePattern = PIN_TYPES.has(message.message_type)
+    ? COORDINATES
+    : TEXT_COORDINATES;
+  const match = coordinatePattern.exec(message.content ?? "");
   if (!match) return null;
   return validCoordinates(Number(match[1]), Number(match[2]));
 }

@@ -50,6 +50,7 @@ export async function POST(
         specialistId: order.specialistId,
         secondSpecialistId: order.secondSpecialistId,
         driverId: order.driverId,
+        returnDriverId: order.returnDriverId,
         specialistCopy: { title: "إلغاء الطلب", body: notification },
         driverCopy: { title: "إلغاء الطلب", body: notification },
       });

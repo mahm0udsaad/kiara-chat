@@ -95,6 +95,7 @@ const CONTACT_OUTCOME_OPTIONS: readonly ContactOutcome[] = [
 const SECTION_OPTIONS: { value: ConversationSection | null; label: string }[] = [
   { value: "orders", label: "قسم الطلبات" },
   { value: "replies", label: "قسم الردود" },
+  { value: "complaints", label: "قسم الشكاوى" },
   { value: null, label: "بدون قسم" },
 ];
 

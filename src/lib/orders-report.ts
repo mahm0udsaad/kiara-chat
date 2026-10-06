@@ -113,9 +113,12 @@ type LocalOrderRow = {
   customer_phone: string;
   specialist_id: string | null;
   driver_id: string | null;
+  return_driver_id: string | null;
+  trip_type: "one_way" | "round_trip";
   arrival_at: string;
   duration_minutes: number;
   price: number | null;
+  return_price: number | null;
   status: string;
   sent_at: string | null;
   rekaz_source_id: string | null;
@@ -171,7 +174,7 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
       .lte("arrival_at", rangeEnd),
     admin
       .from("driver_orders")
-      .select("id, conversation_id, customer_phone, specialist_id, driver_id, arrival_at, duration_minutes, price, status, sent_at, rekaz_source_id")
+      .select("id, conversation_id, customer_phone, specialist_id, driver_id, return_driver_id, trip_type, arrival_at, duration_minutes, price, return_price, status, sent_at, rekaz_source_id")
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .gte("arrival_at", rangeStart)
       .lte("arrival_at", rangeEnd),
@@ -181,7 +184,7 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
   const reservations = (reservationResult.data ?? []) as ReservationRow[];
   const locals = (localResult.data ?? []) as LocalOrderRow[];
 
-  const driverIds = [...new Set(locals.map((order) => order.driver_id).filter((id): id is string => Boolean(id)))];
+  const driverIds = [...new Set(locals.flatMap((order) => [order.driver_id, order.return_driver_id]).filter((id): id is string => Boolean(id)))];
   const specialistIds = [...new Set(locals.map((order) => order.specialist_id).filter((id): id is string => Boolean(id)))];
   const conversationIds = [...new Set(locals.map((order) => order.conversation_id).filter(Boolean))];
   const [progressResult, changesResult, editEventsResult, driversResult, specialistsResult, conversationsResult] = await Promise.all([
@@ -345,7 +348,9 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
         : order.reservations.reduce((sum, row) => sum + (Number(row.payload?.amount) || 0), 0);
     const orderRefund = isCancelled ? 0 : Number(orderRecord?.refunded) || 0;
     const serviceNet = Math.max(0, grossService - orderRefund);
-    const tripRevenue = isCancelled ? 0 : Number(order.local?.price) || 0;
+    const tripRevenue = isCancelled
+      ? 0
+      : (Number(order.local?.price) || 0) + (Number(order.local?.return_price) || 0);
 
     if (isCancelled) cancelled += 1;
     else if (isCompleted) completed += 1;
@@ -389,7 +394,11 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
       const overrunMinutes = actualMinutes == null ? 0 : Math.max(0, actualMinutes - local.duration_minutes);
       const isLate = lateMinutes > 15;
       const isOverrun = overrunMinutes > 15;
-      const isMissingCost = Boolean(local.driver_id && isDispatched && local.price == null);
+      const missingOutboundCost = Boolean(local.driver_id && isDispatched && local.price == null);
+      const missingReturnCost = Boolean(
+        local.return_driver_id && isDispatched && local.return_price == null,
+      );
+      const isMissingCost = missingOutboundCost || missingReturnCost;
 
       if (actualMinutes != null) {
         timedOrders += 1;
@@ -398,26 +407,31 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
       }
       if (isLate) lateOrders += 1;
       if (isOverrun) serviceOverruns += 1;
-      if (isMissingCost) missingTripCosts += 1;
+      if (missingOutboundCost) missingTripCosts += 1;
+      if (missingReturnCost) missingTripCosts += 1;
       if (isDispatched && local.price != null) tripCosts += Number(local.price) || 0;
+      if (isDispatched && local.return_price != null) tripCosts += Number(local.return_price) || 0;
 
-      if (local.driver_id && isDispatched) {
-        const current = settlements.get(local.driver_id) ?? {
-          driverId: local.driver_id,
-          driverName: driverNames.get(local.driver_id) || "سائق غير مسمى",
+      const addSettlement = (driverId: string | null, cost: number | null) => {
+        if (!driverId || !isDispatched) return;
+        const current = settlements.get(driverId) ?? {
+          driverId,
+          driverName: driverNames.get(driverId) || "سائق غير مسمى",
           orders: 0,
           recordedCosts: 0,
           missingCosts: 0,
           totalTripCost: 0,
         };
         current.orders += 1;
-        if (local.price == null) current.missingCosts += 1;
+        if (cost == null) current.missingCosts += 1;
         else {
           current.recordedCosts += 1;
-          current.totalTripCost = money(current.totalTripCost + Number(local.price));
+          current.totalTripCost = money(current.totalTripCost + Number(cost));
         }
-        settlements.set(local.driver_id, current);
-      }
+        settlements.set(driverId, current);
+      };
+      addSettlement(local.driver_id, local.price);
+      addSettlement(local.return_driver_id, local.return_price);
 
       const kinds: OrderProblemKind[] = [];
       if (isLate) kinds.push("late");
@@ -429,13 +443,20 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
           orderId: local.id,
           customerName: customerNames.get(local.conversation_id) ?? null,
           customerPhone: local.customer_phone,
-          driverName: local.driver_id ? driverNames.get(local.driver_id) ?? null : null,
+          driverName: [local.driver_id, local.return_driver_id]
+            .filter((id): id is string => Boolean(id))
+            .map((id) => driverNames.get(id))
+            .filter((name): name is string => Boolean(name))
+            .join("، ") || null,
           arrivalAt: local.arrival_at,
           bookedServiceMinutes: local.duration_minutes,
           actualServiceMinutes: actualMinutes,
           lateMinutes,
           overrunMinutes,
-          tripCost: local.price == null ? null : Number(local.price),
+          tripCost:
+            local.price == null && local.return_price == null
+              ? null
+              : (Number(local.price) || 0) + (Number(local.return_price) || 0),
           completionNote: progress?.completion_note?.trim() || null,
           kinds,
         });

@@ -43,12 +43,13 @@ function mediaType(contentType: string): "image" | "video" | "audio" | "document
 export const metaTransport: MessageTransport = {
   provider: "meta",
 
-  async sendText(toE164, body) {
+  async sendText(toE164, body, options) {
     return sendMessage({
       recipient_type: "individual",
       to: recipient(toE164),
       type: "text",
       text: { preview_url: false, body },
+      ...(options?.contextMessageId ? { context: { message_id: options.contextMessageId } } : {}),
     });
   },
 

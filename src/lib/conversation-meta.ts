@@ -4,7 +4,7 @@
  * Two independent owner-only decisions, both stored in `conversations.metadata`
  * (no schema change — the column already carries cs_status/booking_request):
  *
- * - `section`  — which CS desk the chat belongs to (الطلبات / الردود). A label
+ * - `section`  — which CS desk the chat belongs to (الطلبات / الردود / الشكاوى). A label
  *                for filtering; it does NOT restrict anyone.
  * - `routed_to`— an exclusive route to one team member. A routed chat is
  *                invisible to every other employee: it never reaches their
@@ -22,12 +22,17 @@ import type {
 export const SECTION_LABEL: Record<ConversationSection, string> = {
   orders: "قسم الطلبات",
   replies: "قسم الردود",
+  complaints: "قسم الشكاوى",
 };
 
-export const SECTION_ORDER: ConversationSection[] = ["orders", "replies"];
+export const SECTION_ORDER: ConversationSection[] = [
+  "orders",
+  "replies",
+  "complaints",
+];
 
 export function isConversationSection(v: unknown): v is ConversationSection {
-  return v === "orders" || v === "replies";
+  return v === "orders" || v === "replies" || v === "complaints";
 }
 
 type RoutingMeta = {

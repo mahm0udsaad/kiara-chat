@@ -13,6 +13,10 @@
  * telemetry: nothing here may block or slow the field workflow, and the server
  * judges the visit from the step taps when GPS is missing.
  *
+ * It never asks for permission. The driver grants it (or not) in the location
+ * window (components/field/location-permission-gate); here a phone without it
+ * simply sends nothing, and the steps run exactly as they always have.
+ *
  * The service stops itself when the server says the trip is over (client
  * reached, service started, cancelled, reassigned), and after a hard cap in
  * case the phone never hears back.
@@ -20,15 +24,26 @@
 import * as Location from "expo-location";
 import * as SecureStore from "expo-secure-store";
 import { requireOptionalNativeModule } from "expo";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Platform } from "react-native";
 
 import { ApiError, apiRequest } from "@/lib/api";
+import { onLocationBecameUsable } from "@/lib/driver-location";
 import type { PunctualitySummary } from "@/types/api";
 
-/** Master switch for driver GPS telemetry. Off while the field app is being
- *  kept as simple as possible for the team. */
-const TRIP_TRACKING_ENABLED = false;
+type SampleResponse = {
+  /** Null when the order has no punctuality plan; the path is still kept. */
+  punctuality: PunctualitySummary | null;
+  /** Absent on servers that predate it, where `punctuality` always exists. */
+  trackingActive?: boolean;
+};
+
+/**
+ * Master switch on the phone. The server has its own (an empty
+ * `tracking_starts_at`, or DRIVER_TRIP_TRACKING=off), which stops every phone
+ * on its next sample without shipping an update.
+ */
+const TRIP_TRACKING_ENABLED = true;
 
 const TASK = "kiara-driver-trip";
 const TRIP_KEY = "kiara.driverTrip.v1";
@@ -81,7 +96,7 @@ async function writeTrip(trip: Trip | null): Promise<void> {
   }
 }
 
-const listeners = new Set<(orderId: string, summary: PunctualitySummary) => void>();
+const listeners = new Set<(orderId: string) => void>();
 let inFlight = false;
 let lastSentAt = 0;
 
@@ -108,7 +123,7 @@ async function sendSample(orderId: string, position: Location.LocationObject): P
   inFlight = true;
   lastSentAt = Date.now();
   try {
-    const response = await apiRequest<{ punctuality: PunctualitySummary }>(
+    const response = await apiRequest<SampleResponse>(
       `/field/orders/${orderId}/punctuality`,
       {
         method: "POST",
@@ -121,8 +136,9 @@ async function sendSample(orderId: string, position: Location.LocationObject): P
         }),
       },
     );
-    for (const listener of listeners) listener(orderId, response.punctuality);
-    if (!response.punctuality.trackingActive) await stopTripFor(orderId);
+    for (const listener of listeners) listener(orderId);
+    const active = response.trackingActive ?? response.punctuality?.trackingActive ?? true;
+    if (!active) await stopTripFor(orderId);
   } catch (error) {
     // 409: the trip is over or not tracked. 403/404: no longer his order.
     if (error instanceof ApiError && [403, 404, 409].includes(error.status)) {
@@ -150,11 +166,9 @@ if (manager && !manager.isTaskDefined(TASK)) {
   });
 }
 
+/** Check only — the system dialog belongs to the location window, never to a trip. */
 async function hasForegroundPermission(): Promise<boolean> {
-  const current = await Location.getForegroundPermissionsAsync();
-  if (current.status === "granted") return true;
-  if (!current.canAskAgain) return false;
-  return (await Location.requestForegroundPermissionsAsync()).status === "granted";
+  return (await Location.getForegroundPermissionsAsync()).status === "granted";
 }
 
 async function startTripService(orderId: string): Promise<boolean> {
@@ -179,18 +193,19 @@ async function startTripService(orderId: string): Promise<boolean> {
 /**
  * Keeps trip tracking in step with the order the driver is looking at.
  *
- * `onUpdate` must be stable (useCallback). `active` is the server's `trackingActive` for this driver, or null while it
- * is not known yet: unknown must never stop a service that is already running
- * for this order, or reopening the screen would cut the trip.
+ * `onUpdate` must be stable (useCallback). `active` is the server's
+ * `tripTrackingActive` for this driver, or null while it is not known yet:
+ * unknown must never stop a service that is already running for this order,
+ * or reopening the screen would cut the trip.
  */
 export function useDriverTripTracking(
   orderId: string,
   active: boolean | null,
-  onUpdate: (summary: PunctualitySummary) => void,
+  onUpdate: () => void,
 ) {
   useEffect(() => {
-    const listener = (id: string, summary: PunctualitySummary) => {
-      if (id === orderId) onUpdate(summary);
+    const listener = (id: string) => {
+      if (id === orderId) onUpdate();
     };
     listeners.add(listener);
     return () => {
@@ -198,13 +213,15 @@ export function useDriverTripTracking(
     };
   }, [onUpdate, orderId]);
 
+  // Location allowed from the permission window while this screen is open:
+  // start the trip now rather than on the next visit to the order.
+  const [usableTick, setUsableTick] = useState(0);
+  useEffect(() => onLocationBecameUsable(() => setUsableTick((tick) => tick + 1)), []);
+
   useEffect(() => {
-    // Switched off with the step-time location capture. This is telemetry —
-    // the server already judges a visit from the step taps when GPS is missing
-    // — and while the field team cannot finish visits, nothing on their screen
-    // should be asking for a position, holding a foreground service open, or
-    // raising a permission dialog over a button they are trying to press.
-    // Flip TRIP_TRACKING_ENABLED back to true to restore it.
+    // Telemetry only — the server judges a visit from the step taps when GPS
+    // is missing — so nothing here waits on, or is awaited by, a step. No
+    // permission: nothing is sent. Any failure: nothing is sent.
     if (!TRIP_TRACKING_ENABLED) {
       void stopTripFor(orderId);
       return;
@@ -242,5 +259,5 @@ export function useDriverTripTracking(
       cancelled = true;
       watcher?.remove();
     };
-  }, [active, orderId]);
+  }, [active, orderId, usableTick]);
 }

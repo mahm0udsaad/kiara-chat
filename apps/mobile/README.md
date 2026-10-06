@@ -5,7 +5,7 @@ Expo Router mobile client for Kiara customer-service operations. The current MVP
 - Supabase email/password for operations staff and phone/password for specialists/drivers, with sessions stored in `expo-secure-store`.
 - Arabic RTL navigation and screens.
 - Role/bootstrap gate for owner, admin, customer-service staff, specialists, and drivers.
-- Inbox filters: `جديد`, `محادثاتي`, `غير مستلمة`, and `خطر`.
+- Inbox filters include `جديد`, `محادثاتي`, `السائقون`, and `خطر`.
 - Live typing indicators and animated reordering when assigned chats receive new messages.
 - Employee-scoped push notifications: assigned or exclusively routed chats notify only that team member's registered devices.
 - Conversation details, take-before-composer workflow, and text replies.

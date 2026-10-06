@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import Constants, { ExecutionEnvironment } from "expo-constants";
 import { Pressable, Text, View } from "react-native";
 
 import { CallPermissionPill } from "@/components/inbox/call-permission-pill";
@@ -6,9 +7,33 @@ import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { tapFeedback } from "@/lib/haptics";
 import { queryKeys } from "@/lib/queries";
-import { OutboundCall, type CallState } from "@/lib/webrtc/outbound-call";
+import type { CallState, OutboundCall } from "@/lib/webrtc/outbound-call";
 import { useTheme } from "@/providers/theme-provider";
 import { useQueryClient } from "@tanstack/react-query";
+
+type OutboundCallModule = typeof import("@/lib/webrtc/outbound-call");
+
+/**
+ * Expo Go does not bundle react-native-webrtc or react-native-incall-manager.
+ * Importing either module eagerly crashes the whole app, even when nobody
+ * opens or starts a call. Keep the native implementation outside Expo Go's
+ * runtime path and load it only when an installed build actually needs it.
+ */
+function isExpoGo(): boolean {
+  return (
+    Constants.executionEnvironment === ExecutionEnvironment.StoreClient ||
+    Constants.appOwnership === "expo"
+  );
+}
+
+let outboundCallModulePromise: Promise<OutboundCallModule> | null = null;
+function loadOutboundCall(): Promise<OutboundCallModule> | null {
+  if (isExpoGo()) return null;
+  if (!outboundCallModulePromise) {
+    outboundCallModulePromise = import("@/lib/webrtc/outbound-call");
+  }
+  return outboundCallModulePromise;
+}
 
 const IDLE: CallState = {
   phase: "idle",
@@ -114,7 +139,10 @@ export function CallControl({
 
   const startCall = useCallback(async () => {
     if (callRef.current) return;
-    const session = new OutboundCall();
+    const nativeCallModule = await loadOutboundCall();
+    if (!nativeCallModule) return;
+
+    const session = new nativeCallModule.OutboundCall();
     callRef.current = session;
 
     session.subscribe((state) => {
@@ -232,7 +260,7 @@ export function CallControl({
       <CallPermissionPill
         conversationId={conversationId}
         enabled={enabled}
-        onCall={() => void startCall()}
+        onCall={isExpoGo() ? undefined : () => void startCall()}
       />
       {/* Why the last attempt failed. Sits beside the control that produced it,
           because the alternative — an alert — is dismissed before it is read. */}

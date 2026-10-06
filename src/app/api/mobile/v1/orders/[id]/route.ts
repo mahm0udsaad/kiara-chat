@@ -56,12 +56,16 @@ async function rosterIdsAreValid(patch: OrderPatch): Promise<boolean> {
     patch.specialistId
       ? listSpecialists({ activeOnly: true })
       : Promise.resolve([]),
-    patch.driverId ? listDrivers({ activeOnly: true }) : Promise.resolve([]),
+    patch.driverId || patch.returnDriverId
+      ? listDrivers({ activeOnly: true })
+      : Promise.resolve([]),
   ]);
   return (
     (!patch.specialistId ||
       specialists.some((item) => item.id === patch.specialistId)) &&
-    (!patch.driverId || drivers.some((item) => item.id === patch.driverId))
+    (!patch.driverId || drivers.some((item) => item.id === patch.driverId)) &&
+    (!patch.returnDriverId ||
+      drivers.some((item) => item.id === patch.returnDriverId))
   );
 }
 
@@ -171,6 +175,23 @@ export async function PATCH(
       typeof body.driverId === "string" ? body.driverId.trim() || null : null;
   }
 
+  if (body.returnDriverId !== undefined) {
+    if (
+      body.returnDriverId !== null &&
+      typeof body.returnDriverId !== "string"
+    ) {
+      return mobileError(
+        400,
+        "INVALID_RETURN_DRIVER",
+        "returnDriverId must be a string or null",
+      );
+    }
+    patch.returnDriverId =
+      typeof body.returnDriverId === "string"
+        ? body.returnDriverId.trim() || null
+        : null;
+  }
+
   if (body.price !== undefined) {
     if (!auth.session.isOwner) {
       return mobileError(
@@ -185,6 +206,43 @@ export async function PATCH(
       return mobileError(400, "INVALID_PRICE", "price must be zero or greater");
     }
     patch.price = price;
+  }
+
+  if (body.returnPrice !== undefined) {
+    if (!auth.session.isOwner) {
+      return mobileError(
+        403,
+        "PRICE_FORBIDDEN",
+        "Only the owner can edit the return trip cost",
+      );
+    }
+    const returnPrice =
+      body.returnPrice === null || body.returnPrice === ""
+        ? null
+        : Number(body.returnPrice);
+    if (
+      returnPrice !== null &&
+      (!Number.isFinite(returnPrice) || returnPrice < 0)
+    ) {
+      return mobileError(
+        400,
+        "INVALID_RETURN_PRICE",
+        "returnPrice must be zero or greater",
+      );
+    }
+    patch.returnPrice = returnPrice;
+  }
+
+  if (
+    patch.returnDriverId &&
+    patch.driverId &&
+    patch.returnDriverId === patch.driverId
+  ) {
+    return mobileError(
+      400,
+      "RETURN_DRIVER_MUST_DIFFER",
+      "Return driver must differ from outbound driver",
+    );
   }
 
   if (!Object.keys(patch).length) {

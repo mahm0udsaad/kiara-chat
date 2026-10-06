@@ -16,19 +16,31 @@ export interface TeamMemberRow extends AgentInfo {
   /** Owner-granted extras beyond what `role` already allows. Empty for admins
    *  — an admin's role already covers everything grantable. */
   permissions: PermissionKey[];
+  assignedConversationCount: number;
 }
 
 /** Everyone on the team, active or suspended (the admin view). */
 export async function listTeam(): Promise<TeamMemberRow[]> {
   const admin = getAdminSupabaseClient();
-  const [{ data }, permissions] = await Promise.all([
+  const [{ data }, permissions, { data: assignedConversations }] = await Promise.all([
     admin
       .from("team_members")
       .select("id, user_id, role, full_name, is_active, created_at")
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .order("created_at"),
     allTeamPermissions(),
+    admin
+      .from("conversations")
+      .select("assigned_to")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .not("assigned_to", "is", null),
   ]);
+
+  const assignedCounts = new Map<string, number>();
+  for (const row of assignedConversations ?? []) {
+    const assignedTo = row.assigned_to as string;
+    assignedCounts.set(assignedTo, (assignedCounts.get(assignedTo) ?? 0) + 1);
+  }
 
   return Promise.all(
     (data ?? []).map(async (m) => {
@@ -49,6 +61,7 @@ export async function listTeam(): Promise<TeamMemberRow[]> {
         isActive: Boolean(m.is_active),
         createdAt: (m.created_at as string) ?? null,
         permissions: permissions[m.id as string] ?? [],
+        assignedConversationCount: assignedCounts.get(m.id as string) ?? 0,
       };
     })
   );
@@ -100,6 +113,7 @@ export async function createTeamMember(input: {
     isActive: true,
     createdAt: (member.created_at as string) ?? null,
     permissions: [],
+    assignedConversationCount: 0,
   };
 }
 

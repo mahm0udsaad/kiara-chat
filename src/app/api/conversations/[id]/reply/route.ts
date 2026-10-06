@@ -4,6 +4,7 @@ import { denyIfRouted } from "@/lib/conversation-access";
 import { replyDenialFor } from "@/lib/conversation-reply-access";
 import { getConversationById } from "@/lib/inbox";
 import { sendReply } from "@/lib/interactions";
+import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 
 export async function POST(
   request: Request,
@@ -40,8 +41,27 @@ export async function POST(
   const text = (body?.body as string | undefined)?.trim();
   if (!text) return NextResponse.json({ error: "Empty message" }, { status: 400 });
   try {
+    let replyTo: { id: string; role: string; text: string; message_type: string; external_message_sid: string | null } | undefined;
+    if (typeof body?.replyToMessageId === "string") {
+      const admin = getAdminSupabaseClient();
+      const { data: referenced } = await admin
+        .from("messages")
+        .select("id, role, content, message_type, external_message_sid")
+        .eq("id", body.replyToMessageId)
+        .eq("conversation_id", id)
+        .maybeSingle();
+      if (!referenced) return NextResponse.json({ error: "رسالة الرد غير موجودة" }, { status: 400 });
+      replyTo = {
+        id: referenced.id as string,
+        role: referenced.role as string,
+        text: (referenced.content as string | null) ?? "",
+        message_type: referenced.message_type as string,
+        external_message_sid: (referenced.external_message_sid as string | null) ?? null,
+      };
+    }
     const teamMemberId = session.teamMemberId;
-    const result = await sendReply(id, { email: session.email, teamMemberId }, text);
+    const clientRequestId = typeof body?.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+    const result = await sendReply(id, { email: session.email, teamMemberId }, text, clientRequestId, replyTo);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     return NextResponse.json(

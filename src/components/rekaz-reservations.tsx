@@ -142,12 +142,32 @@ const DAY_KEY_FMT = new Intl.DateTimeFormat("en-CA", {
 
 const STATUS_META: Record<
   string,
-  { label: string; variant: "default" | "secondary" | "outline" | "destructive" }
+  {
+    label: string;
+    variant: "default" | "secondary" | "outline" | "destructive";
+    className: string;
+  }
 > = {
-  Confirmed: { label: "مؤكد", variant: "default" },
-  Pending: { label: "غير مؤكد", variant: "secondary" },
-  Done: { label: "مكتمل", variant: "outline" },
-  Cancelled: { label: "ملغي", variant: "destructive" },
+  Confirmed: {
+    label: "مؤكد",
+    variant: "outline",
+    className: "border-emerald-300 bg-emerald-50 text-emerald-800",
+  },
+  Pending: {
+    label: "طلب",
+    variant: "outline",
+    className: "border-orange-300 bg-orange-50 text-orange-800",
+  },
+  Done: {
+    label: "مكتمل",
+    variant: "outline",
+    className: "border-blue-300 bg-blue-50 text-blue-800",
+  },
+  Cancelled: {
+    label: "ملغي",
+    variant: "destructive",
+    className: "",
+  },
 };
 const PAYMENT_LABEL: Record<string, string> = {
   Paid: "تم الدفع",
@@ -195,14 +215,16 @@ function reservationIssues(reservation: RekazReservation): string[] {
 }
 
 function visitStatus(visit: Visit): string {
-  if (visit.services.some((service) => service.status === "Pending")) {
-    return "Pending";
-  }
-  if (visit.services.every((service) => service.status === "Done")) {
+  const live = visit.services.filter((service) => service.status !== "Cancelled");
+  if (!live.length) return "Cancelled";
+  if (
+    live.every((service) => service.status === "Done") &&
+    live.every((service) => service.payment === "Paid")
+  ) {
     return "Done";
   }
-  if (visit.services.every((service) => service.status === "Cancelled")) {
-    return "Cancelled";
+  if (live.some((service) => service.status === "Pending")) {
+    return "Pending";
   }
   return "Confirmed";
 }
@@ -488,6 +510,15 @@ export function RekazReservations({
   const requestDriver = useCallback(
     async (visit: Visit) => {
       setError(null);
+      const status = visitStatus(visit);
+      if (status !== "Confirmed") {
+        setError(
+          status === "Done"
+            ? "الزيارة مكتملة في ركاز — لا يمكن طلب سائق جديد لها"
+            : "الحجز ما زال طلبًا في ركاز — أكّدي الحجز هناك أولًا",
+        );
+        return;
+      }
       if (followUps[visit.key]?.status === "cancelled") {
         setError("لا يمكن طلب سائق لزيارة ألغتها العميلة");
         return;
@@ -1019,7 +1050,9 @@ export function RekazReservations({
                 const meta = STATUS_META[status] ?? {
                   label: status || "—",
                   variant: "outline" as const,
+                  className: "",
                 };
+                const dispatchable = status === "Confirmed";
                 const issues = visitIssues(visit);
                 const providers = visitProviders(visit);
                 const total = visit.services.reduce(
@@ -1084,7 +1117,7 @@ export function RekazReservations({
                                   specialistName: providers[0] ?? null,
                                 })
                               }
-                              disabled={cancelled}
+                              disabled={cancelled || !dispatchable}
                             >
                               <Car data-icon="inline-start" />
                               تأكيد الحجز
@@ -1093,7 +1126,9 @@ export function RekazReservations({
                             <Button
                               size="sm"
                               onClick={() => requestDriver(visit)}
-                              disabled={preparing === visit.key || cancelled}
+                              disabled={
+                                preparing === visit.key || cancelled || !dispatchable
+                              }
                               className="whitespace-nowrap"
                             >
                               {preparing === visit.key ? (
@@ -1177,7 +1212,9 @@ export function RekazReservations({
                       </TableCell>
 
                       <TableCell>
-                        <Badge variant={meta.variant}>{meta.label}</Badge>
+                        <Badge variant={meta.variant} className={meta.className}>
+                          {meta.label}
+                        </Badge>
                         {issues.length ? (
                           <p className="mt-1 max-w-40 text-xs text-destructive" title={issues.join("، ")}>
                             {issues.join(" · ")}
@@ -1527,20 +1564,31 @@ function VisitCard({
   onReviewDispatch: () => void;
 }) {
   const total = visit.services.reduce((sum, s) => sum + s.amount, 0);
-  const status = visit.services.some((s) => s.status === "Pending")
-    ? "Pending"
-    : visit.services.every((s) => s.status === "Done")
-      ? "Done"
-      : "Confirmed";
-  const meta = STATUS_META[status] ?? { label: status, variant: "outline" as const };
+  const status = visitStatus(visit);
+  const dispatchable = status === "Confirmed";
+  const meta = STATUS_META[status] ?? {
+    label: status,
+    variant: "outline" as const,
+    className: "",
+  };
+  const cardStateClass =
+    status === "Pending"
+      ? "border-orange-300 bg-orange-50/50"
+      : status === "Confirmed"
+        ? "border-emerald-300 bg-emerald-50/50"
+        : status === "Done"
+          ? "border-blue-300 bg-blue-50/50"
+          : "";
   return (
-    <Card size="sm" className="h-full">
+    <Card size="sm" className={cn("h-full", cardStateClass)}>
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-sm tabular-nums">
             {TIME_FMT.format(new Date(visit.startAt))} ← {TIME_FMT.format(visit.endAt)}
           </CardTitle>
-          <Badge variant={meta.variant}>{meta.label}</Badge>
+          <Badge variant={meta.variant} className={meta.className}>
+            {meta.label}
+          </Badge>
         </div>
         <button
           type="button"
@@ -1589,7 +1637,7 @@ function VisitCard({
               size="sm"
               variant="outline"
               onClick={onReviewDispatch}
-              disabled={followUp?.status === "cancelled"}
+              disabled={followUp?.status === "cancelled" || !dispatchable}
             >
               <Car data-icon="inline-start" />
               تأكيد الحجز
@@ -1598,7 +1646,9 @@ function VisitCard({
             <Button
               size="sm"
               onClick={onRequestDriver}
-              disabled={preparing || followUp?.status === "cancelled"}
+              disabled={
+                preparing || followUp?.status === "cancelled" || !dispatchable
+              }
             >
               {preparing ? (
                 <Loader2 data-icon="inline-start" className="animate-spin" />
@@ -1608,6 +1658,18 @@ function VisitCard({
               طلب سائق
             </Button>
           )}
+          {!dispatchable && status !== "Cancelled" ? (
+            <p
+              className={cn(
+                "w-full text-xs",
+                status === "Done" ? "text-blue-800" : "text-orange-800",
+              )}
+            >
+              {status === "Done"
+                ? "اكتملت الخدمة وتم الدفع"
+                : "يلزم تأكيد العميلة وتسجيل العربون في ركاز"}
+            </p>
+          ) : null}
           <Button size="sm" variant="outline" onClick={onOpenConversation} disabled={opening}>
             {opening ? (
               <Loader2 data-icon="inline-start" className="animate-spin" />

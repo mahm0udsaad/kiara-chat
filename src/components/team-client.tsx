@@ -1,9 +1,21 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Loader2, UserPlus, KeyRound, Ban, RotateCcw, Check, Copy, Wand2, ShieldCheck } from "lucide-react";
+import { Loader2, UserPlus, KeyRound, Ban, RotateCcw, Check, Copy, Wand2, ShieldCheck, UserX } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/modal";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Spinner } from "@/components/ui/spinner";
 import type { TeamMemberRow } from "@/lib/team";
 import { GRANTABLE_PERMISSIONS, PERMISSION_LABEL, type PermissionKey } from "@/lib/permissions";
 
@@ -28,6 +40,11 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [releaseTarget, setReleaseTarget] = useState<
+    { scope: "all"; label: string } | { scope: "member"; member: TeamMemberRow }
+    | null
+  >(null);
+  const [releaseBusy, setReleaseBusy] = useState(false);
 
   // Password reset dialog
   const [resetTarget, setResetTarget] = useState<TeamMemberRow | null>(null);
@@ -160,6 +177,50 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
     setCopied(false);
   }, []);
 
+  const releaseConversations = useCallback(async () => {
+    if (!releaseTarget || releaseBusy) return;
+    setReleaseBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch("/api/conversations/release-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          releaseTarget.scope === "all"
+            ? { scope: "all" }
+            : { scope: "member", teamMemberId: releaseTarget.member.id },
+        ),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        count?: number;
+      };
+      if (!response.ok) throw new Error(data.error ?? "تعذّر إطلاق المحادثات");
+      const count = data.count ?? 0;
+      const label =
+        releaseTarget.scope === "all"
+          ? "الفريق"
+          : releaseTarget.member.fullName || releaseTarget.member.email || "الموظفة";
+      setNotice(
+        count
+          ? `تم إطلاق ${count.toLocaleString("ar")} محادثة من ${label}.`
+          : `لا توجد محادثات مستلمة لدى ${label}.`,
+      );
+      setReleaseTarget(null);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "تعذّر إطلاق المحادثات");
+    } finally {
+      setReleaseBusy(false);
+    }
+  }, [refresh, releaseBusy, releaseTarget]);
+
+  const totalAssigned = team.reduce(
+    (total, member) => total + member.assignedConversationCount,
+    0,
+  );
+
   return (
     <div className="dashboard-page max-w-3xl">
       <div className="dashboard-page-header">
@@ -167,6 +228,16 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
           <h1>الموظفون</h1>
           <p>أنشئي حسابات لموظفي الصالون. لا يمكن لأحد التسجيل بنفسه.</p>
         </div>
+        <Button
+          type="button"
+          variant="destructive"
+          disabled={releaseBusy || totalAssigned === 0}
+          onClick={() => setReleaseTarget({ scope: "all", label: "كل الموظفين" })}
+        >
+          <UserX data-icon="inline-start" aria-hidden="true" />
+          إطلاق محادثات كل الموظفين
+          {totalAssigned ? ` (${totalAssigned.toLocaleString("ar")})` : ""}
+        </Button>
       </div>
 
       <form
@@ -315,6 +386,19 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
               ) : null}
             </div>
             <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setReleaseTarget({ scope: "member", member: m })}
+                disabled={releaseBusy || m.assignedConversationCount === 0}
+              >
+                <UserX data-icon="inline-start" aria-hidden="true" />
+                إطلاق المحادثات
+                {m.assignedConversationCount
+                  ? ` (${m.assignedConversationCount.toLocaleString("ar")})`
+                  : ""}
+              </Button>
               <button
                 type="button"
                 onClick={() => {
@@ -348,6 +432,41 @@ export function TeamClient({ initialTeam }: { initialTeam: TeamMemberRow[] }) {
           </li>
         ))}
       </ul>
+
+      <AlertDialog
+        open={Boolean(releaseTarget)}
+        onOpenChange={(open) => {
+          if (!open && !releaseBusy) setReleaseTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {releaseTarget?.scope === "all"
+                ? "إطلاق محادثات كل الموظفين؟"
+                : `إطلاق محادثات ${releaseTarget?.member.fullName || releaseTarget?.member.email || "الموظفة"}؟`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              ستعود المحادثات إلى قائمة غير المستلمة، وستظهر أي رسالة جديدة من العميلة
+              كمحادثة جديدة متاحة للفريق.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={releaseBusy}>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={releaseBusy}
+              onClick={(event) => {
+                event.preventDefault();
+                void releaseConversations();
+              }}
+            >
+              {releaseBusy ? <Spinner data-icon="inline-start" /> : null}
+              إطلاق جميع المحادثات
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Modal
         open={Boolean(resetTarget)}

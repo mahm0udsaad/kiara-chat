@@ -125,7 +125,7 @@ function VisitContent({ visit }: { visit: OperationsVisit }) {
 export function VisitCard({ visit }: { visit: OperationsVisit }) {
   if (!visit.orderId) return <VisitContent visit={visit} />;
   return (
-    <Link href={{ pathname: "/orders/[id]", params: { id: visit.orderId } }} asChild>
+    <Link href={{ pathname: "/reports/order/[id]", params: { id: visit.orderId } }} asChild>
       <Pressable
         testID={`report-order-${visit.orderId}`}
         accessibilityRole="button"

@@ -69,7 +69,9 @@ export async function GET(request: Request) {
       },
       inbox: {
         dangerAfterSeconds: MOBILE_DANGER_AFTER_SECONDS,
-        views: MOBILE_CONVERSATION_VIEWS.map((id) => ({
+        views: MOBILE_CONVERSATION_VIEWS.filter(
+          (id) => id !== "unassigned",
+        ).map((id) => ({
           id,
           label: VIEW_LABELS[id],
         })),

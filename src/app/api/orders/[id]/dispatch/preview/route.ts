@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { orderExists, previewBookingDispatch } from "@/lib/dispatch";
+import {
+  orderExists,
+  previewBookingDispatch,
+  RekazBookingError,
+} from "@/lib/dispatch";
 import { getKiaraSession } from "@/lib/tenant";
 import type { TripType } from "@/lib/types";
 
@@ -71,6 +75,15 @@ export async function POST(
     });
     return NextResponse.json({ ok: true, preview });
   } catch (error) {
+    if (error instanceof RekazBookingError) {
+      return NextResponse.json(
+        {
+          error: error.detail ?? "حالة الحجز في ركاز لا تسمح بطلب السائق",
+          code: error.code,
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "تعذّر تجهيز الرسائل" },
       { status: 500 },

@@ -219,17 +219,21 @@ async function replyContext(
   if (!quotedId) return null;
   const { data } = await getAdminSupabaseClient()
     .from("messages")
-    .select("id, role, content, message_type")
+    .select("id, role, content, message_type, metadata")
     .eq("conversation_id", conversationId)
     .eq("external_message_sid", quotedId)
     .maybeSingle();
   const text = ((data?.content as string | null) ?? "").trim();
+  const quotedMedia = (data?.metadata as { media?: unknown } | null)?.media;
   return {
     external_id: quotedId,
     message_id: (data?.id as string | undefined) ?? null,
     role: (data?.role as string | undefined) ?? null,
     message_type: (data?.message_type as string | undefined) ?? null,
     text: text ? (text.length > 300 ? `${text.slice(0, 300)}…` : text) : null,
+    ...(Array.isArray(quotedMedia) && quotedMedia.length
+      ? { media: quotedMedia }
+      : {}),
   };
 }
 

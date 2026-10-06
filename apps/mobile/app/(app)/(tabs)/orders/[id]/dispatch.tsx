@@ -103,6 +103,14 @@ function failureMessage(error: unknown): string {
   if (error.code === "ORDER_ALREADY_DISPATCHED") {
     return "هذا الطلب أُرسل بالفعل.";
   }
+  if (
+    error.code === "RESERVATION_NOT_CONFIRMED" ||
+    error.code === "RESERVATION_COMPLETED" ||
+    error.code === "RESERVATION_CANCELLED" ||
+    error.code === "RESERVATION_NOT_FOUND"
+  ) {
+    return error.message;
+  }
   if (error.status === 409) {
     return "الطلب تغيّر أو زميلة أخرى ترسله الآن. ارجعي وحدّثي صفحة الطلب قبل المحاولة.";
   }

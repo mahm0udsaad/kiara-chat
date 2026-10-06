@@ -38,8 +38,17 @@ import { useBootstrap, useReply, useSendMedia } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { CatalogItem } from "@/types/api";
 
+export type ReplyTarget = {
+  id: string;
+  role: string;
+  content: string;
+  messageType: string;
+};
+
 /** The longest edge a photo is re-encoded to before it leaves the phone. */
 const MAX_IMAGE_EDGE = 1280;
+/** Keep a generous batch size without overwhelming the attachment preview. */
+const MAX_MEDIA_SELECTION = 10;
 
 /**
  * The reply box: text, attachments, voice notes, and the service picker —
@@ -53,18 +62,23 @@ export function Composer({
   conversationId,
   templateOnly = false,
   initialDraft = "",
+  replyTarget,
+  onClearReply,
 }: {
   conversationId: string;
   /** An empty outbound thread must begin with an approved WhatsApp template. */
   templateOnly?: boolean;
   /** Forwarded copy is staged here and remains editable until Send is tapped. */
   initialDraft?: string;
+  replyTarget?: ReplyTarget | null;
+  onClearReply?: () => void;
 }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const reply = useReply(conversationId);
   const sendMedia = useSendMedia(conversationId);
-  const savedReplies = useBootstrap().data?.savedReplies ?? [];
+  const bootstrap = useBootstrap().data;
+  const savedReplies = bootstrap?.savedReplies ?? [];
 
   const [draft, setDraft] = useState(initialDraft);
   const [pending, setPending] = useState<PendingAttachment[]>([]);
@@ -81,7 +95,7 @@ export function Composer({
   const recorderState = useAudioRecorderState(recorder, 250);
   const [recording, setRecording] = useState(false);
   const inputRef = useRef<TextInput>(null);
-  const textAttempt = useRef<{ text: string; idempotencyKey: string } | null>(null);
+  const textAttempt = useRef<{ text: string; idempotencyKey: string; replyToMessageId?: string } | null>(null);
 
   const canSendText = Boolean(draft.trim()) && !reply.isPending;
 
@@ -117,7 +131,7 @@ export function Composer({
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images", "videos"],
       allowsMultipleSelection: true,
-      selectionLimit: 5,
+      selectionLimit: MAX_MEDIA_SELECTION,
       quality: 0.85,
       // WhatsApp accepts MP4 video with H.264 video and AAC audio. iOS's
       // default passthrough can otherwise return HEVC/MOV that Twilio rejects.
@@ -362,15 +376,16 @@ export function Composer({
     const text = draft.trim();
     if (!text || reply.isPending) return;
     const attempt =
-      textAttempt.current?.text === text
+      textAttempt.current?.text === text && textAttempt.current.replyToMessageId === replyTarget?.id
         ? textAttempt.current
-        : { text, idempotencyKey: Crypto.randomUUID() };
+        : { text, idempotencyKey: Crypto.randomUUID(), replyToMessageId: replyTarget?.id };
     textAttempt.current = attempt;
     commitFeedback();
     reply.mutate(attempt, {
       onSuccess: () => {
         textAttempt.current = null;
         setDraft("");
+        onClearReply?.();
       },
     });
   };
@@ -402,6 +417,17 @@ export function Composer({
         </View>
       ) : (
         <>
+          {replyTarget ? (
+            <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm, padding: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceSunken, borderRightWidth: 3, borderRightColor: colors.brand }}>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={{ ...type.caption, color: colors.brand, fontWeight: "600", ...rtlText }}>{replyTarget.role === "customer" ? "ردًا على رسالة العميلة" : "ردًا على رسالتك"}</Text>
+                <Text numberOfLines={2} style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>{replyTarget.content || "📎 وسائط"}</Text>
+              </View>
+              <Pressable accessibilityRole="button" accessibilityLabel="إلغاء الرد" hitSlop={spacing.sm} onPress={onClearReply} style={{ width: hitSize.min, height: hitSize.min, alignItems: "center", justifyContent: "center" }}>
+                <IconSymbol name="xmark" color={colors.textSecondary} size={16} />
+              </Pressable>
+            </View>
+          ) : null}
           {reply.error ? <InlineAlert message={reply.error.message} /> : null}
           {mediaError ? <InlineAlert message={mediaError} /> : null}
 
@@ -578,6 +604,7 @@ export function Composer({
       <SavedRepliesSheet
         open={repliesOpen}
         replies={savedReplies}
+        canManageReplies={Boolean(bootstrap?.session)}
         onClose={() => setRepliesOpen(false)}
         onPick={(saved) =>
           setDraft((current) =>

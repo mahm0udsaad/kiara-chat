@@ -29,6 +29,14 @@ const ERROR_STATUS: Record<string, { status: number; message: string }> = {
     status: 409,
     message: "هذا الحجز ملغي في ركاز",
   },
+  RESERVATION_NOT_CONFIRMED: {
+    status: 409,
+    message: "الحجز ما زال طلبًا في ركاز — أكّدي الحجز هناك أولًا",
+  },
+  RESERVATION_COMPLETED: {
+    status: 409,
+    message: "الزيارة مكتملة في ركاز — لا يمكن طلب سائق جديد لها",
+  },
   CUSTOMER_PHONE_INVALID: {
     status: 409,
     message: "رقم العميلة في ركاز غير صحيح — صحّحيه في ركاز ثم حدّثي التقويم",

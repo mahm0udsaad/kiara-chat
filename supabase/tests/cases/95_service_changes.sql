@@ -60,8 +60,12 @@ begin
  values('2ba8f6c8-aff9-4147-8f13-cdcb732de698','d0000000-0000-0000-0000-000000000001','2035-01-01 13:00Z','الرياض','+966555000001',45,'service-new')$q$,
  'RESERVATION_ALREADY_LINKED','linked addition cannot create a second driver order');
  pid:=pg_temp.service_preview(oid);
- insert into public.field_order_progress(order_id,restaurant_id,driver_confirmed_at,specialist_pickup_at,service_started_at,completed_at)
- values(oid,'2ba8f6c8-aff9-4147-8f13-cdcb732de698',now(),now(),now(),now());
+ insert into public.field_order_progress(
+   order_id,restaurant_id,driver_confirmed_at,driver_arrived_at,
+   specialist_pickup_at,driver_client_arrived_at,service_started_at,completed_at
+ ) values(
+   oid,'2ba8f6c8-aff9-4147-8f13-cdcb732de698',now(),now(),now(),now(),now(),now()
+ );
  perform kiara_test.raises(format('select pg_temp.approve_service(%L,%L)',oid,pid),'FIELD_VERSION_CONFLICT','completed visit cannot be extended');
  perform kiara_test.ok(not has_table_privilege('authenticated','public.order_service_previews','INSERT'),'clients cannot forge previews');
  perform kiara_test.ok(not has_function_privilege('anon','public.kiara_approve_service_change(uuid,uuid,uuid,uuid,uuid,text,text,text)','EXECUTE'),'anonymous approval denied');

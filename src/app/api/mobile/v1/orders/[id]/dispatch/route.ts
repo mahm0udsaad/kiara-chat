@@ -1,6 +1,7 @@
 import {
   dispatchBooking,
   orderExists,
+  RekazBookingError,
   type DispatchBookingInput,
 } from "@/lib/dispatch";
 import { isLocationUnset } from "@/lib/format";
@@ -185,6 +186,13 @@ export async function POST(
       notified: result.notified,
     });
   } catch (error) {
+    if (error instanceof RekazBookingError) {
+      return mobileError(
+        409,
+        error.code,
+        error.detail ?? "حالة الحجز في ركاز لا تسمح بطلب السائق",
+      );
+    }
     if (error instanceof OperationalCommandError && error.isConflict) {
       return mobileError(
         409,

@@ -1,12 +1,17 @@
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
 import { EmptyState, ErrorState, LoadingScreen } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, Divider } from "@/components/ui/card";
+import { PrimaryButton } from "@/components/primary-button";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { tapFeedback } from "@/lib/haptics";
-import { useSetTeamMemberPermissions, useTeam } from "@/lib/queries";
+import {
+  useReleaseAllConversations,
+  useSetTeamMemberPermissions,
+  useTeam,
+} from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { TeamMember } from "@/types/api";
 
@@ -84,7 +89,9 @@ function PermissionChip({
 function MemberRow({ member }: { member: TeamMember }) {
   const { colors } = useTheme();
   const setPermissions = useSetTeamMemberPermissions();
+  const releaseAll = useReleaseAllConversations();
   const busy = setPermissions.isPending && setPermissions.variables?.id === member.id;
+  const assignedCount = member.assignedConversationCount;
 
   const toggle = (key: string) => {
     const has = member.permissions.includes(key);
@@ -92,6 +99,36 @@ function MemberRow({ member }: { member: TeamMember }) {
       ? member.permissions.filter((p) => p !== key)
       : [...member.permissions, key];
     setPermissions.mutate({ id: member.id, permissions: next });
+  };
+
+  const confirmRelease = () => {
+    const name = member.fullName || member.email || "الموظفة";
+    Alert.alert(
+      `إطلاق محادثات ${name}؟`,
+      "ستعود المحادثات إلى قائمة غير المستلمة، وستظهر أي رسالة جديدة من العميلة كمحادثة جديدة متاحة للفريق.",
+      [
+        { text: "إلغاء", style: "cancel" },
+        {
+          text: "إطلاق جميع المحادثات",
+          style: "destructive",
+          onPress: () =>
+            releaseAll.mutate(
+              { scope: "member", teamMemberId: member.id },
+              {
+                onSuccess: ({ count }) =>
+                  Alert.alert(
+                    "تم الإطلاق",
+                    count
+                      ? `تم إطلاق ${count.toLocaleString("ar")} محادثة من ${name}.`
+                      : `لا توجد محادثات مستلمة لدى ${name}.`,
+                  ),
+                onError: (error) =>
+                  Alert.alert("تعذّر إطلاق المحادثات", error.message),
+              },
+            ),
+        },
+      ],
+    );
   };
 
   return (
@@ -131,6 +168,18 @@ function MemberRow({ member }: { member: TeamMember }) {
         </View>
       ) : null}
 
+      <PrimaryButton
+        testID={`release-member-conversations-${member.id}`}
+        label={`إطلاق جميع المحادثات${assignedCount === undefined ? "" : ` (${assignedCount.toLocaleString("ar")})`}`}
+        loading={releaseAll.isPending}
+        loadingLabel="جارٍ إطلاق المحادثات…"
+        disabled={assignedCount === 0}
+        icon="person.crop.circle.badge.xmark"
+        variant="outline"
+        tone="danger"
+        onPress={confirmRelease}
+      />
+
       {busy && setPermissions.isError ? (
         <Text style={{ ...type.footnote, color: colors.danger, ...rtlText }}>
           تعذّر تحديث الصلاحية. حاولي مرة أخرى.
@@ -143,6 +192,7 @@ function MemberRow({ member }: { member: TeamMember }) {
 export default function TeamPermissionsScreen() {
   const { colors } = useTheme();
   const team = useTeam();
+  const releaseAll = useReleaseAllConversations();
 
   if (team.isLoading) return <LoadingScreen label="جارٍ تحميل الفريق…" />;
   if (team.isError) {
@@ -166,6 +216,45 @@ export default function TeamPermissionsScreen() {
     );
   }
 
+  const hasAssignedCounts = members.every(
+    (member) => member.assignedConversationCount !== undefined,
+  );
+  const totalAssigned = hasAssignedCounts
+    ? members.reduce(
+        (total, member) => total + (member.assignedConversationCount ?? 0),
+        0,
+      )
+    : null;
+
+  const confirmReleaseTeam = () => {
+    Alert.alert(
+      "إطلاق محادثات كل الموظفين؟",
+      "ستعود كل المحادثات إلى قائمة غير المستلمة، وستظهر أي رسالة جديدة من العميلة كمحادثة جديدة متاحة للفريق.",
+      [
+        { text: "إلغاء", style: "cancel" },
+        {
+          text: "إطلاق جميع المحادثات",
+          style: "destructive",
+          onPress: () =>
+            releaseAll.mutate(
+              { scope: "all" },
+              {
+                onSuccess: ({ count }) =>
+                  Alert.alert(
+                    "تم الإطلاق",
+                    count
+                      ? `تم إطلاق ${count.toLocaleString("ar")} محادثة من الفريق.`
+                      : "لا توجد محادثات مستلمة لدى الفريق.",
+                  ),
+                onError: (error) =>
+                  Alert.alert("تعذّر إطلاق المحادثات", error.message),
+              },
+            ),
+        },
+      ],
+    );
+  };
+
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
@@ -183,6 +272,18 @@ export default function TeamPermissionsScreen() {
           المرور ما زال من الكمبيوتر فقط.
         </Text>
       </View>
+
+      <PrimaryButton
+        testID="release-team-conversations"
+        label={`إطلاق محادثات كل الموظفين${totalAssigned === null ? "" : ` (${totalAssigned.toLocaleString("ar")})`}`}
+        loading={releaseAll.isPending}
+        loadingLabel="جارٍ إطلاق محادثات الفريق…"
+        disabled={totalAssigned === 0}
+        icon="person.crop.circle.badge.xmark"
+        variant="outline"
+        tone="danger"
+        onPress={confirmReleaseTeam}
+      />
 
       <Card>
         {members.map((member, index) => (

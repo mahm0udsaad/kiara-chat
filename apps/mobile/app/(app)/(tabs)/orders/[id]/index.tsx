@@ -6,6 +6,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
 import { TripCostEditor } from "@/components/orders/trip-cost-editor";
+import { CustomerReminderCard } from "@/components/orders/customer-reminder-card";
+import { DriverTrackingCard } from "@/components/orders/driver-tracking-card";
 import { ServiceTimingCard } from "@/components/orders/service-timing-card";
 import { ErrorState, LoadingScreen } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
@@ -251,6 +253,10 @@ export default function OrderDetailScreen() {
           paddingBottom: spacing["3xl"],
         }}
       >
+        <CustomerReminderCard
+          orderId={order.id}
+          canSend={order.status === "sent" && Boolean(order.specialist_id)}
+        />
         {/* Customer hero */}
         <Card>
           <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.md }}>
@@ -452,7 +458,7 @@ export default function OrderDetailScreen() {
         {/* Assignments */}
         <View style={{ gap: spacing.sm }}>
           <SectionHeader title="فريق التنفيذ" />
-          <View style={{ flexDirection: "row-reverse", gap: spacing.md }}>
+          <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.md }}>
             <AssignmentCard
               role={order.second_specialist_name ? "الأخصائيتان" : "الأخصائية"}
               icon="sparkles"
@@ -460,7 +466,14 @@ export default function OrderDetailScreen() {
                 .filter(Boolean)
                 .join(" و ") || null}
             />
-            <AssignmentCard role="السائق" icon="car" name={order.driver_name} />
+            <AssignmentCard role="سائق الذهاب" icon="car" name={order.driver_name} />
+            {order.trip_type === "one_way" ? (
+              <AssignmentCard
+                role="سائق العودة"
+                icon="car"
+                name={order.return_driver_name ?? null}
+              />
+            ) : null}
           </View>
           {!ready ? (
             <View
@@ -572,19 +585,34 @@ export default function OrderDetailScreen() {
           </Card>
         </View>
 
+        {/* Its own request: a tracking failure stays inside this card. */}
+        {order.driver_id ? <DriverTrackingCard orderId={order.id} /> : null}
+
         <ServiceTimingCard
           scheduledAt={order.arrival_at}
           serviceStartedAt={order.field_progress?.serviceStartedAt ?? order.specialist_session?.started_at}
         />
 
         {isOwner ? (
-          <TripCostEditor
-            key={`${order.version}-${order.price ?? "unset"}`}
-            orderId={order.id}
-            expectedVersion={order.version}
-            price={order.price}
-            driverName={order.driver_name}
-          />
+          <View style={{ gap: spacing.md }}>
+            <TripCostEditor
+              key={`outbound-${order.version}-${order.price ?? "unset"}`}
+              orderId={order.id}
+              expectedVersion={order.version}
+              price={order.price}
+              driverName={order.driver_name}
+            />
+            {order.return_driver_id ? (
+              <TripCostEditor
+                key={`return-${order.version}-${order.return_price ?? "unset"}`}
+                orderId={order.id}
+                expectedVersion={order.version}
+                price={order.return_price ?? null}
+                driverName={order.return_driver_name ?? null}
+                leg="return"
+              />
+            ) : null}
+          </View>
         ) : null}
 
         {/* Commercial and audit fields returned by the web order enrichment. */}
@@ -600,6 +628,17 @@ export default function OrderDetailScreen() {
                   monospacedValue
                 />
                 <Divider inset={46} />
+                {order.return_driver_id ? (
+                  <>
+                    <DetailRow
+                      icon="banknote"
+                      label="تكلفة رحلة العودة"
+                      value={order.return_price == null ? "غير محددة" : priceFormatter.format(order.return_price)}
+                      monospacedValue
+                    />
+                    <Divider inset={46} />
+                  </>
+                ) : null}
               </>
             ) : null}
             <DetailRow
@@ -657,25 +696,13 @@ export default function OrderDetailScreen() {
           onPress={() => router.push({ pathname: "/orders/[id]/dispatch", params: { id } })}
         />
         <Link href={{ pathname: "/orders/[id]/edit", params: { id } }} asChild>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="تعديل بيانات الطلب"
-            style={({ pressed }) => ({
-              minHeight: hitSize.control,
-              flexDirection: "row-reverse",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: spacing.sm,
-              borderRadius: radius.lg,
-              borderCurve: "continuous",
-              opacity: pressed ? 0.6 : 1,
-            })}
-          >
-            <IconSymbol name="pencil" color={colors.brand} size={17} />
-            <Text style={{ ...type.bodyStrong, color: colors.brand, ...rtlText }}>
-              تعديل بيانات الطلب
-            </Text>
-          </Pressable>
+          <PrimaryButton
+            label="تعديل بيانات الطلب"
+            icon="pencil"
+            variant="tinted"
+            silent
+            onPress={() => {}}
+          />
         </Link>
         {/* Another specialist with her own driver for the same visit: a new
             pending order that goes through the ordinary dispatch screen. */}

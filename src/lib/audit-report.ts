@@ -99,6 +99,7 @@ const FIELD_STEP_LABEL: Record<string, string> = {
   confirm_ride: "أكّد الرحلة وانطلق",
   driver_arrived: "وصل السائق إلى الأخصائية",
   confirm_pickup: "ركبت الأخصائية مع السائق",
+  driver_client_arrived: "وصل السائق إلى منزل العميلة",
   start_service: "بدأت الخدمة عند العميلة",
   complete_order: "أُنهيت الخدمة",
   driver_return: "انتهت الرحلة والعودة",
@@ -176,7 +177,13 @@ function describe(eventType: string, payload: Payload): string | null {
     }
     case "conversation.section_changed": {
       const to = text(payload.to);
-      return to === "orders" ? "قسم الطلبات" : to === "replies" ? "قسم الردود" : "بدون قسم";
+      return to === "orders"
+        ? "قسم الطلبات"
+        : to === "replies"
+          ? "قسم الردود"
+          : to === "complaints"
+            ? "قسم الشكاوى"
+            : "بدون قسم";
     }
     case "conversation.customer_renamed":
       return text(payload.to) ?? "أُزيل الاسم";

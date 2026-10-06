@@ -20,6 +20,7 @@ import {
   unregisterInboxNotifications,
   type NotificationRegistration,
 } from "@/lib/notifications";
+import { requestLocationPrompt } from "@/lib/driver-location";
 import { queryKeys, useBootstrap } from "@/lib/queries";
 import { useAuth } from "@/providers/auth-provider";
 
@@ -221,6 +222,10 @@ export function NotificationProvider({ children }: PropsWithChildren) {
     const subscription = Notifications.addNotificationReceivedListener((notification) => {
       const data = notification.request.content.data;
       if (typeof data?.type !== "string") return;
+      if (data.type === "location_permission_request") {
+        requestLocationPrompt();
+        return;
+      }
       if (FIELD_ALERTS.has(data.type)) {
         void queryClient.invalidateQueries({ queryKey: ["field-orders"] });
         if (typeof data.orderId === "string") {
@@ -258,7 +263,11 @@ export function NotificationProvider({ children }: PropsWithChildren) {
 
   const openNotification = useCallback(
     (response: NotificationsModule.NotificationResponse) => {
-      const url = response.notification.request.content.data?.url;
+      const content = response.notification.request.content.data;
+      const url = content?.url;
+      // The office asked this driver to allow location: open the permission
+      // window over whichever screen the tap lands on.
+      if (content?.type === "location_permission_request") requestLocationPrompt();
       if (typeof url === "string" && url.startsWith("/field/orders/")) {
         router.push(url as never);
       } else if (url === "/field/account") {

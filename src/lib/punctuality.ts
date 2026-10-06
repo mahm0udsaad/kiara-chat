@@ -76,7 +76,7 @@ export const TRACKING_STOP_CODES = ["TRIP_NOT_ACTIVE", "TRACKING_NOT_ENABLED"] a
 const PROGRESS_COLS =
   "driver_confirmed_at, driver_arrived_at, specialist_pickup_at, driver_client_arrived_at, service_started_at, completed_at";
 
-async function routeBetween(a: Point, b: Point, speedKph: number): Promise<RouteEstimate> {
+export async function routeBetween(a: Point, b: Point, speedKph: number): Promise<RouteEstimate> {
   const base = process.env.OSRM_BASE_URL?.replace(/\/$/, "");
   if (!base) return haversineRoute(a, b, speedKph);
   const controller = new AbortController();
@@ -128,7 +128,7 @@ export async function pointFromMapText(value: string): Promise<Point | null> {
   return short ? resolveShortMapLink(short) : null;
 }
 
-async function clientPointOf(customerLocation: string, rekazLocation: unknown): Promise<Point | null> {
+export async function clientPointOf(customerLocation: string, rekazLocation: unknown): Promise<Point | null> {
   if (rekazLocation && typeof rekazLocation === "object") {
     const loc = rekazLocation as { lat?: unknown; lng?: unknown; latitude?: unknown; longitude?: unknown };
     const point = finitePoint(loc.lat ?? loc.latitude, loc.lng ?? loc.longitude);
@@ -140,7 +140,9 @@ async function clientPointOf(customerLocation: string, rekazLocation: unknown): 
   return pointFromMapText(customerLocation);
 }
 
-async function settings(): Promise<Settings> {
+export type PunctualitySettings = Settings;
+
+export async function settings(): Promise<Settings> {
   const admin = getAdminSupabaseClient();
   const { data } = await admin
     .from("punctuality_settings")
@@ -150,7 +152,7 @@ async function settings(): Promise<Settings> {
   return { ...DEFAULTS, ...((data ?? {}) as Partial<Settings>) };
 }
 
-async function loadPlan(orderId: string): Promise<Row | null> {
+export async function loadPlan(orderId: string): Promise<Row | null> {
   const { data } = await getAdminSupabaseClient()
     .from("order_punctuality")
     .select("*")
@@ -336,12 +338,12 @@ async function refreshClassification(
   return data as Row;
 }
 
-async function orderAndProgress(orderId: string) {
+export async function orderAndProgress(orderId: string) {
   const admin = getAdminSupabaseClient();
   const [orderResult, progressResult] = await Promise.all([
     admin
       .from("driver_orders")
-      .select("driver_id, arrival_at, status")
+      .select("driver_id, arrival_at, status, created_at")
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .eq("id", orderId)
       .maybeSingle(),
@@ -353,24 +355,51 @@ async function orderAndProgress(orderId: string) {
       .maybeSingle(),
   ]);
   return {
-    order: orderResult.data as { driver_id: string | null; arrival_at: string; status: string } | null,
+    order: orderResult.data as {
+      driver_id: string | null;
+      arrival_at: string;
+      status: string;
+      created_at: string;
+    } | null,
     progress: (progressResult.data as Row | null) ?? null,
   };
 }
 
-function trackingActive(plan: Row, progress: Row | null, status: string): boolean {
+/**
+ * Whether trip GPS may be collected for this order at all.
+ *
+ * Two switches, both reachable without shipping an app: clearing
+ * `punctuality_settings.tracking_starts_at` (orders created before it are
+ * never tracked), or `DRIVER_TRIP_TRACKING=off` on the server. Either makes
+ * every phone stop its trip service on its next sample.
+ */
+export function tripTrackingEnabled(order: { created_at: string }, config: Settings): boolean {
+  if (process.env.DRIVER_TRIP_TRACKING === "off") return false;
+  const startsAt = config.tracking_starts_at ? Date.parse(config.tracking_starts_at) : NaN;
+  const createdAt = Date.parse(order.created_at);
+  return Number.isFinite(startsAt) && createdAt >= startsAt;
+}
+
+/**
+ * The outbound leg: from the driver confirming the ride until the client is
+ * reached. Works without a punctuality plan — a missing specialist pin still
+ * leaves a path worth recording — and stops at the client geofence when there
+ * is one.
+ */
+export function trackingActive(plan: Row | null, progress: Row | null, status: string): boolean {
   return status === "sent" &&
     Boolean(progress?.driver_confirmed_at) &&
     !progress?.driver_client_arrived_at &&
+    !progress?.service_started_at &&
     !progress?.completed_at &&
-    !plan.client_geofence_at;
+    !plan?.client_geofence_at;
 }
 
 export async function recordDriverLocation(
   session: FieldStaffSession,
   orderId: string,
   sample: { latitude: number; longitude: number; accuracyMeters: number; capturedAt: string; speedMps?: number },
-): Promise<PunctualitySummary> {
+): Promise<{ punctuality: PunctualitySummary | null; trackingActive: boolean }> {
   if (session.role !== "driver") throw new Error("DRIVER_REQUIRED");
   const point = finitePoint(sample.latitude, sample.longitude);
   const accuracy = Number(sample.accuracyMeters);
@@ -382,8 +411,13 @@ export async function recordDriverLocation(
   const admin = getAdminSupabaseClient();
   const [{ order, progress }, config] = await Promise.all([orderAndProgress(orderId), settings()]);
   if (!order || order.driver_id !== session.rosterId) throw new Error("FIELD_ORDER_FORBIDDEN");
-  const plan = await ensurePlan(orderId, config);
-  if (!plan) throw new Error("TRACKING_NOT_ENABLED");
+  if (!tripTrackingEnabled(order, config)) throw new Error("TRACKING_NOT_ENABLED");
+  // The plan needs both pins; the path does not. A failed plan only loses the
+  // geofences and the verdict for this sample, never the sample itself.
+  const plan = await ensurePlan(orderId, config).catch((error) => {
+    console.warn("[punctuality] plan unavailable", error);
+    return null;
+  });
   if (!trackingActive(plan, progress, order.status)) throw new Error("TRIP_NOT_ACTIVE");
 
   const { error: insertError } = await admin.from("driver_trip_locations").insert({
@@ -399,6 +433,7 @@ export async function recordDriverLocation(
     captured_at: new Date(capturedMs).toISOString(),
   });
   if (insertError) throw new Error(insertError.message);
+  if (!plan) return { punctuality: null, trackingActive: true };
 
   const capturedIso = new Date(capturedMs).toISOString();
   const specialist = { lat: Number(plan.specialist_latitude), lng: Number(plan.specialist_longitude) };
@@ -442,7 +477,18 @@ export async function recordDriverLocation(
     .single();
   if (updated.error || !updated.data) throw new Error(updated.error?.message ?? "PUNCTUALITY_UPDATE_FAILED");
   const current = await refreshClassification(updated.data as Row, progress, order, config);
-  return summaryOf(current, progress, config, order.status);
+  const punctuality = summaryOf(current, progress, config, order.status);
+  return { punctuality, trackingActive: punctuality.trackingActive };
+}
+
+/**
+ * Whether the assigned driver's phone should be sending trip GPS right now.
+ * Cheap — no route planning — so the field order screen can ask on every load.
+ */
+export async function isTripTrackingActive(orderId: string): Promise<boolean> {
+  const [{ order, progress }, config] = await Promise.all([orderAndProgress(orderId), settings()]);
+  if (!order || !tripTrackingEnabled(order, config)) return false;
+  return trackingActive(await loadPlan(orderId), progress, order.status);
 }
 
 function summaryOf(plan: Row, progress: Row | null, config: Settings, status: string): PunctualitySummary {

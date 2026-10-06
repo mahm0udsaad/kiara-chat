@@ -22,6 +22,22 @@ export default function ReportsLayout() {
         name="customer-service/[personId]"
         options={{ title: "مساءلة الموظفة", headerBackButtonDisplayMode: "minimal" }}
       />
+      <Stack.Screen
+        name="orders/[metric]"
+        options={{ title: "تفاصيل الطلبات", headerBackButtonDisplayMode: "minimal" }}
+      />
+      <Stack.Screen
+        name="order/[id]"
+        options={{ title: "تفاصيل الطلب", headerBackButtonDisplayMode: "minimal" }}
+      />
+      <Stack.Screen
+        name="customer-service/details/[personId]/[metric]"
+        options={{ title: "تفاصيل الأداء", headerBackButtonDisplayMode: "minimal" }}
+      />
+      <Stack.Screen
+        name="customer-service/team/[metric]"
+        options={{ title: "تفاصيل الفريق", headerBackButtonDisplayMode: "minimal" }}
+      />
     </Stack>
   );
 }

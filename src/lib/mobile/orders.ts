@@ -53,6 +53,7 @@ function matchesOrderSearch(order: MobileOrder, rawQuery: string): boolean {
     (order.specialist_name ?? "").toLocaleLowerCase("ar").includes(query) ||
     (order.second_specialist_name ?? "").toLocaleLowerCase("ar").includes(query) ||
     (order.driver_name ?? "").toLocaleLowerCase("ar").includes(query) ||
+    (order.return_driver_name ?? "").toLocaleLowerCase("ar").includes(query) ||
     order.customer_location.toLocaleLowerCase("ar").includes(query) ||
     order.customer_phone.includes(query) ||
     phoneMatches(order.customer_phone, query)

@@ -38,6 +38,8 @@ export type TemplateVariables = Record<string, string>;
  */
 export interface SendOptions {
   from?: string | null;
+  /** WhatsApp message ID to attach as a native quoted-reply context. */
+  contextMessageId?: string | null;
 }
 
 export interface MessageTransport {

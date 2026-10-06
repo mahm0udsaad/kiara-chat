@@ -12,10 +12,10 @@ import {
 
 /**
  * PUT /api/mobile/v1/conversations/:id/section — file the chat under
- * قسم الطلبات / قسم الردود, or clear it. Open to the whole team, as on the
+ * قسم الطلبات / قسم الردود / قسم الشكاوى, or clear it. Open to the whole team, as on the
  * web: filing only sorts a thread, it never hides it from anyone.
  *
- * Body: { section: "orders" | "replies" | null }
+ * Body: { section: "orders" | "replies" | "complaints" | null }
  */
 export async function PUT(
   request: Request,

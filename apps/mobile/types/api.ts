@@ -293,11 +293,16 @@ export type OrderSummary = {
   specialist_id: string | null;
   second_specialist_id?: string | null;
   driver_id: string | null;
+  return_driver_id?: string | null;
   specialist_name: string | null;
   second_specialist_name?: string | null;
   driver_name: string | null;
   driver_phone: string | null;
+  return_driver_name?: string | null;
+  return_driver_phone?: string | null;
   price: number | null;
+  return_price?: number | null;
+  door_photo_path?: string | null;
   sent_at: string | null;
   created_at: string;
   updated_at?: string | null;
@@ -381,8 +386,11 @@ export type OrderPatch = {
   tripType?: TripType;
   specialistId?: string | null;
   driverId?: string | null;
+  returnDriverId?: string | null;
   /** Owner-entered driver fare based on the customer's distance. */
   price?: number | null;
+  /** Owner-entered fare for the return-only driver. */
+  returnPrice?: number | null;
   expectedVersion: number;
 };
 
@@ -998,6 +1006,7 @@ export type FieldOrder = {
   specialistId: string | null;
   secondSpecialistId: string | null;
   driverId: string | null;
+  returnDriverId: string | null;
   arrivalAt: string;
   durationMinutes: number;
   tripType: TripType;
@@ -1007,6 +1016,7 @@ export type FieldOrder = {
   specialistName: string | null;
   secondSpecialistName: string | null;
   driverName: string | null;
+  returnDriverName: string | null;
   /** Approved visit services in the order the specialist should perform them. */
   services: { id: string; name: string; minutes: number }[];
   progress: FieldOrderProgress;
@@ -1028,6 +1038,95 @@ export type FieldOrder = {
    * this shows him which gate. Null for the specialist, who is driven there.
    */
   doorPhotoUrl: string | null;
+  punctuality: PunctualitySummary | null;
+  /**
+   * Whether this phone should be sending trip GPS for the order now. Absent on
+   * servers older than the field; null when unknown.
+   */
+  tripTrackingActive?: boolean | null;
+};
+
+/* ── Driver tracking (order screen) ──────────────────────────────────────── */
+
+export type LocationPermissionState =
+  | "granted"
+  | "denied"
+  | "blocked"
+  | "undetermined"
+  | "unavailable";
+
+export type TrackingPoint = { lat: number; lng: number; at: string };
+export type GeoPoint = { lat: number; lng: number };
+
+export type TrackingMilestone = {
+  key:
+    | "confirmed"
+    | "departed"
+    | "specialist_arrived"
+    | "pickup"
+    | "client_arrived"
+    | "service_started";
+  at: string | null;
+  source: "gps" | "tap" | null;
+  plannedAt: string | null;
+  tapDistanceMetres: number | null;
+};
+
+export type TrackingFlag =
+  | { code: "tap_far_from_specialist"; metres: number }
+  | { code: "tap_far_from_client"; metres: number }
+  | { code: "gps_gap"; minutes: number }
+  | { code: "stale"; minutes: number }
+  | { code: "no_fixes" }
+  | { code: "expected_late"; minutes: number; target: "specialist" | "client" };
+
+export type OrderTracking = {
+  enabled: boolean;
+  disabledReason: "switched_off" | "order_before_tracking" | null;
+  driver: {
+    id: string;
+    name: string | null;
+    status: {
+      permission: LocationPermissionState;
+      servicesEnabled: boolean | null;
+      backgroundCapable: boolean | null;
+      platform: string | null;
+      appVersion: string | null;
+      reportedAt: string;
+    } | null;
+    canReceivePush: boolean;
+    lastRequestAt: string | null;
+  } | null;
+  trip: {
+    state: "not_started" | "active" | "finished" | "cancelled";
+    startedAt: string | null;
+    endedAt: string | null;
+  };
+  points: TrackingPoint[];
+  latest: (TrackingPoint & {
+    accuracyMeters: number;
+    speedKph: number | null;
+    freshnessSeconds: number;
+  }) | null;
+  places: { start: GeoPoint | null; specialist: GeoPoint | null; client: GeoPoint | null };
+  eta: {
+    target: "specialist" | "client";
+    at: string;
+    remainingSeconds: number;
+    distanceMetres: number;
+    source: "live_speed" | "osrm" | "estimate";
+    scheduledAt: string | null;
+    lateByMinutes: number | null;
+  } | null;
+  stats: {
+    distanceMetres: number;
+    fixes: number;
+    coverage: number | null;
+    longestGapSeconds: number | null;
+    averageSpeedKph: number | null;
+  };
+  milestones: TrackingMilestone[];
+  flags: TrackingFlag[];
   punctuality: PunctualitySummary | null;
 };
 

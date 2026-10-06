@@ -67,6 +67,18 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { CallControl } from "@/components/inbox/call-control";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Spinner } from "@/components/ui/spinner";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
 import type {
@@ -597,6 +609,10 @@ export function InboxClient({
   const [sectionFilter, setSectionFilter] = useState<ConversationSection | "all">(
     "all"
   );
+  const [dateFilter, setDateFilter] = useState("");
+  const [releasingAll, setReleasingAll] = useState(false);
+  const [releaseAllNotice, setReleaseAllNotice] = useState<string | null>(null);
+  const [releaseAllError, setReleaseAllError] = useState<string | null>(null);
   // Conversations read in this session — clears the badge before the server
   // render catches up, and keeps it clear while the thread stays open.
   const [locallyRead, setLocallyRead] = useState<Set<string>>(() => new Set());
@@ -640,6 +656,7 @@ export function InboxClient({
       }
       if (statusFilter !== "all" && csStatusOf(c) !== statusFilter) return false;
       if (sectionFilter !== "all" && sectionOf(c) !== sectionFilter) return false;
+      if (dateFilter && dayKey(c.last_message_at) !== dateFilter) return false;
       if (labelFilter !== "all" && !(assignments[c.id] ?? []).includes(labelFilter))
         return false;
       return true;
@@ -650,6 +667,7 @@ export function InboxClient({
     view,
     statusFilter,
     sectionFilter,
+    dateFilter,
     labelFilter,
     assignments,
     now,
@@ -895,6 +913,52 @@ export function InboxClient({
     if (window.history.state?.kiaraThread) window.history.back();
     else setSelected(null);
   }, []);
+
+  const releaseMyConversations = useCallback(async () => {
+    if (!myTeamMemberId || releasingAll) return;
+    setReleasingAll(true);
+    setReleaseAllError(null);
+    setReleaseAllNotice(null);
+    try {
+      const response = await fetch("/api/conversations/release-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "mine" }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        count?: number;
+        conversationIds?: string[];
+      };
+      if (!response.ok) throw new Error(data.error ?? "تعذّر إطلاق المحادثات");
+
+      const releasedIds = new Set(data.conversationIds ?? []);
+      setConversations((current) =>
+        current.map((conversation) =>
+          releasedIds.has(conversation.id)
+            ? { ...conversation, assigned_to: null, handler_mode: "unassigned" }
+            : conversation,
+        ),
+      );
+      setSelected((current) =>
+        current && releasedIds.has(current.id)
+          ? { ...current, assigned_to: null, handler_mode: "unassigned" }
+          : current,
+      );
+      setReleaseAllNotice(
+        data.count
+          ? `تم إطلاق ${data.count.toLocaleString("ar")} محادثة.`
+          : "لا توجد محادثات مستلمة لإطلاقها.",
+      );
+      router.refresh();
+    } catch (error) {
+      setReleaseAllError(
+        error instanceof Error ? error.message : "تعذّر إطلاق المحادثات",
+      );
+    } finally {
+      setReleasingAll(false);
+    }
+  }, [myTeamMemberId, releasingAll, router]);
 
   const addNote = useCallback(async () => {
     if (!selected || !noteDraft.trim()) return;
@@ -1560,6 +1624,53 @@ export function InboxClient({
         )}
       >
         <div className="shrink-0 space-y-2 border-b px-3 py-3">
+          {myTeamMemberId ? (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  disabled={releasingAll}
+                >
+                  {releasingAll ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : (
+                    <UserX data-icon="inline-start" aria-hidden="true" />
+                  )}
+                  إطلاق جميع المحادثات
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>إطلاق جميع محادثاتك؟</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    ستعود كل المحادثات المستلمة بواسطتك إلى قائمة غير المستلمة، وأي رسالة
+                    جديدة من العميلة ستظهر كمحادثة جديدة متاحة للفريق.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    onClick={() => void releaseMyConversations()}
+                  >
+                    إطلاق جميع المحادثات
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          ) : null}
+          {releaseAllNotice ? (
+            <p aria-live="polite" className="text-xs text-muted-foreground">
+              {releaseAllNotice}
+            </p>
+          ) : null}
+          {releaseAllError ? (
+            <p aria-live="assertive" className="text-xs text-destructive">
+              {releaseAllError}
+            </p>
+          ) : null}
           <div className="flex items-center gap-2 rounded-lg border px-2">
             <Search size={14} className="text-[var(--subtle)]" />
             <input
@@ -1651,6 +1762,27 @@ export function InboxClient({
                 </option>
               ))}
             </select>
+            <label className="flex min-h-9 shrink-0 items-center gap-2 rounded-full border px-3 text-xs text-muted-foreground">
+              <span>تاريخ المحادثة</span>
+              <input
+                type="date"
+                value={dateFilter}
+                max={dayKey(new Date().toISOString())}
+                onChange={(event) => setDateFilter(event.target.value)}
+                aria-label="تصفية المحادثات حسب التاريخ"
+                className="bg-transparent text-xs text-foreground outline-none"
+              />
+              {dateFilter ? (
+                <button
+                  type="button"
+                  aria-label="مسح تاريخ المحادثة"
+                  onClick={() => setDateFilter("")}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  ×
+                </button>
+              ) : null}
+            </label>
             {labels.length > 0 ? (
               <select
                 value={labelFilter}

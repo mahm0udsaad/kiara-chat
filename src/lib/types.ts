@@ -86,7 +86,7 @@ export type BookingStage =
  * employees are not tagged with a section anywhere, so this lives on the
  * conversation alone (see lib/conversation-meta.ts).
  */
-export type ConversationSection = "orders" | "replies";
+export type ConversationSection = "orders" | "replies" | "complaints";
 
 export interface AgentInfo {
   id: string; // team_members.id
@@ -148,10 +148,11 @@ export interface FieldSessionState {
  *
  * Distinct from {@link FieldSessionState}, which is the older two-timestamp
  * mirror kept on the conversation for the magic-link flow. This is the real
- * chain the driver and specialist advance through in the app:
+ * primary chain the driver and specialist advance through in the app. The
+ * driver's customer-arrival timestamp is a parallel checkpoint after pickup;
+ * starting service may record it as a compatibility fallback:
  *   confirm_ride → driver_arrived → confirm_pickup →
- *   driver_client_arrived → start_service → complete_order →
- *   driver_return.
+ *   start_service → complete_order → driver_return.
  */
 export interface FieldOrderProgressState {
   driverConfirmedAt: string | null;
@@ -187,6 +188,8 @@ export interface DriverOrder {
   /** Optional second specialist assigned to the same visit. */
   second_specialist_id?: string | null;
   driver_id: string | null;
+  /** Optional second driver responsible only for returning the specialist. */
+  return_driver_id?: string | null;
   arrival_at: string; // ISO
   customer_location: string;
   customer_phone: string;
@@ -194,6 +197,8 @@ export interface DriverOrder {
   trip_type: TripType;
   /** Owner-entered trip cost based on distance; null until Hanan records it. */
   price: number | null;
+  /** Separate fare paid to the return-only driver. */
+  return_price?: number | null;
   status: DriverOrderStatus;
   sent_at: string | null;
   created_at: string;
@@ -246,6 +251,8 @@ export interface DriverOrderRow extends DriverOrder {
   second_specialist_name?: string | null;
   driver_name: string | null;
   driver_phone: string | null;
+  return_driver_name?: string | null;
+  return_driver_phone?: string | null;
   customer_name: string | null;
   /** Who last edited it, for the "عُدّل بواسطة …" line. */
   updated_by_name: string | null;

@@ -2,7 +2,6 @@ import { Link, Stack, useRouter } from "expo-router";
 import {
   memo,
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   useState,
@@ -10,21 +9,19 @@ import {
 import {
   FlatList,
   ActivityIndicator,
+  Alert,
   Pressable,
   RefreshControl,
   Text,
   TextInput,
   View,
 } from "react-native";
-import Animated, {
-  FadeIn,
-  FadeOut,
-} from "react-native-reanimated";
 
 import {
   ConversationFiltersSheet,
   HANDLING_LABEL,
   activeFilterCount,
+  conversationDateLabel,
 } from "@/components/inbox/conversation-filters-sheet";
 import { PrimaryButton } from "@/components/primary-button";
 import { EmptyState, ErrorState, InlineAlert } from "@/components/screen-state";
@@ -51,6 +48,7 @@ import {
   useBootstrap,
   useClaimedConversationForPhone,
   useConversations,
+  useReleaseAllConversations,
 } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import { useIsTyping } from "@/providers/inbox-live-provider";
@@ -66,7 +64,6 @@ const views: SegmentOption<InboxView>[] = [
   { value: "today", label: "محادثات اليوم" },
   { value: "new", label: "جديد" },
   { value: "mine", label: "محادثاتي" },
-  { value: "unassigned", label: "غير مستلمة" },
   { value: "specialists", label: "الأخصائيات" },
   { value: "drivers", label: "السائقون" },
   { value: "groups", label: "المجموعات" },
@@ -520,10 +517,16 @@ export default function InboxScreen() {
     EMPTY_CONVERSATION_FILTERS,
   );
   const [filtersOpen, setFiltersOpen] = useState(false);
-  // Keeps typing responsive — the request tracks a frame behind the keystroke.
-  const deferredSearch = useDeferredValue(search);
-  const conversations = useConversations(view, deferredSearch.trim(), { filters });
+  // The server classifies the full inbox for each search. Wait for a brief
+  // typing pause so a phone number does not create a request per digit.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 350);
+    return () => clearTimeout(timer);
+  }, [search]);
+  const conversations = useConversations(view, debouncedSearch.trim(), { filters });
   const startChat = useClaimedConversationForPhone();
+  const releaseAll = useReleaseAllConversations();
   const bootstrap = useBootstrap();
   const bootstrapLabels = bootstrap.data?.labels;
   const labels = useMemo(() => bootstrapLabels ?? [], [bootstrapLabels]);
@@ -560,7 +563,12 @@ export default function InboxScreen() {
     if (filters.section) {
       chips.push({
         key: "section",
-        label: filters.section === "orders" ? "قسم الطلبات" : "قسم الردود",
+        label:
+          filters.section === "orders"
+            ? "قسم الطلبات"
+            : filters.section === "replies"
+              ? "قسم الردود"
+              : "قسم الشكاوى",
         clear: () => setFilters((current) => ({ ...current, section: null })),
       });
     }
@@ -587,6 +595,13 @@ export default function InboxScreen() {
         clear: () => setFilters((current) => ({ ...current, handling: null })),
       });
     }
+    if (filters.date) {
+      chips.push({
+        key: "date",
+        label: conversationDateLabel(filters.date),
+        clear: () => setFilters((current) => ({ ...current, date: null })),
+      });
+    }
     return chips;
   }, [filters, labels]);
 
@@ -607,15 +622,15 @@ export default function InboxScreen() {
   const staffView =
     view === "specialists" ? "specialist" : view === "drivers" ? "driver" : null;
   const searchedPhone = useMemo(
-    () => canonicalPhone(deferredSearch.trim()),
-    [deferredSearch],
+    () => canonicalPhone(debouncedSearch.trim()),
+    [debouncedSearch],
   );
   // `query` guards against React Query's placeholder rows from the previous
   // keystroke. Until the server has answered for this exact input, we do not
   // claim that the number is absent.
   const unknownPhone =
     searchedPhone &&
-    firstPage?.query === deferredSearch.trim() &&
+    firstPage?.query === debouncedSearch.trim() &&
     firstPage.exactPhoneMatch === null
       ? searchedPhone
       : null;
@@ -641,28 +656,51 @@ export default function InboxScreen() {
     [router, startChat],
   );
 
+  const confirmReleaseAll = useCallback(() => {
+    if (releaseAll.isPending) return;
+    Alert.alert(
+      "إطلاق جميع محادثاتك؟",
+      "ستعود كل المحادثات المستلمة بواسطتك إلى قائمة غير المستلمة، وأي رسالة جديدة من العميلة ستظهر كمحادثة جديدة متاحة للفريق.",
+      [
+        { text: "إلغاء", style: "cancel" },
+        {
+          text: "إطلاق جميع المحادثات",
+          style: "destructive",
+          onPress: () =>
+            releaseAll.mutate(
+              { scope: "mine" },
+              {
+                onSuccess: ({ count }) =>
+                  Alert.alert(
+                    "تم الإطلاق",
+                    count
+                      ? `تم إطلاق ${count.toLocaleString("ar")} محادثة.`
+                      : "لا توجد محادثات مستلمة لإطلاقها.",
+                  ),
+                onError: (error) =>
+                  Alert.alert("تعذّر إطلاق المحادثات", error.message),
+              },
+            ),
+        },
+      ],
+    );
+  }, [releaseAll]);
+
   /**
    * Hoisted so the memo on ConversationRow actually holds — an arrow declared
    * in JSX is a new function on every render, which makes every row prop
    * "changed" no matter what memo does.
    *
-   * The rows keep their entrance fade but no longer carry
-   * `layout={LinearTransition}`: a layout transition re-measures every row on
-   * every list change, and this list changes on a 15-second poll, so the
-   * animation was running constantly to express a reorder nobody asked to see.
+   * Keep the cell itself stable. Virtualized cells remount as the user scrolls;
+   * entrance and exit fades replayed for every remount and delayed recycling.
    */
   const renderRow = useCallback(
-    ({ item, index }: { item: ConversationSummary; index: number }) => (
-      <Animated.View
-        entering={FadeIn.delay(Math.min(index, 8) * 24).duration(200)}
-        exiting={FadeOut.duration(140)}
-      >
-        <ConversationRow
-          conversation={item}
-          staff={staffView}
-          assigneeName={item.assigned_to ? assignees.get(item.assigned_to) ?? null : null}
-        />
-      </Animated.View>
+    ({ item }: { item: ConversationSummary }) => (
+      <ConversationRow
+        conversation={item}
+        staff={staffView}
+        assigneeName={item.assigned_to ? assignees.get(item.assigned_to) ?? null : null}
+      />
     ),
     [assignees, staffView],
   );
@@ -824,6 +862,19 @@ export default function InboxScreen() {
               </Pressable>
             </View>
 
+            {bootstrap.data?.session.teamMemberId ? (
+              <PrimaryButton
+                testID="release-all-conversations"
+                label="إطلاق جميع المحادثات"
+                loading={releaseAll.isPending}
+                loadingLabel="جارٍ إطلاق المحادثات…"
+                icon="person.crop.circle.badge.xmark"
+                variant="outline"
+                tone="danger"
+                onPress={confirmReleaseAll}
+              />
+            ) : null}
+
             {filterChips.length ? (
               <View
                 style={{
@@ -879,11 +930,11 @@ export default function InboxScreen() {
               message={conversations.error.message}
               onRetry={() => void conversations.refetch()}
             />
-          ) : deferredSearch.trim() ? (
+          ) : debouncedSearch.trim() ? (
             <EmptyState
               icon="magnifyingglass"
               title="لا توجد نتائج"
-              detail={`لم نعثر على محادثة تطابق «${deferredSearch.trim()}».`}
+              detail={`لم نعثر على محادثة تطابق «${debouncedSearch.trim()}».`}
             />
           ) : (
             <EmptyState

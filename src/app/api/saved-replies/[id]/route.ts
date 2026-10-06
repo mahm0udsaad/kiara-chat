@@ -2,16 +2,13 @@ import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { deleteSavedReply, updateSavedReply } from "@/lib/saved-replies";
 
-/** Editing/removing a template is owner/manager-only — it's shared by the team. */
+/** Saved replies are shared team content; every authenticated tenant member may manage them. */
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getKiaraSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (session.role !== "admin")
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
   const { id } = await params;
   const body = await request.json().catch(() => ({}));
   const patch: { title?: string; body?: string } = {};
@@ -38,9 +35,6 @@ export async function DELETE(
 ) {
   const session = await getKiaraSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (session.role !== "admin")
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
   const { id } = await params;
   try {
     await deleteSavedReply(id);

@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
+import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 /**
@@ -16,7 +17,7 @@ export type AgentRole = "admin" | "agent";
 export interface KiaraSession {
   userId: string;
   role: AgentRole;
-  /** True only when auth.uid() is restaurants.owner_id for the Kiara tenant. */
+  /** Primary owner or an explicitly delegated owner-level administrator. */
   isOwner: boolean;
   email: string | null;
   /**
@@ -25,6 +26,28 @@ export interface KiaraSession {
    * re-query this — that was a third round trip on the send path.
    */
   teamMemberId: string | null;
+}
+
+/**
+ * A tenant still has one canonical owner for billing and recovery, while a
+ * named administrator may be trusted with the same operational capabilities.
+ * This list is intentionally not exposed in the team-permissions UI: an admin
+ * must never be able to promote another account to owner-level access.
+ */
+async function hasDelegatedOwnerAccess(userId: string): Promise<boolean> {
+  const { data, error } = await getAdminSupabaseClient()
+    .from("restaurants")
+    .select("metadata")
+    .eq("id", KIARA_RESTAURANT_ID)
+    .maybeSingle();
+  if (error) {
+    console.error("Failed to read delegated owner access", error.message);
+    return false;
+  }
+  const delegates = (data?.metadata as {
+    ownerDelegateUserIds?: unknown;
+  } | null)?.ownerDelegateUserIds;
+  return Array.isArray(delegates) && delegates.includes(userId);
 }
 
 /**
@@ -84,12 +107,16 @@ export const getKiaraSession = cache(async function getKiaraSession(): Promise<K
   // Member wins on role resolution, but an owner who is also a member keeps
   // admin either way.
   if (member) {
+    const delegatedOwner =
+      !owned && member.role === "admin"
+        ? await hasDelegatedOwnerAccess(identity.userId)
+        : false;
     const role: AgentRole =
-      member.role === "admin" || owned ? "admin" : "agent";
+      member.role === "admin" || owned || delegatedOwner ? "admin" : "agent";
     return {
       userId: identity.userId,
       role,
-      isOwner: Boolean(owned),
+      isOwner: Boolean(owned) || delegatedOwner,
       email: identity.email,
       teamMemberId: (member.id as string) ?? null,
     };

@@ -1,6 +1,7 @@
 import { Redirect } from "expo-router";
 import { Stack } from "expo-router/stack";
 
+import { LocationPermissionGate } from "@/components/field/location-permission-gate";
 import { ErrorState, LoadingScreen } from "@/components/screen-state";
 import { useBootstrap } from "@/lib/queries";
 import {
@@ -47,6 +48,8 @@ export default function FieldLayout() {
   return (
     <FieldI18nProvider locale={locale}>
       <FieldNavigator />
+      {/* Drivers only: specialists are driven, their phones send no trip GPS. */}
+      {role === "driver" ? <LocationPermissionGate /> : null}
     </FieldI18nProvider>
   );
 }

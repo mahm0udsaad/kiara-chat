@@ -390,6 +390,8 @@ export async function notifyNextFieldStep(input: {
   specialistId: string | null;
   secondSpecialistId?: string | null;
   driverId: string | null;
+  returnDriverId?: string | null;
+  tripType?: "one_way" | "round_trip";
   progress: FieldOrderProgress;
 }): Promise<FieldPushDeliverySummary> {
   const next = nextFieldAction(input.progress);
@@ -397,7 +399,13 @@ export async function notifyNextFieldStep(input: {
     ? [input.specialistId, input.secondSpecialistId].filter(
         (value): value is string => Boolean(value),
       )
-    : input.driverId ? [input.driverId] : [];
+    : next.action === "driver_return"
+      ? input.returnDriverId
+        ? [input.returnDriverId]
+        : input.tripType === "round_trip" && input.driverId
+          ? [input.driverId]
+          : []
+      : input.driverId ? [input.driverId] : [];
   if (!next.role || !next.label || !rosterIds.length) return sendExpoMessages([]);
   const [tokens, languages] = await Promise.all([
     activeTokensForRoster(next.role, rosterIds),
@@ -519,6 +527,7 @@ export async function notifyFieldOrderUpdated(input: {
   specialistId: string | null;
   secondSpecialistId?: string | null;
   driverId: string | null;
+  returnDriverId?: string | null;
   changesSummary?: string;
   /**
    * Copy already localised to the specialist's language. When omitted the
@@ -530,7 +539,9 @@ export async function notifyFieldOrderUpdated(input: {
   const specialistIds = [input.specialistId, input.secondSpecialistId].filter(
     (value): value is string => Boolean(value),
   );
-  const driverIds = input.driverId ? [input.driverId] : [];
+  const driverIds = [...new Set([input.driverId, input.returnDriverId].filter(
+    (value): value is string => Boolean(value),
+  ))];
   const [specialistTokens, driverTokens] = await Promise.all([
     specialistIds.length ? activeTokensForRoster("specialist", specialistIds) : Promise.resolve(new Map<string, string[]>()),
     driverIds.length ? activeTokensForRoster("driver", driverIds) : Promise.resolve(new Map<string, string[]>()),
@@ -546,12 +557,17 @@ export async function notifyFieldOrderUpdated(input: {
         data,
       })),
     ),
-    ...(input.driverId ? (driverTokens.get(input.driverId) ?? []) : []).map((to) =>
-      fieldMessage(to, {
-        title: "تعديل في رحلتك",
-        body: bodyText,
-        data,
-      }),
+    ...driverIds.flatMap((driverId) =>
+      (driverTokens.get(driverId) ?? []).map((to) =>
+        fieldMessage(to, {
+          title: driverId === input.returnDriverId ? "رحلة عودة جديدة لك" : "تعديل في رحلتك",
+          body:
+            driverId === input.returnDriverId
+              ? `ستعيد الأخصائية من منزل ${name}. افتح الطلب عند انتهاء الخدمة.`
+              : bodyText,
+          data,
+        }),
+      ),
     ),
   ];
   return sendExpoMessages(messages);
@@ -563,6 +579,7 @@ export async function notifyFieldOrderCancelled(input: {
   specialistId: string | null;
   secondSpecialistId?: string | null;
   driverId: string | null;
+  returnDriverId?: string | null;
   /**
    * Copy already localised to the specialist's language. When omitted the
    * specialist is addressed in Arabic like the driver. The driver copy is
@@ -574,7 +591,9 @@ export async function notifyFieldOrderCancelled(input: {
   const specialistIds = [input.specialistId, input.secondSpecialistId].filter(
     (value): value is string => Boolean(value),
   );
-  const driverIds = input.driverId ? [input.driverId] : [];
+  const driverIds = [...new Set([input.driverId, input.returnDriverId].filter(
+    (value): value is string => Boolean(value),
+  ))];
   const [specialistTokens, driverTokens] = await Promise.all([
     specialistIds.length ? activeTokensForRoster("specialist", specialistIds) : Promise.resolve(new Map<string, string[]>()),
     driverIds.length ? activeTokensForRoster("driver", driverIds) : Promise.resolve(new Map<string, string[]>()),
@@ -589,13 +608,52 @@ export async function notifyFieldOrderCancelled(input: {
         data,
       })),
     ),
-    ...(input.driverId ? (driverTokens.get(input.driverId) ?? []) : []).map((to) =>
-      fieldMessage(to, {
-        title: input.driverCopy?.title ?? "إلغاء الرحلة",
-        body: input.driverCopy?.body ?? `تم إلغاء رحلة ${name}.`,
-        data,
-      }),
+    ...driverIds.flatMap((driverId) =>
+      (driverTokens.get(driverId) ?? []).map((to) =>
+        fieldMessage(to, {
+          title: input.driverCopy?.title ?? "إلغاء الرحلة",
+          body: input.driverCopy?.body ?? `تم إلغاء رحلة ${name}.`,
+          data,
+        }),
+      ),
     ),
   ];
   return sendExpoMessages(messages);
+}
+
+/**
+ * Asks the driver's phone to show its "allow location" window.
+ *
+ * The title and body are exactly what the employee approved in the composer.
+ * On an updated app the notification opens the permission window directly;
+ * on an older one a tap simply opens the account screen, so it can never
+ * strand anyone on a broken route.
+ */
+export async function notifyDriverLocationRequest(input: {
+  orderId: string;
+  driverId: string;
+  title: string;
+  body: string;
+}): Promise<FieldPushDeliverySummary> {
+  const tokens = await activeTokensForRoster("driver", [input.driverId]);
+  return sendExpoMessages(
+    (tokens.get(input.driverId) ?? []).map((to) =>
+      fieldMessage(to, {
+        title: input.title,
+        body: input.body,
+        data: {
+          type: "location_permission_request",
+          orderId: input.orderId,
+          url: "/field/account",
+        },
+      }),
+    ),
+    { checkReceipts: true },
+  );
+}
+
+/** Whether a push can reach this driver at all (an active, registered phone). */
+export async function driverCanReceivePush(driverId: string): Promise<boolean> {
+  const tokens = await activeTokensForRoster("driver", [driverId]);
+  return (tokens.get(driverId) ?? []).length > 0;
 }

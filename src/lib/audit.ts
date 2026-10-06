@@ -110,6 +110,40 @@ export function recordConversationEvent(
   });
 }
 
+/** Record one actor action against several conversations in a single insert. */
+export async function recordConversationEvents(
+  conversations: Array<{
+    id: string;
+    payload?: Record<string, unknown>;
+  }>,
+  eventType: ConversationEventType,
+  actor: AuditActor,
+): Promise<void> {
+  if (!conversations.length) return;
+
+  const { error } = await getAdminSupabaseClient()
+    .from("operation_events")
+    .insert(
+      conversations.map((conversation) => ({
+        restaurant_id: KIARA_RESTAURANT_ID,
+        aggregate_type: "conversation",
+        aggregate_id: conversation.id,
+        event_type: eventType,
+        actor_type: actor.teamMemberId ? "team_member" : "owner",
+        actor_role: auditRole(actor.role),
+        actor_user_id: actor.userId,
+        actor_team_member_id: actor.teamMemberId,
+        payload: conversation.payload ?? {},
+      })),
+    );
+  if (error) {
+    console.error(
+      `[audit] ${eventType} on ${conversations.length} conversations was not recorded`,
+      error,
+    );
+  }
+}
+
 /**
  * An event with no employee behind it — the customer answered, or a webhook
  * told us something changed.

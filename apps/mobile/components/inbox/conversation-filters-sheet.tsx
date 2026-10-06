@@ -1,3 +1,5 @@
+import DateTimePicker from "@react-native-community/datetimepicker";
+import { useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -22,8 +24,32 @@ const OUTCOME_ORDER: ContactOutcome[] = ["booked", "not_booked", "no_reply"];
 const SECTION_LABEL: Record<ConversationSection, string> = {
   orders: "قسم الطلبات",
   replies: "قسم الردود",
+  complaints: "قسم الشكاوى",
 };
-const SECTION_ORDER: ConversationSection[] = ["orders", "replies"];
+const SECTION_ORDER: ConversationSection[] = ["orders", "replies", "complaints"];
+const RIYADH_DATE = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Riyadh",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const ARABIC_WEEKDAY = new Intl.DateTimeFormat("ar-SA", {
+  timeZone: "Asia/Riyadh",
+  weekday: "long",
+});
+
+function dateFromRiyadhDay(day: string | null): Date {
+  return day && /^\d{4}-\d{2}-\d{2}$/.test(day)
+    ? new Date(`${day}T12:00:00+03:00`)
+    : new Date();
+}
+
+export function conversationDateLabel(day: string): string {
+  const date = dateFromRiyadhDay(day);
+  return RIYADH_DATE.format(date) === RIYADH_DATE.format(new Date())
+    ? "محادثات اليوم"
+    : `محادثات ${ARABIC_WEEKDAY.format(date)}`;
+}
 /** The booking's own progression, in the order the owner works through it. */
 const STAGE_ORDER: BookingStage[] = [
   "collecting_details",
@@ -58,7 +84,8 @@ export function activeFilterCount(filters: ConversationFilters): number {
     (filters.section ? 1 : 0) +
     (filters.labelId ? 1 : 0) +
     (filters.bookingStage ? 1 : 0) +
-    (filters.handling ? 1 : 0)
+    (filters.handling ? 1 : 0) +
+    (filters.date ? 1 : 0)
   );
 }
 
@@ -149,6 +176,17 @@ export function ConversationFiltersSheet({
 }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const recentDays = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, offset) => {
+        const date = new Date();
+        date.setDate(date.getDate() - offset);
+        const value = RIYADH_DATE.format(date);
+        return { value, label: conversationDateLabel(value) };
+      }),
+    [],
+  );
 
   return (
     <Modal
@@ -258,6 +296,49 @@ export function ConversationFiltersSheet({
             ))}
           </Group>
 
+          <Group title="تاريخ المحادثة">
+            <Choice
+              label="كل التواريخ"
+              selected={!filters.date}
+              onPress={() => onChange({ ...filters, date: null })}
+            />
+            {recentDays.map((day) => (
+              <Choice
+                key={day.value}
+                label={day.label}
+                selected={filters.date === day.value}
+                onPress={() => onChange({ ...filters, date: day.value })}
+              />
+            ))}
+            <Choice
+              label={
+                filters.date && !recentDays.some((day) => day.value === filters.date)
+                  ? `التاريخ: ${filters.date}`
+                  : "اختيار تاريخ آخر"
+              }
+              selected={
+                Boolean(filters.date) &&
+                !recentDays.some((day) => day.value === filters.date)
+              }
+              onPress={() => setDatePickerOpen(true)}
+            />
+          </Group>
+
+          {datePickerOpen ? (
+            <DateTimePicker
+              value={dateFromRiyadhDay(filters.date)}
+              mode="date"
+              maximumDate={new Date()}
+              display={process.env.EXPO_OS === "ios" ? "inline" : "default"}
+              onChange={(event, date) => {
+                if (process.env.EXPO_OS === "android") setDatePickerOpen(false);
+                if (event.type === "set" && date) {
+                  onChange({ ...filters, date: RIYADH_DATE.format(date) });
+                }
+              }}
+            />
+          ) : null}
+
           <Group title="مرحلة متابعة الحجز">
             <Choice
               label="كل المراحل"
@@ -308,6 +389,7 @@ export function ConversationFiltersSheet({
                 labelId: null,
                 bookingStage: null,
                 handling: null,
+                date: null,
               })
             }
           />

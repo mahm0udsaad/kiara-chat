@@ -12,11 +12,11 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { FadeOut } from "react-native-reanimated";
+import { Image } from "expo-image";
 
 import { BookingSheet } from "@/components/inbox/booking-sheet";
 import { CallControl } from "@/components/inbox/call-control";
-import { Composer } from "@/components/inbox/composer";
+import { Composer, type ReplyTarget } from "@/components/inbox/composer";
 import { MessageResendSheet } from "@/components/inbox/message-resend-sheet";
 import { ConversationActionsButton } from "@/components/conversation-actions-button";
 import {
@@ -53,6 +53,7 @@ import {
   useDeleteMessage,
   useDismissBookingRequest,
   useMarkConversationRead,
+  useMediaUrl,
   useTakeConversation,
   useTakeOverConversation,
   useUpdateConversationActions,
@@ -60,7 +61,7 @@ import {
 import { tapFeedback } from "@/lib/haptics";
 import { useTheme } from "@/providers/theme-provider";
 import { useIsTyping } from "@/providers/inbox-live-provider";
-import type { ConversationMessage } from "@/types/api";
+import type { ConversationMessage, MediaSlot } from "@/types/api";
 
 /** A message, or the date chip that introduces the messages below it. */
 type ChatItem =
@@ -133,7 +134,58 @@ function emptyMessageLabel(messageType: string): string {
   }
 }
 
-type ReplyTo = { role?: string | null; text?: string | null; message_type?: string | null };
+type ReplyTo = {
+  role?: string | null;
+  text?: string | null;
+  message_type?: string | null;
+  media?: MediaSlot[];
+};
+
+function MessageDeliveryIndicator({ status }: { status: string | null | undefined }) {
+  const { colors } = useTheme();
+  const isFailed = status === "failed" || status === "undelivered";
+  const label = isFailed
+    ? status === "undelivered" ? "لم يتم التسليم" : "لم يتم الإرسال"
+    : status === "queued"
+      ? "بانتظار الإرسال"
+      : status === "pending" || status === "sending"
+        ? "جارٍ الإرسال"
+        : null;
+
+  if (!label) return null;
+
+  return (
+    <View
+      accessibilityRole="text"
+      accessibilityLabel={label}
+      style={{
+        alignSelf: "flex-start",
+        flexDirection: "row-reverse",
+        alignItems: "center",
+        gap: spacing.xs,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 2,
+        borderRadius: radius.full,
+        backgroundColor: isFailed ? colors.dangerSoft : colors.surfaceSunken,
+      }}
+    >
+      <IconSymbol
+        name={isFailed ? "exclamationmark.circle" : "clock"}
+        color={isFailed ? colors.onDangerSoft : colors.textSecondary}
+        size={13}
+      />
+      <Text
+        style={{
+          ...type.caption,
+          color: isFailed ? colors.onDangerSoft : colors.textSecondary,
+          ...rtlText,
+        }}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+}
 
 function replyToOf(message: ConversationMessage): ReplyTo | null {
   const value = message.metadata?.reply_to;
@@ -146,6 +198,8 @@ function replyToOf(message: ConversationMessage): ReplyTo | null {
  */
 function ReplyQuote({ replyTo, outbound }: { replyTo: ReplyTo; outbound: boolean }) {
   const { colors } = useTheme();
+  const image = replyTo.message_type === "image" ? replyTo.media?.[0] : null;
+  const media = useMediaUrl(image?.storage_path ?? null, Boolean(image?.storage_path));
   const who =
     replyTo.role === "customer" ? "العميلة" : replyTo.role ? "كيارا" : "رسالة سابقة";
   const text =
@@ -156,6 +210,8 @@ function ReplyQuote({ replyTo, outbound }: { replyTo: ReplyTo; outbound: boolean
   return (
     <View
       style={{
+        flexDirection: "row-reverse",
+        alignItems: "center",
         gap: 2,
         paddingHorizontal: spacing.sm,
         paddingVertical: spacing.xs + 1,
@@ -165,15 +221,31 @@ function ReplyQuote({ replyTo, outbound }: { replyTo: ReplyTo; outbound: boolean
         backgroundColor: outbound ? "rgba(255,255,255,0.15)" : colors.surfaceSunken,
       }}
     >
-      <Text style={{ ...type.caption, fontWeight: "600", color: outbound ? colors.onBrand : colors.brand, ...rtlText }}>
-        {`↩︎ ردًا على ${who}`}
-      </Text>
-      <Text
-        numberOfLines={3}
-        style={{ ...type.footnote, color: outbound ? colors.onBrand : colors.textSecondary, ...rtlText }}
-      >
-        {text}
-      </Text>
+      {media.data?.url ? (
+        <Image
+          source={media.data.url}
+          contentFit="cover"
+          transition={120}
+          accessibilityLabel="الصورة التي تم الرد عليها"
+          style={{
+            width: 58,
+            height: 58,
+            borderRadius: radius.sm,
+            backgroundColor: outbound ? "rgba(255,255,255,0.12)" : colors.surface,
+          }}
+        />
+      ) : null}
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={{ ...type.caption, fontWeight: "600", color: outbound ? colors.onBrand : colors.brand, ...rtlText }}>
+          {`↩︎ ردًا على ${who}`}
+        </Text>
+        <Text
+          numberOfLines={3}
+          style={{ ...type.footnote, color: outbound ? colors.onBrand : colors.textSecondary, ...rtlText }}
+        >
+          {text}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -335,6 +407,7 @@ const MessageBubble = memo(function MessageBubble({
         >
           {formatters.time.format(new Date(message.created_at))}
         </Text>
+        {outbound ? <MessageDeliveryIndicator status={message.delivery_status} /> : null}
       </View>
     );
   }
@@ -412,6 +485,7 @@ const MessageBubble = memo(function MessageBubble({
           </Pressable>
         ) : null}
       </View>
+      {outbound ? <MessageDeliveryIndicator status={message.delivery_status} /> : null}
     </View>
   );
 });
@@ -450,6 +524,7 @@ export default function ConversationScreen() {
   const [takeoverReason, setTakeoverReason] = useState("");
   const [bookingOpen, setBookingOpen] = useState(false);
   const [resendBody, setResendBody] = useState<string | null>(null);
+  const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const deleteMessage = useDeleteMessage(id);
   // Hides it from Kiara's own view only — there is no "delete for everyone"
   // on the Business Platform, so this can never reach the customer's phone.
@@ -476,10 +551,18 @@ export default function ConversationScreen() {
 
   // The long-press menu itself — copy only offered when there's actual text
   // to copy (a media-only message has nothing worth putting on the clipboard).
-  const showMessageActions = (message: { id: string; content: string }) => {
+  const showMessageActions = (message: ConversationMessage) => {
     tapFeedback();
     const options: { text: string; style?: "default" | "cancel" | "destructive"; onPress?: () => void }[] =
       [];
+    if (message.role !== "system") {
+      options.push({
+        text: "رد على الرسالة",
+        onPress: () => {
+          setReplyTarget({ id: message.id, role: message.role, content: message.content, messageType: message.message_type });
+        },
+      });
+    }
     if (message.content) {
       options.push({ text: "نسخ الرسالة", onPress: () => copyMessage(message.content) });
     }
@@ -916,17 +999,12 @@ export default function ConversationScreen() {
           item.kind === "day" ? (
             <DaySeparator label={item.label} />
           ) : (
-            // The fade plays as this view unmounts once the deleted message
-            // drops out of `chatItems` after the refetch — without it the row
-            // just vanishes the instant the list re-renders.
-            <Animated.View exiting={FadeOut.duration(220)}>
-              <Pressable
-                onLongPress={() => showMessageActions(item.message)}
-                delayLongPress={400}
-              >
-                <MessageBubble message={item.message} onResend={setResendBody} />
-              </Pressable>
-            </Animated.View>
+            <Pressable
+              onLongPress={() => showMessageActions(item.message)}
+              delayLongPress={400}
+            >
+              <MessageBubble message={item.message} onResend={setResendBody} />
+            </Pressable>
           )
         }
         // A long thread is the one list here that really can reach hundreds of
@@ -1087,6 +1165,8 @@ export default function ConversationScreen() {
             conversationId={id}
             templateOnly={!isGroup && (messages?.length ?? 0) === 0}
             initialDraft={forwardedDraft}
+            replyTarget={replyTarget}
+            onClearReply={() => setReplyTarget(null)}
           />
         )}
       </View>

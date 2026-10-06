@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   dispatchBooking,
   orderExists,
+  RekazBookingError,
   type DispatchBookingInput,
 } from "@/lib/dispatch";
 import { isLocationUnset } from "@/lib/format";
@@ -195,6 +196,15 @@ export async function POST(
           : { ...result.order, price: null },
     });
   } catch (error) {
+    if (error instanceof RekazBookingError) {
+      return NextResponse.json(
+        {
+          error: error.detail ?? "حالة الحجز في ركاز لا تسمح بطلب السائق",
+          code: error.code,
+        },
+        { status: 409 },
+      );
+    }
     if (error instanceof OperationalCommandError && error.isConflict) {
       return NextResponse.json(
         {

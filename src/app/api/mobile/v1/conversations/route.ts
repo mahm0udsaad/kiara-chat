@@ -40,6 +40,7 @@ function readFilters(params: URLSearchParams): MobileConversationFilters {
   const labelId = (params.get("label") ?? "").trim().slice(0, 64);
   const stage = params.get("stage") ?? "";
   const handling = params.get("handling") ?? "";
+  const date = params.get("date") ?? "";
   return {
     status: isCsStatus(status) ? status : null,
     contactOutcome: isContactOutcome(outcome) ? outcome : null,
@@ -47,6 +48,7 @@ function readFilters(params: URLSearchParams): MobileConversationFilters {
     labelId: labelId || null,
     bookingStage: isBookingStage(stage) ? stage : null,
     handling: isConversationHandling(handling) ? handling : null,
+    date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null,
   };
 }
 

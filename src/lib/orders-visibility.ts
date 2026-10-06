@@ -6,5 +6,5 @@ import type { DriverOrderRow } from "@/lib/types";
  * orders to a non-admin runs them through here.
  */
 export function stripPrices(orders: DriverOrderRow[]): DriverOrderRow[] {
-  return orders.map((o) => ({ ...o, price: null }));
+  return orders.map((o) => ({ ...o, price: null, return_price: null }));
 }

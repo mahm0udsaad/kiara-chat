@@ -11,7 +11,7 @@ import {
   type FieldLocationEvidence,
 } from "@/lib/operational-commands";
 import type { DriverOrderStatus, FieldOrderProgressState, TripType } from "@/lib/types";
-import { getOrderPunctuality, type PunctualitySummary } from "@/lib/punctuality";
+import { getOrderPunctuality, isTripTrackingActive, type PunctualitySummary } from "@/lib/punctuality";
 
 export type FieldStaffRole = "specialist" | "driver";
 export type FieldOrderAction =
@@ -53,6 +53,7 @@ export interface FieldOrder {
   specialistId: string | null;
   secondSpecialistId: string | null;
   driverId: string | null;
+  returnDriverId: string | null;
   arrivalAt: string;
   durationMinutes: number;
   tripType: TripType;
@@ -62,6 +63,7 @@ export interface FieldOrder {
   specialistName: string | null;
   secondSpecialistName: string | null;
   driverName: string | null;
+  returnDriverName: string | null;
   /** Approved visit services in the order the specialist should perform them. */
   services: Array<{
     id: string;
@@ -90,6 +92,12 @@ export interface FieldOrder {
   doorPhotoUrl: string | null;
   /** Timing plan and evidence summary. Exact continuous GPS points stay server-only. */
   punctuality: PunctualitySummary | null;
+  /**
+   * Whether the driver's phone should be sending trip GPS for this order now.
+   * Detail screen only; null on lists, for specialists, or when unknown.
+   * Independent of `punctuality`, which needs both pins to exist.
+   */
+  tripTrackingActive: boolean | null;
 }
 
 export interface FieldStaffAccountSummary {
@@ -394,6 +402,48 @@ const ORDER_COLS_BASE =
   "id, conversation_id, specialist_id, driver_id, arrival_at, customer_location, customer_phone, duration_minutes, trip_type, status";
 const ORDER_COLS_WITH_SECOND = `${ORDER_COLS_BASE}, second_specialist_id`;
 const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_WITH_SECOND}, driver_note, specialist_note, specialist_voice_path, door_photo_path`;
+const ORDER_COLS_WITH_RETURN = `${ORDER_COLS_WITH_NOTES}, return_driver_id`;
+
+function nextFieldActionForViewer(
+  progress: FieldOrderProgress,
+  row: Record<string, unknown>,
+  session: FieldStaffSession,
+): { action: FieldOrderAction | null; label: string | null; canAct: boolean } {
+  const next = nextFieldAction(progress);
+  if (session.role === "specialist") {
+    if (progress.completedAt) return { action: null, label: null, canAct: false };
+    return {
+      action: next.action,
+      label: next.label,
+      canAct: next.role === "specialist",
+    };
+  }
+
+  const primaryDriverId = (row.driver_id as string | null) ?? null;
+  const assignedReturnDriverId =
+    (row.return_driver_id as string | null) ?? null;
+  const returnDriverId =
+    assignedReturnDriverId ??
+    (row.trip_type === "round_trip" ? primaryDriverId : null);
+  const isOutboundDriver = session.rosterId === primaryDriverId;
+  const isReturnDriver = session.rosterId === returnDriverId;
+
+  if (isOutboundDriver && !progress.driverClientArrivedAt) {
+    return {
+      action: next.action,
+      label: next.label,
+      canAct: next.role === "driver",
+    };
+  }
+  if (isReturnDriver && !progress.driverReturnedAt) {
+    return {
+      action: "driver_return",
+      label: "إنهاء الرحلة والعودة",
+      canAct: Boolean(progress.completedAt),
+    };
+  }
+  return { action: null, label: null, canAct: false };
+}
 
 /** Long enough to open the order, play the note and study the photo. */
 const ATTACHMENT_URL_TTL_SECONDS = 3600;
@@ -412,7 +462,11 @@ async function loadOrdersForSession(
       ? query.or(
           `specialist_id.eq.${session.rosterId},second_specialist_id.eq.${session.rosterId}`,
         )
-      : query.eq("driver_id", session.rosterId);
+      : cols.includes("return_driver_id")
+        ? query.or(
+            `driver_id.eq.${session.rosterId},return_driver_id.eq.${session.rosterId}`,
+          )
+        : query.eq("driver_id", session.rosterId);
     if (options.orderId) {
       query = query.eq("id", options.orderId);
     } else if (options.view && options.dayStart && options.dayEnd) {
@@ -439,7 +493,10 @@ async function loadOrdersForSession(
   // Same deploy-ahead-of-migration guard the operations reads use: without the
   // notes the app is merely quieter, so a missing column must not blank out
   // the field team's day.
-  let { data: orders, error } = await build(ORDER_COLS_WITH_NOTES);
+  let { data: orders, error } = await build(ORDER_COLS_WITH_RETURN);
+  if (error?.message.includes("return_driver_id")) {
+    ({ data: orders, error } = await build(ORDER_COLS_WITH_NOTES));
+  }
   if (
     error?.message.includes("_note") ||
     error?.message.includes("_voice_path") ||
@@ -454,7 +511,10 @@ async function loadOrdersForSession(
     row.specialist_id as string,
     row.second_specialist_id as string,
   ]).filter(Boolean))];
-  const driverIds = [...new Set(rows.map((row) => row.driver_id as string).filter(Boolean))];
+  const driverIds = [...new Set(rows.flatMap((row) => [
+    row.driver_id as string,
+    row.return_driver_id as string,
+  ]).filter(Boolean))];
   const orderIds = rows.map((row) => row.id as string);
 
   const [conversationResult, specialistResult, driverResult, progressResult, servicesResult] = await Promise.all([
@@ -572,10 +632,23 @@ async function loadOrdersForSession(
       punctualityByOrder.set(String(rows[0].id), null);
     }
   }
+  // Only the assigned outbound driver ever sends trip GPS. Unknown (null) on
+  // any failure: the phone then leaves a running trip alone rather than
+  // stopping or starting anything on a guess.
+  let tripTrackingActive: boolean | null = null;
+  if (options.orderId && rows[0] && session.role === "driver" && rows[0].driver_id === session.rosterId) {
+    tripTrackingActive = await Promise.race([
+      isTripTrackingActive(String(rows[0].id)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1_500)),
+    ]).catch((error) => {
+      console.warn("[trip-tracking] state unavailable", error);
+      return null;
+    });
+  }
 
   const mapped = rows.map((row): FieldOrder => {
     const progress = progressOf(progressRows.get(row.id as string));
-    const next = nextFieldAction(progress);
+    const next = nextFieldActionForViewer(progress, row, session);
     const status = row.status as DriverOrderStatus;
     const cancelled = status === "cancelled";
     return {
@@ -585,6 +658,7 @@ async function loadOrdersForSession(
       specialistId: (row.specialist_id as string | null) ?? null,
       secondSpecialistId: (row.second_specialist_id as string | null) ?? null,
       driverId: (row.driver_id as string | null) ?? null,
+      returnDriverId: (row.return_driver_id as string | null) ?? null,
       arrivalAt: row.arrival_at as string,
       durationMinutes: Number(row.duration_minutes),
       tripType: row.trip_type as TripType,
@@ -598,14 +672,18 @@ async function loadOrdersForSession(
         ? specialists.get(row.second_specialist_id as string) ?? null
         : null,
       driverName: row.driver_id ? drivers.get(row.driver_id as string) ?? null : null,
+      returnDriverName: row.return_driver_id
+        ? drivers.get(row.return_driver_id as string) ?? null
+        : null,
       services: servicesByOrder.get(row.id as string) ?? [],
       progress,
       nextAction: cancelled ? null : next.action,
       nextActionLabel: cancelled ? null : next.label,
-      canAct: !cancelled && next.role === session.role,
+      canAct: !cancelled && next.canAct,
       canCancel:
         !cancelled &&
         session.role === "driver" &&
+        row.driver_id === session.rosterId &&
         Boolean(progress.driverConfirmedAt) &&
         !progress.specialistPickupAt,
       note:
@@ -619,10 +697,19 @@ async function loadOrdersForSession(
       doorPhotoUrl:
         session.role === "driver" ? doorUrls.get(row.id as string) ?? null : null,
       punctuality: punctualityByOrder.get(row.id as string) ?? null,
+      tripTrackingActive: options.orderId && row.id === rows[0]?.id ? tripTrackingActive : null,
     };
   });
   return options.view === "done"
-    ? mapped.filter((order) => Boolean(order.progress.driverReturnedAt))
+    ? mapped.filter((order) => {
+        if (session.role === "specialist") return Boolean(order.progress.completedAt);
+        const isReturnDriver =
+          order.returnDriverId === session.rosterId ||
+          (order.tripType === "round_trip" && order.driverId === session.rosterId);
+        return isReturnDriver
+          ? Boolean(order.progress.driverReturnedAt)
+          : Boolean(order.progress.driverClientArrivedAt);
+      })
     : mapped;
 }
 
@@ -657,17 +744,17 @@ export async function updateFieldOrder(
 ): Promise<FieldOrder> {
   const currentOrder = await getFieldOrder(session, orderId);
   if (!currentOrder) throw new Error("الطلب غير موجود أو غير مخصص لك");
-  const expected = nextFieldAction(currentOrder.progress);
+  const expectedAction = currentOrder.nextAction;
   if (
     action === "start_service" &&
     !currentOrder.progress.driverClientArrivedAt
   ) {
     throw new Error("يجب أن يؤكد السائق وصوله إلى منزل العميلة أولًا");
   }
-  if (expected.action !== action) {
+  if (expectedAction !== action) {
     throw new Error("هذه الخطوة غير متاحة الآن");
   }
-  if (expected.role !== session.role) {
+  if (!currentOrder.canAct) {
     throw new Error("هذه الخطوة تخص عضو الفريق الآخر");
   }
 

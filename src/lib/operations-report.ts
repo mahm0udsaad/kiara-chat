@@ -89,11 +89,14 @@ type OrderRow = {
   sent_at: string | null;
   specialist_id: string | null;
   driver_id: string | null;
+  return_driver_id: string | null;
+  trip_type: "one_way" | "round_trip";
   arrival_at: string;
   duration_minutes: number;
   customer_phone: string;
   rekaz_source_id: string | null;
   price: number | null;
+  return_price: number | null;
 };
 type ProgressRow = {
   order_id: string;
@@ -289,7 +292,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         .lte("arrival_at", rangeEnd),
       admin
         .from("driver_orders")
-        .select("id, sent_at, specialist_id, driver_id, arrival_at, duration_minutes, customer_phone, rekaz_source_id, price")
+        .select("id, sent_at, specialist_id, driver_id, return_driver_id, trip_type, arrival_at, duration_minutes, customer_phone, rekaz_source_id, price, return_price")
         .eq("restaurant_id", KIARA_RESTAURANT_ID)
         .gte("arrival_at", rangeStart)
         .lte("arrival_at", rangeEnd),
@@ -350,6 +353,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
   const driverPeople = buildPeople(drivers, []);
   const orderBySource = new Map<string, OrderRow>();
   for (const order of orders) if (order.rekaz_source_id) orderBySource.set(order.rekaz_source_id, order);
+  const progressByOrder = new Map(progress.map((row) => [row.order_id, row]));
   const completedAtByOrder = new Map(progress.map((row) => [row.order_id, row.completed_at]));
   // Only the orders inside the range: a progress row is fetched for every
   // order ever, and averaging all of them would answer a question about this
@@ -491,7 +495,10 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
 
   const driverEvents: OperationsEvent[] = [];
   for (const order of orders) {
-    if (!order.driver_id || !overlapsWindow(order.arrival_at, order.duration_minutes, startMinute, endMinute)) continue;
+    if (
+      (!order.driver_id && !order.return_driver_id) ||
+      !overlapsWindow(order.arrival_at, order.duration_minutes, startMinute, endMinute)
+    ) continue;
     const linked = reservationsByVisit.size
       ? [...reservationsByVisit.entries()].find(([, rows]) => rows.some((row) => row.source_id === order.rekaz_source_id))
       : undefined;
@@ -504,27 +511,50 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
     const durationMinutes = arrivals.length
       ? Math.max(0, Math.round((Math.max(...ends) - Math.min(...arrivals)) / 60_000))
       : order.duration_minutes;
-    const completedAt = completedAtByOrder.get(order.id) ?? null;
+    const orderProgress = progressByOrder.get(order.id);
+    const outboundCompletedAt = order.trip_type === "one_way"
+      ? orderProgress?.driver_client_arrived_at ?? null
+      : orderProgress?.driver_returned_at ?? null;
+    const returnCompletedAt = orderProgress?.driver_returned_at ?? null;
     const first = rows[0]?.payload;
-    driverEvents.push({
-      id: `order:driver:${order.id}`,
+    const common = {
       visitKey: linked?.[0] ?? `order:${order.id}`,
-      source: first ? "rekaz" : "whatsapp",
-      sourceLabel: first ? "حجز ركاز" : "طلب واتساب",
+      source: first ? "rekaz" as const : "whatsapp" as const,
+      sourceLabel: first ? "حجز ركاز" as const : "طلب واتساب" as const,
       orderId: order.id,
-      personIds: [order.driver_id],
       arrivalAt,
       endsAt: new Date(new Date(arrivalAt).getTime() + durationMinutes * 60_000).toISOString(),
       durationMinutes,
       customerName: first?.customerName ?? "",
       customerPhone: first?.customerPhone ?? order.customer_phone,
-      service: rows.length ? unique(rows.map((row) => row.payload.service).filter(Boolean)).join("، ") : "مشوار عميلة",
-      status: completedAt ? "Done" : "Scheduled",
-      completed: Boolean(completedAt),
-      completedAt,
-      tripCost: order.price == null ? null : Number(order.price),
       ...punctualityFields(order.id),
-    });
+    };
+    if (order.driver_id) {
+      driverEvents.push({
+        ...common,
+        id: `order:driver:outbound:${order.id}`,
+        personIds: [order.driver_id],
+        service: rows.length
+          ? unique(rows.map((row) => row.payload.service).filter(Boolean)).join("، ")
+          : "مشوار الذهاب للعميلة",
+        status: outboundCompletedAt ? "Done" : "Scheduled",
+        completed: Boolean(outboundCompletedAt),
+        completedAt: outboundCompletedAt,
+        tripCost: order.price == null ? null : Number(order.price),
+      });
+    }
+    if (order.return_driver_id) {
+      driverEvents.push({
+        ...common,
+        id: `order:driver:return:${order.id}`,
+        personIds: [order.return_driver_id],
+        service: "عودة الأخصائية من منزل العميلة",
+        status: returnCompletedAt ? "Done" : "Scheduled",
+        completed: Boolean(returnCompletedAt),
+        completedAt: returnCompletedAt,
+        tripCost: order.return_price == null ? null : Number(order.return_price),
+      });
+    }
   }
 
   addMetrics(specialistPeople.people, specialistEvents);

@@ -237,7 +237,15 @@ function PunctualityEvidence({ value }: { value: OrderAuditLog["punctuality"] })
     [value.specialistArrivalSource === "driver_step" ? "وصول السائق للأخصائية (حسب تأكيده)" : "وصول السائق للأخصائية (GPS)", value.plannedSpecialistArrivalAt, value.specialistArrivedAt],
     ["انطلاق السائق", value.plannedDriverDepartureAt, value.driverDepartedAt],
     ["ركوب الأخصائية", null, value.specialistPickupAt],
-    [value.clientArrivalSource === "service_start" ? "الوصول للعميلة (حسب بدء الخدمة)" : "الوصول للعميلة (GPS)", null, value.clientArrivedAt],
+    [
+      value.clientArrivalSource === "service_start"
+        ? "الوصول للعميلة (حسب بدء الخدمة)"
+        : value.clientArrivalSource === "driver_step"
+          ? "الوصول للعميلة (تأكيد السائق)"
+          : "الوصول للعميلة (GPS)",
+      null,
+      value.clientArrivedAt,
+    ],
     ["بدء الخدمة", null, value.serviceStartedAt],
   ] as const;
   return (

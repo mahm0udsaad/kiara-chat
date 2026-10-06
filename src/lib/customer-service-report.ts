@@ -13,8 +13,11 @@ import {
   EMPTY_REKAZ_CREDIT,
   type RekazBookingRow,
 } from "@/lib/rekaz-booking-credit";
+import { isGroupConversation } from "@/lib/conversation-meta";
 
 const PAGE_SIZE = 1_000;
+const ID_BATCH_SIZE = 200;
+const EXCLUDED_REPORT_CONVERSATION_NAMES = new Set(["بوت ركاز"]);
 export const EMPLOYEE_ONLINE_WINDOW_SECONDS = 120;
 
 export type CustomerServiceActionKind =
@@ -129,7 +132,17 @@ export type CustomerServiceReport = {
     noReply: number;
     awaitingOutcome: number;
   };
+  last24HourConversations: CustomerServiceLast24Conversation[];
   employees: CustomerServiceEmployee[];
+};
+
+export type CustomerServiceLast24Conversation = {
+  conversationId: string;
+  customerName: string | null;
+  customerPhone: string;
+  inboundMessages: number;
+  lastInboundAt: string;
+  outcome: "booked" | "not_booked" | "no_reply" | null;
 };
 
 export type CustomerServiceEmployeeActivitiesInput = OperationsReportInput & {
@@ -313,6 +326,40 @@ async function pageRows<T>(load: (from: number, to: number) => PromiseLike<{ dat
     rows.push(...page);
     if (page.length < PAGE_SIZE) return rows;
   }
+}
+
+async function rowsByIds<T>(
+  ids: string[],
+  load: (ids: string[]) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+): Promise<T[]> {
+  const rows: T[] = [];
+  for (let index = 0; index < ids.length; index += ID_BATCH_SIZE) {
+    const result = await load(ids.slice(index, index + ID_BATCH_SIZE));
+    if (result.error) throw new Error(result.error.message);
+    rows.push(...((result.data ?? []) as T[]));
+  }
+  return rows;
+}
+
+function staffPhoneSet(
+  specialists: { phone?: unknown }[],
+  drivers: { phone?: unknown }[],
+): Set<string> {
+  return new Set(
+    [...specialists, ...drivers]
+      .map((row) => normalizePhone(String(row.phone ?? "")))
+      .filter(Boolean),
+  );
+}
+
+/** Customer-service performance excludes internal staff and automation chats. */
+function isTrackableCustomerConversation(
+  conversation: Pick<ConversationRow, "customer_name" | "customer_phone" | "metadata">,
+  staffPhones: ReadonlySet<string>,
+): boolean {
+  if (isGroupConversation(conversation)) return false;
+  if (staffPhones.has(normalizePhone(conversation.customer_phone))) return false;
+  return !EXCLUDED_REPORT_CONVERSATION_NAMES.has(conversation.customer_name?.trim() ?? "");
 }
 
 async function memberEmails(rows: MemberRow[]): Promise<Map<string, string | null>> {
@@ -504,17 +551,21 @@ export async function getCustomerServiceReport(
 
   if (specialistsResult.error) throw new Error(specialistsResult.error.message);
   if (driversResult.error) throw new Error(driversResult.error.message);
-  const staffPhones = new Set(
-    [...(specialistsResult.data ?? []), ...(driversResult.data ?? [])]
-      .map((row) => normalizePhone(String(row.phone ?? "")))
-      .filter(Boolean),
+  const staffPhones = staffPhoneSet(
+    specialistsResult.data ?? [],
+    driversResult.data ?? [],
   );
   const conversationById = new Map(conversations.map((row) => [row.id, row]));
+  const trackableConversationIds = new Set(
+    conversations
+      .filter((conversation) => isTrackableCustomerConversation(conversation, staffPhones))
+      .map((conversation) => conversation.id),
+  );
   const customerLast24Messages = last24Messages.filter((message) => {
     const conversation = conversationById.get(message.conversation_id);
-    if (!conversation) return false;
-    if (conversation.metadata?.chat_kind === "group") return false;
-    return !staffPhones.has(normalizePhone(conversation.customer_phone));
+    return conversation
+      ? isTrackableCustomerConversation(conversation, staffPhones)
+      : false;
   });
   const inboundConversationIds = new Set(
     customerLast24Messages.map((message) => message.conversation_id),
@@ -532,6 +583,34 @@ export async function getCustomerServiceReport(
     else if (outcome === "not_booked") notBooked += 1;
     else if (outcome === "no_reply") noReply += 1;
   }
+  const last24MessageSummary = new Map<string, { inboundMessages: number; lastInboundAt: string }>();
+  for (const message of customerLast24Messages) {
+    const current = last24MessageSummary.get(message.conversation_id);
+    last24MessageSummary.set(message.conversation_id, {
+      inboundMessages: (current?.inboundMessages ?? 0) + 1,
+      lastInboundAt: !current || message.created_at > current.lastInboundAt
+        ? message.created_at
+        : current.lastInboundAt,
+    });
+  }
+  const last24HourConversations: CustomerServiceLast24Conversation[] = [...inboundConversationIds]
+    .map((conversationId) => {
+      const conversation = conversationById.get(conversationId);
+      const summary = last24MessageSummary.get(conversationId);
+      const rawOutcome = latestOutcomeByConversation.get(conversationId);
+      const outcome: CustomerServiceLast24Conversation["outcome"] = rawOutcome === "booked" || rawOutcome === "not_booked" || rawOutcome === "no_reply"
+        ? rawOutcome
+        : null;
+      return {
+        conversationId,
+        customerName: conversation?.customer_name ?? null,
+        customerPhone: conversation?.customer_phone ?? "",
+        inboundMessages: summary?.inboundMessages ?? 0,
+        lastInboundAt: summary?.lastInboundAt ?? last24Start,
+        outcome,
+      };
+    })
+    .sort((a, b) => b.lastInboundAt.localeCompare(a.lastInboundAt));
 
   const presenceByMember = new Map(presence.map((row) => [row.team_member_id, row]));
   const memberByUser = new Map(members.map((row) => [row.user_id, row.id]));
@@ -592,6 +671,7 @@ export async function getCustomerServiceReport(
   }
 
   for (const conversation of conversations) {
+    if (!trackableConversationIds.has(conversation.id)) continue;
     if (!conversation.assigned_to) continue;
     const employee = employees.get(conversation.assigned_to);
     if (!employee) continue;
@@ -612,6 +692,7 @@ export async function getCustomerServiceReport(
     isMessage?: boolean;
   }) => {
     if (!inputActivity.memberId || !insideWindow(inputActivity.at, startMinute, endMinute)) return;
+    if (!trackableConversationIds.has(inputActivity.conversationId)) return;
     const employee = employees.get(inputActivity.memberId);
     if (!employee) return;
     employee.handledIds.add(inputActivity.conversationId);
@@ -652,6 +733,7 @@ export async function getCustomerServiceReport(
     messagesByConversation.set(row.conversation_id, bucket);
   }
   for (const rows of messagesByConversation.values()) {
+    if (!rows[0] || !trackableConversationIds.has(rows[0].conversation_id)) continue;
     const firstInboundIndex = rows.findIndex((row) => row.role === "customer");
     if (firstInboundIndex < 0) continue;
     const inbound = rows[firstInboundIndex]!;
@@ -774,7 +856,7 @@ export async function getCustomerServiceReport(
     if (row.role !== "agent" || !row.sender_team_member_id) continue;
     if (!insideWindow(row.created_at, startMinute, endMinute)) continue;
     const conversation = conversationById.get(row.conversation_id);
-    if (!conversation) continue;
+    if (!conversation || !trackableConversationIds.has(conversation.id)) continue;
     const phone = normalizePhone(conversation.customer_phone);
     if (!phone) continue;
     const key = `${row.sender_team_member_id}:${phone}`;
@@ -872,6 +954,7 @@ export async function getCustomerServiceReport(
         inboundConversationIds.size - booked - notBooked - noReply,
       ),
     },
+    last24HourConversations,
     employees: output,
   };
 }
@@ -1090,26 +1173,44 @@ export async function getCustomerServiceEmployeeActivities(
     if (activity.kind === "reply") current.replies += 1;
     else current.actions += 1;
   }
-  const handled = [...grouped.values()].sort((a, b) =>
-    b.lastHandledAt.localeCompare(a.lastHandledAt),
+  const groupedConversationIds = [...grouped.keys()];
+  const [conversationRows, specialistsResult, driversResult] = await Promise.all([
+    rowsByIds<ConversationRow>(groupedConversationIds, (ids) =>
+      admin
+        .from("conversations")
+        .select("id, customer_name, customer_phone, assigned_to, status, metadata")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .in("id", ids),
+    ),
+    admin
+      .from("specialists")
+      .select("phone")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID),
+    admin
+      .from("drivers")
+      .select("phone")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID),
+  ]);
+  if (specialistsResult.error) throw new Error(specialistsResult.error.message);
+  if (driversResult.error) throw new Error(driversResult.error.message);
+
+  const excludedStaffPhones = staffPhoneSet(
+    specialistsResult.data ?? [],
+    driversResult.data ?? [],
   );
+  const conversationMap = new Map(conversationRows.map((row) => [row.id, row]));
+  const handled = [...grouped.values()]
+    .filter((item) => {
+      const conversation = conversationMap.get(item.conversationId);
+      return conversation
+        ? isTrackableCustomerConversation(conversation, excludedStaffPhones)
+        : false;
+    })
+    .sort((a, b) => b.lastHandledAt.localeCompare(a.lastHandledAt));
   const total = handled.length;
   const pageSlice = handled.slice(offset, offset + limit);
 
   const conversationIds = pageSlice.map((item) => item.conversationId);
-  const conversationMap = new Map<string, { customer_name: string | null; customer_phone: string }>();
-
-  if (conversationIds.length > 0) {
-    const convRes = await admin
-      .from("conversations")
-      .select("id, customer_name, customer_phone")
-      .in("id", conversationIds);
-    if (convRes.data) {
-      for (const conv of convRes.data as { id: string; customer_name: string | null; customer_phone: string }[]) {
-        conversationMap.set(conv.id, conv);
-      }
-    }
-  }
 
   const chats: CustomerServiceHandledChat[] = pageSlice.map((item) => {
     const conv = conversationMap.get(item.conversationId);

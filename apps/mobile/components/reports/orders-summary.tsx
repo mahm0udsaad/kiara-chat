@@ -1,10 +1,16 @@
-import { Link } from "expo-router";
+import { Link, type Href } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 
+import {
+  ReportMetricCard,
+  ReportMetricGrid,
+  ReportSectionHeader,
+  type ReportMetricTone,
+} from "@/components/reports/report-metric-card";
 import { Card, Divider } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
-import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
+import { hitSize, numeric, rtlText, spacing, type } from "@/constants/theme";
 import { durationLabel, formatters } from "@/lib/format";
 import { REPORT_LOCALE, reportInteger } from "@/lib/operations-report";
 import { useTheme } from "@/providers/theme-provider";
@@ -23,34 +29,16 @@ const dayLabel = new Intl.DateTimeFormat(REPORT_LOCALE, {
 
 type MetricTone = "default" | "danger" | "warning" | "success";
 
-function Metric({ icon, label, value, tone = "default" }: {
+function Metric({ icon, label, value, tone = "default", href, testID }: {
   icon: IconName;
   label: string;
   value: string;
   tone?: MetricTone;
+  href?: Href;
+  testID?: string;
 }) {
-  const { colors } = useTheme();
-  const palette = {
-    default: { background: colors.surface, foreground: colors.brand },
-    danger: { background: colors.dangerSoft, foreground: colors.onDangerSoft },
-    warning: { background: colors.warningSoft, foreground: colors.onWarningSoft },
-    success: { background: colors.successSoft, foreground: colors.onSuccessSoft },
-  }[tone];
-  return (
-    <View style={{
-      flex: 1,
-      minWidth: 105,
-      gap: spacing.xs,
-      padding: spacing.md,
-      borderRadius: radius.lg,
-      borderCurve: "continuous",
-      backgroundColor: palette.background,
-    }}>
-      <IconSymbol name={icon} size={18} color={palette.foreground} />
-      <Text style={{ ...type.caption, ...rtlText, color: colors.textSecondary }}>{label}</Text>
-      <Text selectable style={{ ...type.title3, ...numeric, ...rtlText, color: colors.text }}>{value}</Text>
-    </View>
-  );
+  const mappedTone: ReportMetricTone = tone === "default" ? "neutral" : tone;
+  return <ReportMetricCard icon={icon} label={label} value={value} tone={mappedTone} href={href} testID={testID} />;
 }
 
 const PROBLEM_LABEL: Record<OrderProblemKind, (problem: OrderProblem) => string> = {
@@ -60,10 +48,10 @@ const PROBLEM_LABEL: Record<OrderProblemKind, (problem: OrderProblem) => string>
   not_done: () => "الخدمة لم يتم تنفيذها",
 };
 
-function ProblemRow({ problem }: { problem: OrderProblem }) {
+export function ProblemRow({ problem }: { problem: OrderProblem }) {
   const { colors } = useTheme();
   return (
-    <Link href={{ pathname: "/orders/[id]", params: { id: problem.orderId } }} asChild>
+    <Link href={{ pathname: "/reports/order/[id]", params: { id: problem.orderId } }} asChild>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`مشكلة في طلب ${problem.customerName ?? problem.customerPhone}`}
@@ -103,11 +91,11 @@ function ProblemRow({ problem }: { problem: OrderProblem }) {
   );
 }
 
-function OutcomeRow({ outcome }: { outcome: OrderOutcomeAudit }) {
+export function OutcomeRow({ outcome }: { outcome: OrderOutcomeAudit }) {
   const { colors } = useTheme();
   const notDone = outcome.outcome === "not_done";
   return (
-    <Link href={{ pathname: "/orders/[id]", params: { id: outcome.orderId } }} asChild>
+    <Link href={{ pathname: "/reports/order/[id]", params: { id: outcome.orderId } }} asChild>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`نتيجة طلب ${outcome.customerName ?? outcome.customerPhone}`}
@@ -144,36 +132,84 @@ export function OrdersSummary({ report }: { report: OrdersReport }) {
   const { colors } = useTheme();
   const totals = report.totals;
   const problemOrders = totals.problemOrders ?? 0;
-  const variance = totals.serviceVarianceMinutes ?? 0;
+  const metricHref = (metric: string) => ({
+    pathname: "/reports/orders/[metric]",
+    params: { metric, from: report.from, to: report.to },
+  } as unknown as Href);
 
   return (
     <View style={{ gap: spacing.lg }}>
-      <Card variant="raised" style={{
-        backgroundColor: problemOrders ? colors.dangerSoft : colors.successSoft,
-        borderColor: problemOrders ? colors.dangerSoft : colors.successSoft,
-      }}>
-        <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.md }}>
-          <IconSymbol
-            name={problemOrders ? "exclamationmark.triangle" : "checkmark.circle"}
-            size={26}
-            color={problemOrders ? colors.onDangerSoft : colors.onSuccessSoft}
-          />
-          <View style={{ flex: 1, gap: spacing.xs }}>
-            <Text style={{ ...type.headline, ...rtlText, color: problemOrders ? colors.onDangerSoft : colors.onSuccessSoft }}>
-              {problemOrders ? "طلبات تحتاج مراجعة" : "لا توجد مشاكل مسجلة"}
-            </Text>
-            <Text selectable style={{ ...type.title2, ...numeric, ...rtlText, color: problemOrders ? colors.onDangerSoft : colors.onSuccessSoft }}>
-              {reportInteger.format(problemOrders)}
-            </Text>
-          </View>
-        </View>
-      </Card>
+      <Link
+        href={metricHref("problems")}
+        asChild
+      >
+        <Pressable
+          testID="orders-metric-problems"
+          accessibilityRole="button"
+          accessibilityLabel={`${problemOrders ? "طلبات تحتاج مراجعة" : "لا توجد مشاكل مسجلة"}، ${reportInteger.format(problemOrders)}`}
+          accessibilityHint="يفتح قائمة الطلبات المرتبطة"
+          style={({ pressed }) => ({ opacity: pressed ? 0.65 : 1 })}
+        >
+          <Card variant="raised" style={{
+            backgroundColor: problemOrders ? colors.dangerSoft : colors.successSoft,
+            borderColor: problemOrders ? colors.dangerSoft : colors.successSoft,
+          }}>
+            <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.md }}>
+              <IconSymbol
+                name={problemOrders ? "exclamationmark.triangle" : "checkmark.circle"}
+                size={26}
+                color={problemOrders ? colors.onDangerSoft : colors.onSuccessSoft}
+              />
+              <View style={{ flex: 1, gap: spacing.xs }}>
+                <Text style={{ ...type.headline, ...rtlText, color: problemOrders ? colors.onDangerSoft : colors.onSuccessSoft }}>
+                  {problemOrders ? "طلبات تحتاج مراجعة" : "لا توجد مشاكل مسجلة"}
+                </Text>
+                <Text selectable style={{ ...type.title2, ...numeric, ...rtlText, color: problemOrders ? colors.onDangerSoft : colors.onSuccessSoft }}>
+                  {reportInteger.format(problemOrders)}
+                </Text>
+              </View>
+              <IconSymbol name="chevron.left" size={20} color={problemOrders ? colors.onDangerSoft : colors.onSuccessSoft} />
+            </View>
+          </Card>
+        </Pressable>
+      </Link>
 
-      <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
-        <Metric icon="clock" label="بدء متأخر" value={reportInteger.format(totals.lateOrders ?? 0)} tone={(totals.lateOrders ?? 0) ? "danger" : "default"} />
-        <Metric icon="exclamationmark.circle" label="تجاوز وقت الخدمة" value={reportInteger.format(totals.serviceOverruns ?? 0)} tone={(totals.serviceOverruns ?? 0) ? "warning" : "default"} />
-        <Metric icon="banknote" label="تكلفة مشوار ناقصة" value={reportInteger.format(totals.missingTripCosts ?? 0)} tone={(totals.missingTripCosts ?? 0) ? "warning" : "default"} />
-        <Metric icon="xmark.circle" label="لم يتم التنفيذ" value={reportInteger.format(totals.notDone ?? 0)} tone={(totals.notDone ?? 0) ? "danger" : "default"} />
+      <View style={{ gap: spacing.md }}>
+        <ReportSectionHeader title="تفاصيل المشاكل" description="اختاري نوع المشكلة لعرض الطلبات المرتبطة بها." />
+        <ReportMetricGrid>
+        <Metric
+          icon="clock"
+          label="بدء متأخر"
+          value={reportInteger.format(totals.lateOrders ?? 0)}
+          tone={(totals.lateOrders ?? 0) ? "danger" : "default"}
+          href={metricHref("late")}
+          testID="orders-metric-late"
+        />
+        <Metric
+          icon="exclamationmark.circle"
+          label="تجاوز وقت الخدمة"
+          value={reportInteger.format(totals.serviceOverruns ?? 0)}
+          tone={(totals.serviceOverruns ?? 0) ? "warning" : "default"}
+          href={metricHref("service-overrun")}
+          testID="orders-metric-service-overrun"
+        />
+        <Metric
+          icon="banknote"
+          label="تكلفة مشوار ناقصة"
+          value={reportInteger.format(totals.missingTripCosts ?? 0)}
+          tone={(totals.missingTripCosts ?? 0) ? "warning" : "default"}
+          href={metricHref("missing-trip-cost")}
+          testID="orders-metric-missing-trip-cost"
+        />
+        <Metric
+          icon="xmark.circle"
+          label="لم يتم التنفيذ"
+          value={reportInteger.format(totals.notDone ?? 0)}
+          tone={(totals.notDone ?? 0) ? "danger" : "default"}
+          href={metricHref("not-done")}
+          testID="orders-metric-not-done"
+        />
+        </ReportMetricGrid>
       </View>
 
       {(report.problems ?? []).length ? (
@@ -214,28 +250,6 @@ export function OrdersSummary({ report }: { report: OrdersReport }) {
 
       <Card>
         <View style={{ gap: spacing.xs }}>
-          <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>وقت الخدمة: المحجوز مقابل الفعلي</Text>
-          <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
-            يعتمد الوقت الفعلي على تسجيل بدء الخدمة وإنهائها داخل تطبيق الفريق.
-          </Text>
-        </View>
-        <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
-          <Metric icon="calendar" label="الوقت المحجوز" value={durationLabel(totals.bookedServiceMinutes ?? 0)} />
-          <Metric icon="clock" label="الوقت الفعلي" value={durationLabel(totals.actualServiceMinutes ?? 0)} />
-          <Metric
-            icon={variance > 0 ? "arrow.up" : "checkmark.circle"}
-            label="الفرق"
-            value={`${variance > 0 ? "+" : variance < 0 ? "−" : ""}${durationLabel(Math.abs(variance))}`}
-            tone={variance > 15 ? "warning" : "success"}
-          />
-        </View>
-        <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
-          محسوب من {reportInteger.format(totals.timedOrders ?? 0)} طلب مكتمل بتوقيت مسجل.
-        </Text>
-      </Card>
-
-      <Card>
-        <View style={{ gap: spacing.xs }}>
           <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>مستحقات السائقين</Text>
           <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
             مجموع تكاليف المشاوير التي سجلتها حنان لكل سائق خلال الفترة.
@@ -272,11 +286,11 @@ export function OrdersSummary({ report }: { report: OrdersReport }) {
             </Text>
           </View>
         </View>
-        <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
+        <ReportMetricGrid>
           <Metric icon="sparkles" label="إيراد الخدمات" value={currency.format(totals.serviceRevenue)} />
           <Metric icon="car" label="تكلفة المشاوير" value={currency.format(totals.tripCosts ?? 0)} tone="warning" />
           <Metric icon="arrow.triangle.2.circlepath" label="المبالغ المستردة" value={currency.format(totals.refunded)} />
-        </View>
+        </ReportMetricGrid>
       </Card>
 
       <Card>
@@ -284,14 +298,14 @@ export function OrdersSummary({ report }: { report: OrdersReport }) {
           <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>ملخص التنفيذ</Text>
           <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>كل طلب متعدد الخدمات يُحسب مرة واحدة.</Text>
         </View>
-        <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
+        <ReportMetricGrid>
           <Metric icon="doc.text" label="إجمالي الطلبات" value={reportInteger.format(totals.total)} />
           <Metric icon="checkmark.circle" label="مكتملة" value={reportInteger.format(totals.completed)} />
           <Metric icon="xmark.circle" label="لم يتم التنفيذ" value={reportInteger.format(totals.notDone ?? 0)} tone={(totals.notDone ?? 0) ? "danger" : "default"} />
           <Metric icon="clock" label="جارية أو قادمة" value={reportInteger.format(totals.active)} />
           <Metric icon="xmark" label="ملغاة" value={reportInteger.format(totals.cancelled)} />
           <Metric icon="slider.horizontal.3" label="نسبة الإكمال" value={`${reportInteger.format(totals.completionRate)}%`} />
-        </View>
+        </ReportMetricGrid>
       </Card>
 
       <Card>

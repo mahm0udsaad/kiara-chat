@@ -1,9 +1,10 @@
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
+import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import { useMemo, useState } from "react";
-import { Alert, KeyboardAvoidingView, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Image, KeyboardAvoidingView, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
@@ -15,7 +16,13 @@ import { Segmented } from "@/components/ui/segmented";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { durationLabel, formatters, relativeDayLabel, tripTypeLabel } from "@/lib/format";
 import { tapFeedback, successFeedback } from "@/lib/haptics";
-import { useCancelOrder, useDispatchOptions, useOrder, useUpdateOrder } from "@/lib/queries";
+import {
+  useAddOrderDoorPhoto,
+  useCancelOrder,
+  useDispatchOptions,
+  useOrder,
+  useUpdateOrder,
+} from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type {
   DispatchOptionsResponse,
@@ -26,6 +33,7 @@ import type {
 const durationPresets = [30, 45, 60, 90, 120];
 const minDurationMinutes = 5;
 const maxDurationMinutes = 480;
+const maxDoorPhotoBytes = 4 * 1024 * 1024;
 
 /** Row that reveals a native picker in place when tapped. */
 function PickerRow({
@@ -93,6 +101,7 @@ function EditForm({
   const insets = useSafeAreaInsets();
   const order = data.order;
   const update = useUpdateOrder(order.id);
+  const addDoorPhoto = useAddOrderDoorPhoto(order.id);
   const cancelOrder = useCancelOrder(order.id);
 
   const confirmCancel = () => {
@@ -123,6 +132,15 @@ function EditForm({
   const [tripType, setTripType] = useState<TripType>(order.trip_type);
   const [specialistId, setSpecialistId] = useState<string | null>(order.specialist_id);
   const [driverId, setDriverId] = useState<string | null>(order.driver_id);
+  const [returnDriverId, setReturnDriverId] = useState<string | null>(
+    order.return_driver_id ?? null,
+  );
+  const [doorPhoto, setDoorPhoto] = useState<{
+    uri: string;
+    name: string;
+    type: string;
+  } | null>(null);
+  const [doorPhotoError, setDoorPhotoError] = useState<string | null>(null);
   const [picker, setPicker] = useState<"date" | "time" | null>(null);
   const [errors, setErrors] = useState<{ location?: string; duration?: string }>({});
 
@@ -138,6 +156,30 @@ function EditForm({
     setDuration((current) =>
       Math.min(maxDurationMinutes, Math.max(minDurationMinutes, current + delta)),
     );
+  };
+
+  const pickDoorPhoto = async () => {
+    setDoorPhotoError(null);
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setDoorPhotoError("لا يوجد إذن للوصول إلى الصور. فعّليه من إعدادات الجهاز.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.85,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    if ((asset.fileSize ?? 0) > maxDoorPhotoBytes) {
+      setDoorPhotoError("الصورة أكبر من اللازم. اختاري صورة أصغر من 4 ميجابايت.");
+      return;
+    }
+    setDoorPhoto({
+      uri: asset.uri,
+      name: asset.fileName || `door-${Date.now()}.jpg`,
+      type: asset.mimeType || "image/jpeg",
+    });
   };
 
   const save = () => {
@@ -157,12 +199,26 @@ function EditForm({
         tripType,
         specialistId,
         driverId,
+        returnDriverId: tripType === "one_way" ? returnDriverId : null,
         expectedVersion: order.version,
       },
       {
-        onSuccess: () => {
-          successFeedback();
-          router.back();
+        onSuccess: ({ order: updatedOrder }) => {
+          if (!doorPhoto) {
+            successFeedback();
+            router.back();
+            return;
+          }
+          addDoorPhoto.mutate(
+            { doorPhoto, expectedVersion: updatedOrder.version },
+            {
+              onSuccess: () => {
+                successFeedback();
+                router.back();
+              },
+              onError: (error) => setDoorPhotoError(error.message),
+            },
+          );
         },
       },
     );
@@ -237,6 +293,64 @@ function EditForm({
           placeholder="العنوان أو رابط الموقع على الخرائط"
           error={errors.location}
         />
+
+        {/* A missing door photo can be supplied later without resending the
+            whole order. Existing photos stay immutable here to avoid replacing
+            the driver's only visual landmark accidentally. */}
+        <View style={{ gap: spacing.sm }}>
+          <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>
+            صورة باب العميلة
+          </Text>
+          {order.door_photo_path ? (
+            <View
+              style={{
+                minHeight: hitSize.control,
+                flexDirection: "row-reverse",
+                alignItems: "center",
+                gap: spacing.sm,
+                paddingHorizontal: spacing.md,
+                borderRadius: radius.md,
+                backgroundColor: colors.successSoft,
+              }}
+            >
+              <IconSymbol name="checkmark.circle" size={20} color={colors.success} />
+              <Text style={{ flex: 1, ...type.footnote, color: colors.text, ...rtlText }}>
+                صورة الباب مضافة بالفعل
+              </Text>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={doorPhoto ? "تغيير صورة الباب" : "إضافة صورة باب العميلة"}
+              onPress={pickDoorPhoto}
+              style={({ pressed }) => ({
+                minHeight: hitSize.control,
+                flexDirection: "row-reverse",
+                alignItems: "center",
+                gap: spacing.sm,
+                padding: spacing.md,
+                borderRadius: radius.md,
+                borderWidth: 1,
+                borderStyle: "dashed",
+                borderColor: colors.borderStrong,
+                opacity: pressed ? 0.6 : 1,
+              })}
+            >
+              <IconSymbol name="camera" size={20} color={colors.textSecondary} />
+              <Text style={{ flex: 1, ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+                {doorPhoto ? "الصورة جاهزة — اضغطي للتغيير" : "إضافة صورة الباب"}
+              </Text>
+              {doorPhoto ? (
+                <Image
+                  source={{ uri: doorPhoto.uri }}
+                  accessibilityLabel="معاينة صورة باب العميلة"
+                  style={{ width: 44, height: 44, borderRadius: radius.sm }}
+                />
+              ) : null}
+            </Pressable>
+          )}
+          {doorPhotoError ? <InlineAlert message={doorPhotoError} /> : null}
+        </View>
 
         {/* Duration */}
         <View style={{ gap: spacing.sm }}>
@@ -319,7 +433,11 @@ function EditForm({
               { value: "round_trip", label: tripTypeLabel.round_trip },
             ]}
             value={tripType}
-            onChange={(next) => setTripType(next as TripType)}
+            onChange={(next) => {
+              const value = next as TripType;
+              setTripType(value);
+              if (value === "round_trip") setReturnDriverId(null);
+            }}
           />
         </View>
 
@@ -331,12 +449,26 @@ function EditForm({
           allowEmpty
         />
         <RosterPicker
-          label="السائق"
+          label="سائق الذهاب"
           options={options.drivers}
           value={driverId}
           onChange={setDriverId}
           allowEmpty
         />
+        {tripType === "one_way" ? (
+          <View style={{ gap: spacing.xs }}>
+            <RosterPicker
+              label="سائق العودة (اختياري)"
+              options={options.drivers.filter((driver) => driver.id !== driverId)}
+              value={returnDriverId}
+              onChange={setReturnDriverId}
+              allowEmpty
+            />
+            <Text selectable style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
+              يظهر له الطلب فورًا، ولا يملك إلا زر إنهاء رحلة العودة بعد انتهاء الخدمة.
+            </Text>
+          </View>
+        ) : null}
 
         {update.error ? <InlineAlert message={update.error.message} /> : null}
       </ScrollView>
@@ -345,7 +477,7 @@ function EditForm({
         <PrimaryButton
           label="حفظ التعديل"
           icon="checkmark"
-          loading={update.isPending}
+          loading={update.isPending || addDoorPhoto.isPending}
           disabled={cancelOrder.isPending}
           onPress={save}
         />
@@ -354,7 +486,7 @@ function EditForm({
             accessibilityRole="button"
             accessibilityLabel="إلغاء الطلب"
             onPress={confirmCancel}
-            disabled={update.isPending || cancelOrder.isPending}
+            disabled={update.isPending || addDoorPhoto.isPending || cancelOrder.isPending}
             style={({ pressed }) => ({
               minHeight: hitSize.control,
               flexDirection: "row-reverse",
@@ -364,7 +496,10 @@ function EditForm({
               borderRadius: radius.lg,
               borderCurve: "continuous",
               backgroundColor: colors.dangerSoft,
-              opacity: pressed || update.isPending || cancelOrder.isPending ? 0.6 : 1,
+              opacity:
+                pressed || update.isPending || addDoorPhoto.isPending || cancelOrder.isPending
+                  ? 0.6
+                  : 1,
             })}
           >
             <Text style={{ ...type.bodyStrong, color: colors.onDangerSoft, ...rtlText }}>

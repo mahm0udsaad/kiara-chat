@@ -7,12 +7,17 @@ import { PrimaryButton } from "@/components/primary-button";
 import { CustomerServiceTeam } from "@/components/reports/customer-service-team";
 import { OrdersSummary } from "@/components/reports/orders-summary";
 import {
+  ReportMetricCard,
+  ReportMetricGrid,
+  ReportSectionHeader,
+} from "@/components/reports/report-metric-card";
+import {
   createReportDateSelection,
   ReportDateRangeFilter,
 } from "@/components/reports/report-date-range-filter";
 import { ErrorState } from "@/components/screen-state";
 import { Card } from "@/components/ui/card";
-import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
+import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { addDays, dayKeyFromToday } from "@/lib/calendar";
@@ -47,17 +52,6 @@ function timeToDate(time: string) {
 
 function pickerValue(field: PickerField, values: Record<PickerField, string>) {
   return field === "from" || field === "to" ? dayToDate(values[field]) : timeToDate(values[field]);
-}
-
-function Metric({ icon, label, value }: { icon: IconName; label: string; value: string }) {
-  const { colors } = useTheme();
-  return (
-    <View style={{ flex: 1, minWidth: 96, gap: spacing.xs, padding: spacing.md, borderRadius: radius.lg, backgroundColor: colors.surface }}>
-      <IconSymbol name={icon} size={18} color={colors.brand} />
-      <Text style={{ ...type.caption, ...rtlText, color: colors.textTertiary }}>{label}</Text>
-      <Text style={{ ...type.title3, ...numeric, ...rtlText, color: colors.text }}>{value}</Text>
-    </View>
-  );
 }
 
 function FilterButton({ testID, label, value, onPress }: { testID: string; label: string; value: string; onPress: () => void }) {
@@ -228,10 +222,13 @@ export default function ReportsScreen() {
         <OrdersSummary report={ordersReport.data} />
       ) : operationsReport.data && (role === "specialist" || role === "driver") ? (
         <>
-          <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
-            <Metric icon="person.2" label="مسند" value={reportInteger.format(totals.assigned)} />
-            <Metric icon="checkmark.circle" label="مكتمل" value={reportInteger.format(totals.completed)} />
-            <Metric icon="clock" label="ساعات" value={reportDecimal.format(totals.minutes / 60)} />
+          <View style={{ gap: spacing.md }}>
+            <ReportSectionHeader title="ملخص الفريق" description="إجمالي العمل ضمن النطاق المختار." />
+            <ReportMetricGrid>
+              <ReportMetricCard icon="person.2" label="مسند" value={reportInteger.format(totals.assigned)} />
+              <ReportMetricCard tone="success" icon="checkmark.circle" label="مكتمل" value={reportInteger.format(totals.completed)} />
+              <ReportMetricCard icon="clock" label="ساعات" value={reportDecimal.format(totals.minutes / 60)} />
+            </ReportMetricGrid>
           </View>
 
           <Card padded={false}>

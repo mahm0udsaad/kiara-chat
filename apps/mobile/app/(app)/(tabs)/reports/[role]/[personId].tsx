@@ -30,6 +30,11 @@ const dayLabel = new Intl.DateTimeFormat("en-US-u-ca-gregory-nu-latn", {
   day: "numeric",
   month: "long",
 });
+const currency = new Intl.NumberFormat("en-US-u-ca-gregory-nu-latn", {
+  style: "currency",
+  currency: "SAR",
+  maximumFractionDigits: 2,
+});
 
 function Metric({ icon, label, value }: { icon: IconName; label: string; value: string }) {
   const { colors } = useTheme();
@@ -105,6 +110,11 @@ export default function EmployeeReportScreen() {
   const completedServices = events.filter((event) => event.completed).length;
   const scheduledMinutes = events.reduce((total, event) => total + event.durationMinutes, 0);
   const completionRate = visits.length ? Math.round((completedVisits / visits.length) * 100) : 0;
+  const recordedTripCosts = visits.filter((visit) => visit.tripCost != null).length;
+  const totalTripCosts = visits.reduce(
+    (total, visit) => total + (visit.tripCost ?? 0),
+    0,
+  );
 
   return (
     <>
@@ -134,7 +144,20 @@ export default function EmployeeReportScreen() {
                 value={reportInteger.format(completedServices)}
               />
               <Metric icon="clock" label="ساعات العمل" value={reportDecimal.format(scheduledMinutes / 60)} />
+              {role === "driver" ? (
+                <Metric
+                  icon="banknote"
+                  label="إجمالي رسوم المشاوير"
+                  value={currency.format(totalTripCosts)}
+                />
+              ) : null}
             </View>
+
+            {role === "driver" ? (
+              <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
+                رسوم مسجلة لـ {reportInteger.format(recordedTripCosts)} من {reportInteger.format(visits.length)} مشوار
+              </Text>
+            ) : null}
 
             <Card>
               <View style={{ flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between", gap: spacing.md }}>

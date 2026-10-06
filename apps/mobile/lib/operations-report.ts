@@ -29,6 +29,7 @@ export type OperationsVisit = {
   spanMinutes: number;
   completed: boolean;
   completedAt: string | null;
+  tripCost: number | null;
   sourceLabel: string;
   punctualityClassification: string | null;
   lateReasonCode: string | null;
@@ -94,6 +95,7 @@ export function groupOperationsVisits(events: OperationsEvent[]): OperationsVisi
         spanMinutes: Math.max(0, Math.round((end - start) / 60_000)),
         completed: rows.every((event) => event.completed),
         completedAt: rows.find((event) => event.completedAt)?.completedAt ?? null,
+        tripCost: rows.find((event) => event.tripCost != null)?.tripCost ?? null,
         sourceLabel: rows.some((event) => event.source === "rekaz") ? "حجز ركاز" : "طلب واتساب",
         punctualityClassification: rows.find((event) => event.punctualityClassification)?.punctualityClassification ?? null,
         lateReasonCode: rows.find((event) => event.lateReasonCode)?.lateReasonCode ?? null,

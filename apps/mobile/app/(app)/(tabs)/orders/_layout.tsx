@@ -25,6 +25,10 @@ export default function OrdersLayout() {
         options={{ title: "إرسال تذكير", presentation: "modal" }}
       />
       <Stack.Screen
+        name="[id]/location-request"
+        options={{ title: "طلب تفعيل الموقع", presentation: "modal" }}
+      />
+      <Stack.Screen
         name="[id]/edit"
         options={{ title: "تعديل الطلب", presentation: "modal" }}
       />

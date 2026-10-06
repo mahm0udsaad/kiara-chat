@@ -29,6 +29,8 @@ import type {
 
 const EMPTY_PHONE_SET: ReadonlySet<string> = new Set();
 const EMPTY_CONVERSATION_ID_SET: ReadonlySet<string> = new Set();
+/** The dedicated WhatsApp identity used by the Rekaz automation. */
+const REKAZ_BOT_PHONE = normalizePhone("+966553682968");
 const RIYADH_DAY = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Riyadh",
   year: "numeric",
@@ -192,7 +194,9 @@ function matchesView(
   // Drivers get the same treatment for the same reason: the salon works its
   // customer queue in the other tabs, and a driver saying "وصلت" is not a
   // customer waiting on an answer.
-  const isDriver = driverPhoneSet.has(normalizePhone(conversation.customer_phone));
+  const conversationPhone = normalizePhone(conversation.customer_phone);
+  const isDriver =
+    driverPhoneSet.has(conversationPhone) || conversationPhone === REKAZ_BOT_PHONE;
   if (view === "drivers") return isDriver;
   if (isDriver) return false;
   // The searchable archive of customer conversations. Staff and group chats
@@ -242,9 +246,12 @@ async function loadMobileConversationClassification(conversationId?: string) {
       drivers.map((driver) => normalizePhone(driver.phone ?? "")).filter(Boolean),
     ),
     dangerExcludedPhoneSet: new Set(
-      [...specialists, ...drivers]
-        .map((person) => normalizePhone(person.phone ?? ""))
-        .filter(Boolean),
+      [
+        ...[...specialists, ...drivers].map((person) =>
+          normalizePhone(person.phone ?? ""),
+        ),
+        REKAZ_BOT_PHONE,
+      ].filter(Boolean),
     ),
     specialistConversationIdSet: specialistConversationIdsFromLabels(
       labels,
@@ -349,6 +356,8 @@ export interface MobileConversationFilters {
   bookingStage: BookingStage | null;
   /** How the thread has been dealt with so far — see `matchesHandling`. */
   handling: ConversationHandling | null;
+  /** Riyadh calendar day (YYYY-MM-DD) of the latest thread activity. */
+  date: string | null;
 }
 
 const NO_FILTERS: MobileConversationFilters = {
@@ -358,6 +367,7 @@ const NO_FILTERS: MobileConversationFilters = {
   labelId: null,
   bookingStage: null,
   handling: null,
+  date: null,
 };
 
 /**
@@ -452,6 +462,12 @@ export async function listMobileConversations(options: {
         return false;
       }
       if (filters.handling && !matchesHandling(conversation, filters.handling)) {
+        return false;
+      }
+      if (
+        filters.date &&
+        RIYADH_DAY.format(new Date(conversation.last_message_at)) !== filters.date
+      ) {
         return false;
       }
       return true;

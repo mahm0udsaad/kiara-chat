@@ -80,6 +80,9 @@ export async function PATCH(
   if (body?.driverId !== undefined) {
     patch.driverId = (String(body.driverId ?? "").trim() || null) as string | null;
   }
+  if (body?.returnDriverId !== undefined) {
+    patch.returnDriverId = (String(body.returnDriverId ?? "").trim() || null) as string | null;
+  }
   if (body?.price !== undefined) {
     if (session.role !== "admin") {
       return NextResponse.json({ error: "الأجرة للمالك أو المدير فقط" }, { status: 403 });
@@ -89,6 +92,28 @@ export async function PATCH(
       return NextResponse.json({ error: "الأجرة غير صحيحة" }, { status: 400 });
     }
     patch.price = price;
+  }
+  if (body?.returnPrice !== undefined) {
+    if (session.role !== "admin") {
+      return NextResponse.json({ error: "أجرة العودة للمالك أو المدير فقط" }, { status: 403 });
+    }
+    const returnPrice = body.returnPrice === null || body.returnPrice === ""
+      ? null
+      : Number(body.returnPrice);
+    if (returnPrice !== null && (!Number.isFinite(returnPrice) || returnPrice < 0)) {
+      return NextResponse.json({ error: "أجرة العودة غير صحيحة" }, { status: 400 });
+    }
+    patch.returnPrice = returnPrice;
+  }
+  if (
+    patch.returnDriverId &&
+    patch.driverId &&
+    patch.returnDriverId === patch.driverId
+  ) {
+    return NextResponse.json(
+      { error: "سائق العودة يجب أن يكون مختلفًا عن سائق الذهاب" },
+      { status: 400 },
+    );
   }
 
   if (!Object.keys(patch).length) {
@@ -113,7 +138,10 @@ export async function PATCH(
     });
     return NextResponse.json({
       ok: true,
-      order: session.role === "admin" ? order : { ...order, price: null },
+      order:
+        session.role === "admin"
+          ? order
+          : { ...order, price: null, return_price: null },
     });
   } catch (error) {
     if (error instanceof OperationalCommandError && error.isConflict) {

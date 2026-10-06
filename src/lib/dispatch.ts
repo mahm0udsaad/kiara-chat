@@ -95,6 +95,8 @@ const ORDER_COLS_WITH_NOTES = `${ORDER_COLS_WITH_REKAZ}, driver_note, specialist
 const ORDER_COLS_WITH_DOOR = `${ORDER_COLS_WITH_NOTES}, door_photo_path`;
 /** Adds the optional second specialist. Falls back until its migration runs. */
 const ORDER_COLS_WITH_SECOND_SPECIALIST = `${ORDER_COLS_WITH_DOOR}, second_specialist_id`;
+/** Adds the optional return-only driver and their independent fare. */
+const ORDER_COLS_WITH_RETURN_DRIVER = `${ORDER_COLS_WITH_SECOND_SPECIALIST}, return_driver_id, return_price`;
 const operationalOrderScore = (row: Partial<DriverOrder>) =>
   (row.status === "sent" ? 8 : 0) +
   (row.driver_id ? 4 : 0) +
@@ -108,6 +110,11 @@ const missingDoorPhoto = (err: { message: string } | null) =>
   Boolean(err?.message.includes("door_photo_path"));
 const missingSecondSpecialist = (err: { message: string } | null) =>
   Boolean(err?.message.includes("second_specialist_id"));
+const missingReturnDriver = (err: { message: string } | null) =>
+  Boolean(
+    err?.message.includes("return_driver_id") ||
+      err?.message.includes("return_price"),
+  );
 const missingDispatchNotes = (err: { message: string } | null) =>
   Boolean(
     err?.message.includes("driver_note") ||
@@ -472,7 +479,7 @@ export async function createBooking(
       status: "pending",
       created_by: userId,
     })
-    .select(ORDER_COLS)
+    .select(ORDER_COLS_WITH_RETURN_DRIVER)
     .single();
   if (insErr) throw new Error(insErr.message);
 
@@ -498,6 +505,8 @@ export class RekazBookingError extends Error {
   constructor(public readonly code:
     | "RESERVATION_NOT_FOUND"
     | "RESERVATION_CANCELLED"
+    | "RESERVATION_NOT_CONFIRMED"
+    | "RESERVATION_COMPLETED"
     | "CUSTOMER_PHONE_INVALID"
     | "ORDER_ALREADY_LINKED"
     | "REKAZ_LINK_UNAVAILABLE") {
@@ -526,6 +535,61 @@ const RIYADH_DAY = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Riyadh",
 });
 const riyadhDayOf = (iso: string) => RIYADH_DAY.format(new Date(iso));
+
+/**
+ * Refuse field dispatch until Rekaz says the customer confirmed. Its green
+ * Confirmed state is the operational go-ahead; payment remains in Rekaz and
+ * does not block the driver. Called when the operational row is raised and
+ * immediately before preview/send, so an older app build cannot bypass it.
+ */
+async function assertRekazVisitDispatchable(
+  client: ReturnType<typeof getAdminSupabaseClient>,
+  customerPhone: string,
+  arrivalAt: string,
+  approvedSourceIds: string[] = [],
+): Promise<void> {
+  const visitDay = riyadhDayOf(arrivalAt);
+  const national = normalizePhone(customerPhone);
+  if (!national) return;
+  let query = client
+    .from("rekaz_reservations")
+    .select("source_id,status,payload")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    // Conversations normally store +9665… while Rekaz may store 05… or bare
+    // digits. Match the stable national part, as the visit linker does.
+    .ilike("customer_phone", `%${national}%`)
+    .is("removed_at", null)
+    .gte("arrival_at", `${visitDay}T00:00:00+03:00`)
+    .lte("arrival_at", `${visitDay}T23:59:59+03:00`);
+  // A frozen service list is the exact visit being dispatched. A customer may
+  // have another tentative booking later the same day; that unrelated Pending
+  // row must not block a confirmed visit (or an extra team for that visit).
+  if (approvedSourceIds.length) {
+    query = query.in("source_id", approvedSourceIds);
+  }
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const live = (data ?? []).filter((row) => row.status !== "Cancelled");
+  if (!live.length) return;
+  if (
+    live.every(
+      (row) => row.status === "Done",
+    )
+  ) {
+    const completed = new RekazBookingError("RESERVATION_COMPLETED");
+    completed.detail = "الزيارة مكتملة في ركاز — لا يمكن طلب سائق جديد لها";
+    throw completed;
+  }
+  if (
+    live.some((row) => row.status === "Pending")
+  ) {
+    const pending = new RekazBookingError("RESERVATION_NOT_CONFIRMED");
+    pending.detail =
+      "الحجز ما زال طلبًا في ركاز — أكّدي الحجز هناك أولًا";
+    throw pending;
+  }
+}
 
 /** One booked service inside a visit, in the order it will be performed. */
 export interface VisitService {
@@ -783,6 +847,43 @@ export async function servicesForOrder(
 }
 
 /**
+ * The additional team's order intentionally has no Rekaz link: the source
+ * reservation is already owned by the original operational order. Its service
+ * plan nevertheless must be the original order's frozen plan, not every live
+ * booking the same customer happens to have later that day.
+ */
+async function extraTeamSourceOrder(orderId: string): Promise<DriverOrder | null> {
+  const admin = getAdminSupabaseClient();
+  const { data: event, error: eventError } = await admin
+    .from("operation_events")
+    .select("payload")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("aggregate_type", "driver_order")
+    .eq("aggregate_id", orderId)
+    .eq("event_type", "driver_order.extra_team_created")
+    .order("occurred_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (eventError || !event) return null;
+  const sourceOrderId = (event.payload as { source_order_id?: unknown } | null)
+    ?.source_order_id;
+  if (typeof sourceOrderId !== "string" || !sourceOrderId) return null;
+  const { data: source, error: sourceError } = await admin
+    .from("driver_orders")
+    .select(ORDER_COLS)
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("id", sourceOrderId)
+    .maybeSingle();
+  if (sourceError || !source) return null;
+  return source as DriverOrder;
+}
+
+async function servicesForDispatchOrder(order: DriverOrder): Promise<VisitService[]> {
+  const source = await extraTeamSourceOrder(order.id);
+  return servicesForOrder(source ?? order);
+}
+
+/**
  * Hand a Rekaz reservation back after its order was cancelled.
  *
  * A cancelled order kept its booking claimed twice over: through the unique
@@ -935,6 +1036,7 @@ export async function createBookingFromReservation(
     providers?: string[];
   };
   const phone = String(reservation.customer_phone ?? "");
+  await assertRekazVisitDispatchable(admin, phone, String(reservation.arrival_at));
 
   // Every same-day service for this customer is one visit, even when Rekaz
   // assigns a different order id to each service. The driver is planned around
@@ -989,14 +1091,14 @@ export async function createBookingFromReservation(
   // Older builds could raise one operational row for each Rekaz service.
   // Reuse the strongest live row for this customer's day so tapping any other
   // service never creates another card for the same home visit.
-  const visitDay = riyadhDayOf(visit.startsAt);
+  const operationalVisitDay = riyadhDayOf(visit.startsAt);
   const { data: existingVisits, error: existingVisitError } = await admin
     .from("driver_orders")
     .select(ORDER_COLS_WITH_REKAZ)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .ilike("customer_phone", `%${national}%`)
-    .gte("arrival_at", `${visitDay}T00:00:00+03:00`)
-    .lte("arrival_at", `${visitDay}T23:59:59+03:00`)
+    .gte("arrival_at", `${operationalVisitDay}T00:00:00+03:00`)
+    .lte("arrival_at", `${operationalVisitDay}T23:59:59+03:00`)
     .neq("status", "cancelled")
     .neq("dispatch_state", "cancelled");
   if (existingVisitError) throw new Error(existingVisitError.message);
@@ -1357,6 +1459,17 @@ async function loadDispatchContext(
   if (order.status === "sent" || order.dispatch_state === "sent") {
     throw new Error("تم إرسال هذا الطلب بالفعل");
   }
+  const dispatchServices = await servicesForDispatchOrder(order).catch(
+    () => [] as VisitService[],
+  );
+  await assertRekazVisitDispatchable(
+    getAdminSupabaseClient(),
+    order.customer_phone,
+    order.arrival_at,
+    dispatchServices
+      .map((service) => service.sourceId)
+      .filter((sourceId): sourceId is string => Boolean(sourceId)),
+  );
   const tripType = input.tripType ?? order.trip_type;
 
   type SpecialistContact = {
@@ -1404,7 +1517,7 @@ async function loadDispatchContext(
       .eq("id", order.conversation_id)
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .maybeSingle(),
-    servicesForOrder(order).catch(() => [] as VisitService[]),
+    Promise.resolve(dispatchServices),
   ]);
   services = loadedServices;
 
@@ -1843,7 +1956,10 @@ async function readOrders(
   supabase: AuthedClient,
   build: (cols: string) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
 ): Promise<DriverOrderRow[]> {
-  let { data, error } = await build(ORDER_COLS_WITH_SECOND_SPECIALIST);
+  let { data, error } = await build(ORDER_COLS_WITH_RETURN_DRIVER);
+  if (error && missingReturnDriver(error)) {
+    ({ data, error } = await build(ORDER_COLS_WITH_SECOND_SPECIALIST));
+  }
   if (error && missingSecondSpecialist(error)) {
     ({ data, error } = await build(ORDER_COLS_WITH_DOOR));
   }
@@ -1924,8 +2040,12 @@ export interface OrderPatch {
   tripType?: TripType;
   specialistId?: string | null;
   driverId?: string | null;
+  returnDriverId?: string | null;
   /** Owner/manager-only — the routes gate this before calling. */
   price?: number | null;
+  returnPrice?: number | null;
+  /** Storage path set only by the authenticated door-photo upload route. */
+  doorPhotoPath?: string | null;
 }
 
 /**
@@ -1963,11 +2083,12 @@ export async function updateDriverOrder(
 
   // A trip-cost correction is private bookkeeping. It must remain audited,
   // but it is not an operational change and should not notify the field team.
-  if (Object.keys(patch).every((key) => key === "price")) return row;
+  if (Object.keys(patch).every((key) => key === "price" || key === "returnPrice")) return row;
 
   const customerName = row.customer_name;
   const specialistId = row.specialist_id;
   const driverId = row.driver_id;
+  const returnDriverId = row.return_driver_id ?? null;
 
   // The specialist is told in her own language on both channels; the driver
   // copy stays Arabic. Her row is read once here so the push (fired now) and
@@ -1999,6 +2120,7 @@ export async function updateDriverOrder(
     specialistId,
     secondSpecialistId: row.second_specialist_id,
     driverId,
+    returnDriverId,
     specialistCopy: specialistCopy
       ? { title: specialistCopy.pushTitle, body: specialistCopy.pushBody }
       : undefined,
@@ -2027,6 +2149,21 @@ export async function updateDriverOrder(
           }
         }
 
+        if (returnDriverId && returnDriverId !== driverId) {
+          const res = await admin
+            .from("drivers")
+            .select("phone")
+            .eq("id", returnDriverId)
+            .eq("restaurant_id", KIARA_RESTAURANT_ID)
+            .maybeSingle();
+          if (res.data?.phone) {
+            await openWaTransport.sendText(
+              res.data.phone,
+              `🚗 *رحلة عودة جديدة*\n\nستعيد الأخصائية من منزل ${nameStr} بعد انتهاء الخدمة.\n🕒 موعد الزيارة: ${arrival}\n📍 الموقع: ${location}`,
+            );
+          }
+        }
+
         if (specialistPhone && specialistCopy) {
           await openWaTransport.sendText(specialistPhone, specialistCopy.whatsappBody);
         }
@@ -2050,7 +2187,7 @@ export async function cancelDriverOrder(
 
   const { data: order, error } = await admin
     .from("driver_orders")
-    .select(ORDER_COLS)
+    .select(ORDER_COLS_WITH_RETURN_DRIVER)
     .eq("id", id)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
@@ -2068,7 +2205,7 @@ export async function cancelDriverOrder(
     })
     .eq("id", id)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .select(ORDER_COLS)
+    .select(ORDER_COLS_WITH_RETURN_DRIVER)
     .single();
 
   if (updateError || !updated) {
@@ -2314,7 +2451,11 @@ async function withNames(
   );
   const [specialists, drivers, customers, editors, progress, services] = await Promise.all([
     rosterNames(supabase, "specialists", specialistIds),
-    rosterNames(supabase, "drivers", uniq(orders.map((o) => o.driver_id))),
+    rosterNames(
+      supabase,
+      "drivers",
+      uniq(orders.flatMap((o) => [o.driver_id, o.return_driver_id])),
+    ),
     customerDetails(supabase, uniq(orders.map((o) => o.conversation_id))),
     teamMemberNames(supabase, uniq(orders.map((o) => o.updated_by))),
     fieldProgressFor(orders.map((o) => o.id)),
@@ -2329,7 +2470,7 @@ async function withNames(
   // single batch query above and avoid one Rekaz request per card.
   let detailServiceFallback: VisitService[] = [];
   if (orders.length === 1 && !services.error && !(services.data ?? []).length) {
-    detailServiceFallback = await servicesForOrder(orders[0]).catch(() => []);
+    detailServiceFallback = await servicesForDispatchOrder(orders[0]).catch(() => []);
   }
 
   // A visit that gains a service after the order was raised — the customer
@@ -2367,6 +2508,9 @@ async function withNames(
       ? { ...order, duration_minutes: stretched.get(order.id)! }
       : order;
     const driver = o.driver_id ? drivers.get(o.driver_id) : undefined;
+    const returnDriver = o.return_driver_id
+      ? drivers.get(o.return_driver_id)
+      : undefined;
     const customer = customers.get(o.conversation_id);
     return {
       ...o,
@@ -2375,6 +2519,8 @@ async function withNames(
         (o.second_specialist_id && specialists.get(o.second_specialist_id)?.fullName) || null,
       driver_name: driver?.fullName ?? null,
       driver_phone: driver?.phone ?? null,
+      return_driver_name: returnDriver?.fullName ?? null,
+      return_driver_phone: returnDriver?.phone ?? null,
       customer_name: customer?.name ?? null,
       updated_by_name: (o.updated_by && editors.get(o.updated_by)) || null,
       specialist_session: fieldSessionStateOf(

@@ -13,6 +13,7 @@ export type IconName =
   | "message.fill"
   | "calendar"
   | "person.crop.circle"
+  | "person.crop.circle.badge.xmark"
   | "person.2"
   | "car"
   | "sparkles"
@@ -31,6 +32,8 @@ export type IconName =
   | "magnifyingglass"
   | "chevron.left"
   | "chevron.right"
+  | "chevron.up"
+  | "chevron.down"
   | "pencil"
   | "paperplane.fill"
   | "bell"
@@ -49,6 +52,7 @@ export type IconName =
   | "arrow.triangle.2.circlepath"
   | "figure.walk"
   | "banknote"
+  | "chart.bar"
   | "plus"
   | "xmark"
   | "xmark.circle"
@@ -72,6 +76,7 @@ const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcon
   "message.fill": "chat-bubble",
   calendar: "calendar-month",
   "person.crop.circle": "account-circle",
+  "person.crop.circle.badge.xmark": "person-remove",
   "person.2": "group",
   car: "directions-car",
   sparkles: "auto-awesome",
@@ -90,6 +95,8 @@ const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcon
   magnifyingglass: "search",
   "chevron.left": "chevron-left",
   "chevron.right": "chevron-right",
+  "chevron.up": "expand-less",
+  "chevron.down": "expand-more",
   pencil: "edit",
   "paperplane.fill": "send",
   bell: "notifications",
@@ -108,6 +115,7 @@ const androidFallback: Record<IconName, React.ComponentProps<typeof MaterialIcon
   "arrow.triangle.2.circlepath": "sync",
   "figure.walk": "directions-walk",
   banknote: "payments",
+  "chart.bar": "bar-chart",
   plus: "add",
   xmark: "close",
   "xmark.circle": "cancel",

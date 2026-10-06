@@ -258,6 +258,41 @@ export async function releaseConversation(conversationId: string) {
   if (error) throw new Error(error.message);
 }
 
+export type ReleasedConversation = {
+  id: string;
+  previousAssignee: string;
+};
+
+/**
+ * Return every held conversation in a scope to the shared queue.
+ *
+ * The database function locks the matching rows and clears both ownership and
+ * exclusive routing in one statement. Clearing `metadata.routed_to` matters at
+ * shift end: otherwise the next customer message would still be visible only
+ * to the employee who has gone home, even though `assigned_to` was cleared.
+ * A null target means every employee in the Kiara tenant.
+ */
+export async function releaseAssignedConversations(
+  targetTeamMemberId: string | null,
+): Promise<ReleasedConversation[]> {
+  const { data, error } = await getAdminSupabaseClient().rpc(
+    "release_assigned_conversations",
+    {
+      p_restaurant_id: KIARA_RESTAURANT_ID,
+      p_team_member_id: targetTeamMemberId,
+    },
+  );
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map((row: {
+    conversation_id: string;
+    previous_assignee: string;
+  }) => ({
+    id: row.conversation_id as string,
+    previousAssignee: row.previous_assignee as string,
+  }));
+}
+
 /**
  * Name the customer by hand. WhatsApp only ever gives us whatever display name
  * the sender set — often nothing, sometimes "ا" — while staff know exactly who
@@ -454,6 +489,7 @@ function deliverTextReply(params: {
   toE164: string;
   customerName: string | null;
   body: string;
+  contextMessageId?: string | null;
 }): void {
   after(async () => {
     const admin = getAdminSupabaseClient();
@@ -472,7 +508,7 @@ function deliverTextReply(params: {
       ((convRow?.metadata as Record<string, unknown> | null)?.wa_number as
         | string
         | undefined) ?? null;
-    const sendOptions = { from: waNumber };
+    const sendOptions = { from: waNumber, contextMessageId: params.contextMessageId };
 
     let status = "queued";
     let providerId: string | null = null;
@@ -596,6 +632,7 @@ export async function sendReply(
   sender: { email: string | null; teamMemberId?: string | null },
   body: string,
   clientRequestId: string = randomUUID(),
+  replyTo?: { id: string; role: string; text: string; message_type: string; external_message_sid: string | null },
 ): Promise<{ messageId: string | null; sent: boolean }> {
   const admin = getAdminSupabaseClient();
   const { data: conv } = await admin
@@ -613,7 +650,14 @@ export async function sendReply(
       role: "agent",
       content: body,
       message_type: "text",
-      metadata: { source: "app", sent_by_email: sender.email },
+      metadata: {
+        source: "app",
+        sent_by_email: sender.email,
+        ...(replyTo ? {
+          reply_to: { role: replyTo.role, text: replyTo.text, message_type: replyTo.message_type },
+          replied_to_message_id: replyTo.id,
+        } : {}),
+      },
       // Stable attribution for per-employee reporting; the email in metadata
       // is only a human-readable fallback.
       sender_team_member_id: sender.teamMemberId ?? null,
@@ -644,6 +688,7 @@ export async function sendReply(
     toE164: conv.customer_phone as string,
     customerName: (conv.customer_name as string | null) ?? null,
     body,
+    contextMessageId: replyTo?.external_message_sid,
   });
 
   return { messageId, sent: false };

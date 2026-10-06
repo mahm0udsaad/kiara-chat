@@ -131,6 +131,8 @@ export async function POST(
           specialistId: order.specialistId,
           secondSpecialistId: order.secondSpecialistId,
           driverId: order.driverId,
+          returnDriverId: order.returnDriverId,
+          tripType: order.tripType,
           progress: order.progress,
         });
         if (delivery.failed) {

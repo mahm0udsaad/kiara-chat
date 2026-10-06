@@ -20,6 +20,7 @@ const PRESENCE_EVENT = "typing";
 const TYPING_TTL_MS = 8_000;
 const INBOX_TOPIC_PREFIX = "kiara-inbox:";
 const INBOX_EVENT = "message_received";
+const LIST_REFRESH_DELAY_MS = 1_000;
 
 type TypingPayload = {
   conversationId?: string;
@@ -81,6 +82,7 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const alert = useRef<UnclaimedAlert | null>(null);
   const alertListeners = useRef(new Set<() => void>());
+  const listRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notifyAlert = useCallback(() => {
     for (const listener of alertListeners.current) listener();
   }, []);
@@ -201,6 +203,17 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
     let liveChannel: ReturnType<typeof supabase.channel> | null = null;
     let cancelled = false;
 
+    const refreshConversationLists = () => {
+      // One incoming message can generate several broadcasts. Refresh the
+      // expensive inbox lists once for the burst, while the open thread below
+      // updates immediately.
+      if (listRefreshTimer.current) return;
+      listRefreshTimer.current = setTimeout(() => {
+        listRefreshTimer.current = null;
+        void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      }, LIST_REFRESH_DELAY_MS);
+    };
+
     void (async () => {
       await supabase.realtime.setAuth(session.access_token);
       if (cancelled) return;
@@ -221,8 +234,8 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
               at: Date.now(),
             });
           }
+          refreshConversationLists();
           void Promise.all([
-            queryClient.invalidateQueries({ queryKey: ["conversations"] }),
             queryClient.invalidateQueries({
               queryKey: queryKeys.conversation(event.conversationId),
             }),
@@ -244,6 +257,8 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
 
     return () => {
       cancelled = true;
+      if (listRefreshTimer.current) clearTimeout(listRefreshTimer.current);
+      listRefreshTimer.current = null;
       if (liveChannel) void supabase.removeChannel(liveChannel);
     };
   }, [clearTyping, operationsStaff, queryClient, session?.access_token, teamMemberId, setAlert]);

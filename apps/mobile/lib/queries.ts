@@ -56,6 +56,7 @@ import type {
   CampaignTemplatesResponse,
   CampaignsResponse,
   OrderDetailResponse,
+  OrderCustomerReminder,
   OrderPatch,
   OrderAuditLog,
   OrderReminderContext,
@@ -71,6 +72,7 @@ import type {
   SendOrderReminderInput,
   TeamResponse,
   TripType,
+  OrderTracking,
 } from "@/types/api";
 import { publicApiRequest } from "@/lib/api";
 
@@ -91,6 +93,7 @@ export const queryKeys = {
       filters.labelId ?? "",
       filters.bookingStage ?? "",
       filters.handling ?? "",
+      filters.date ?? "",
     ] as const,
   conversation: (id: string) => ["conversation", id] as const,
   conversationMessages: (id: string) => ["conversation-messages", id] as const,
@@ -152,6 +155,7 @@ export const EMPTY_CONVERSATION_FILTERS: ConversationFilters = {
   labelId: null,
   bookingStage: null,
   handling: null,
+  date: null,
 };
 
 export function useConversations(
@@ -176,6 +180,7 @@ export function useConversations(
       if (filters.labelId) params.set("label", filters.labelId);
       if (filters.bookingStage) params.set("stage", filters.bookingStage);
       if (filters.handling) params.set("handling", filters.handling);
+      if (filters.date) params.set("date", filters.date);
       return apiRequest<ConversationsResponse>(`/conversations?${params.toString()}`);
     },
     getNextPageParam: (lastPage) =>
@@ -193,7 +198,8 @@ export function useConversations(
         previousKey?.[5] === (filters.section ?? "") &&
         previousKey?.[6] === (filters.labelId ?? "") &&
         previousKey?.[7] === (filters.bookingStage ?? "") &&
-        previousKey?.[8] === (filters.handling ?? "");
+        previousKey?.[8] === (filters.handling ?? "") &&
+        previousKey?.[9] === (filters.date ?? "");
       return sameViewAndFilters ? previous : undefined;
     },
     // InboxLiveProvider invalidates this query when a conversation changes,
@@ -275,6 +281,23 @@ export function useConversationMessages(id: string, enabled = true) {
     },
     getNextPageParam: (lastPage) => lastPage.nextBefore ?? undefined,
     enabled: Boolean(id) && enabled,
+    // Free-form replies are recorded first and sent in the server's background
+    // task. Keep checking only while the open conversation contains a queued
+    // outbound message so its delivery pill updates as soon as the provider
+    // result has been written back.
+    refetchInterval: (query) =>
+      query.state.data?.pages.some((page) =>
+        page.messages.some(
+          (message) =>
+            message.role === "agent" &&
+            (message.delivery_status === "queued" ||
+              message.delivery_status === "pending" ||
+              message.delivery_status === "sending"),
+        ),
+      )
+        ? 2_000
+        : false,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -346,12 +369,13 @@ export function useMarkConversationRead(id: string) {
 export function useReply(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { text: string; idempotencyKey: string }) =>
+    mutationFn: (input: { text: string; idempotencyKey: string; replyToMessageId?: string }) =>
       apiRequest<{ conversationId: string; messageId: string; deliveryStatus: string }>(`/conversations/${id}/reply`, {
         method: "POST",
         body: JSON.stringify({
           body: input.text,
           idempotencyKey: input.idempotencyKey,
+          replyToMessageId: input.replyToMessageId,
         }),
       }),
     onSuccess: async () => {
@@ -582,6 +606,27 @@ export function useCreateSavedReply() {
   });
 }
 
+export function useUpdateSavedReply() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; title: string; body: string }) =>
+      apiRequest<{ ok: true; savedReply: SavedReply }>(`/saved-replies/${input.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title: input.title, body: input.body }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap }),
+  });
+}
+
+export function useDeleteSavedReply() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiRequest<{ ok: true }>(`/saved-replies/${id}`, { method: "DELETE" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap }),
+  });
+}
+
 export function useOrders(search = "") {
   return useQuery({
     queryKey: queryKeys.orders(search),
@@ -650,8 +695,10 @@ export function useCustomerServiceReport(
       );
     },
     enabled: enabled && Boolean(from && to && startTime && endTime),
-    staleTime: 15_000,
-    refetchInterval: 30_000,
+    // Building this report reads the full activity history. It refreshes on
+    // focus and every report screen has pull-to-refresh; polling every 30 s
+    // repeated that expensive work while the owner was reading it.
+    staleTime: 2 * 60_000,
   });
 }
 
@@ -931,6 +978,127 @@ export function useSetTeamMemberPermissions() {
   });
 }
 
+export type ReleaseConversationsScope =
+  | { scope: "mine" }
+  | { scope: "member"; teamMemberId: string }
+  | { scope: "all" };
+
+type ReleaseConversationsResult = {
+  ok: true;
+  count: number;
+  conversationIds: string[];
+};
+
+/**
+ * OTA compatibility for servers deployed before the bulk-release endpoint.
+ *
+ * Those servers already expose the paginated inbox and the authorized
+ * one-conversation release route. Read every relevant page, then hand the
+ * conversations back in small batches so an OTA can ship independently of a
+ * web deployment. Once the new endpoint exists this path is never used.
+ */
+async function releaseConversationsWithLegacyApi(
+  scope: ReleaseConversationsScope,
+): Promise<ReleaseConversationsResult> {
+  const view: InboxView = scope.scope === "mine" ? "mine" : "all";
+  const targets: string[] = [];
+  let offset = 0;
+
+  while (true) {
+    const params = new URLSearchParams({
+      view,
+      offset: String(offset),
+      limit: "100",
+    });
+    const page = await apiRequest<ConversationsResponse>(
+      `/conversations?${params.toString()}`,
+    );
+    for (const conversation of page.conversations.items) {
+      const matches =
+        scope.scope === "mine"
+          ? Boolean(conversation.assigned_to)
+          : scope.scope === "member"
+            ? conversation.assigned_to === scope.teamMemberId
+            : Boolean(conversation.assigned_to);
+      if (matches) targets.push(conversation.id);
+    }
+    const nextOffset = page.conversations.nextOffset;
+    if (nextOffset === null) break;
+    offset = nextOffset;
+  }
+
+  const released: string[] = [];
+  for (let start = 0; start < targets.length; start += 5) {
+    const batch = targets.slice(start, start + 5);
+    const results = await Promise.allSettled(
+      batch.map(async (id) => {
+        // The legacy single-release endpoint predates exclusive routing and
+        // leaves `metadata.routed_to` intact. Admin scopes can clear it through
+        // the routing endpoint that already exists on those same servers.
+        if (scope.scope !== "mine") {
+          await apiRequest<{ conversation: ConversationSummary }>(
+            `/conversations/${id}/routing`,
+            {
+              method: "PUT",
+              body: JSON.stringify({ targetTeamMemberId: null }),
+            },
+          );
+        }
+        return apiRequest<{ conversation: ConversationSummary }>(
+          `/conversations/${id}/release`,
+          { method: "POST" },
+        );
+      }),
+    );
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        const conversationId = batch[index];
+        if (conversationId) released.push(conversationId);
+        return;
+      }
+      // The row can be transferred or deleted after the page read. It no
+      // longer belongs to this release scope, so that race is already safe.
+      if (
+        result.reason instanceof ApiError &&
+        (result.reason.status === 403 || result.reason.status === 404)
+      ) {
+        return;
+      }
+      throw result.reason;
+    });
+  }
+
+  return { ok: true, count: released.length, conversationIds: released };
+}
+
+/** Shift-end handoff for the current employee, one employee, or the team. */
+export function useReleaseAllConversations() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (scope: ReleaseConversationsScope) => {
+      try {
+        return await apiRequest<ReleaseConversationsResult>(
+          "/conversations/release-all",
+          { method: "POST", body: JSON.stringify(scope) },
+        );
+      } catch (error) {
+        const bulkEndpointUnavailable =
+          error instanceof ApiError &&
+          (error.status === 404 ||
+            error.status === 405 ||
+            error.code === "CONVERSATIONS_RELEASE_FAILED");
+        if (!bulkEndpointUnavailable) throw error;
+        return releaseConversationsWithLegacyApi(scope);
+      }
+    },
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["conversations"] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.team }),
+      ]),
+  });
+}
+
 /** Internal notes — staff-only, never sent to the customer. */
 export function useConversationNotes(id: string, enabled = true) {
   return useQuery({
@@ -964,6 +1132,30 @@ export function useOrder(id: string) {
     queryFn: () => apiRequest<OrderDetailResponse>(`/orders/${id}`),
     enabled: Boolean(id),
     refetchInterval: 20_000,
+  });
+}
+
+export function useOrderCustomerReminder(id: string) {
+  return useQuery({
+    queryKey: ["order-customer-reminder", id] as const,
+    queryFn: () => apiRequest<{ reminder: OrderCustomerReminder }>(`/orders/${id}/customer-reminder`),
+    enabled: Boolean(id),
+    refetchInterval: 20_000,
+  });
+}
+
+export function useSendOrderCustomerReminder(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) =>
+      apiRequest<{ reminder: OrderCustomerReminder; messageId: string; sentAt: string }>(
+        `/orders/${id}/customer-reminder`,
+        { method: "POST", body: JSON.stringify({ body }) },
+      ),
+    onSettled: async () => {
+      // An uncertain provider result must also refresh the button state.
+      await queryClient.invalidateQueries({ queryKey: ["order-customer-reminder", id] });
+    },
   });
 }
 
@@ -1029,7 +1221,42 @@ export function useUpdateOrder(id: string) {
           idempotencyKey: Crypto.randomUUID(),
         }),
       }),
-    onSuccess: async () => {
+    onSuccess: async ({ order }, patch) => {
+      if ("price" in patch || "returnPrice" in patch) {
+        const tripCost = "returnPrice" in patch
+          ? order.return_price ?? null
+          : order.price ?? null;
+        const affectedDriverId = "returnPrice" in patch
+          ? order.return_driver_id
+          : order.driver_id;
+        // The driver report may be behind this details screen in the native
+        // stack. Put the saved value in its cached visit immediately, then
+        // invalidate below to verify it against the server. Without this the
+        // report can briefly keep saying SAR 0.00 after a successful save.
+        queryClient.setQueriesData<OperationsReport>(
+          { queryKey: ["operations-report"] },
+          (current) =>
+            current
+              ? {
+                  ...current,
+                  events: {
+                    specialist: current.events.specialist.map((event) =>
+                      "price" in patch && event.orderId === id
+                        ? { ...event, tripCost }
+                        : event,
+                    ),
+                    driver: current.events.driver.map((event) =>
+                      event.orderId === id &&
+                      Boolean(affectedDriverId) &&
+                      event.personIds.includes(affectedDriverId as string)
+                        ? { ...event, tripCost }
+                        : event,
+                    ),
+                  },
+                }
+              : current,
+        );
+      }
       // The agenda reads `orders-calendar`, which is a different key from
       // `orders` and is NOT covered by invalidating it — react-query matches
       // key arrays element by element, so "orders" never prefixes
@@ -1038,6 +1265,36 @@ export function useUpdateOrder(id: string) {
       void queryClient.invalidateQueries({ queryKey: ["orders-calendar"] });
       void queryClient.invalidateQueries({ queryKey: ["orders"] });
       void queryClient.invalidateQueries({ queryKey: ["orders-report"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["operations-report"] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.order(id) }),
+      ]);
+    },
+  });
+}
+
+export function useAddOrderDoorPhoto(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      doorPhoto: UploadFile;
+      expectedVersion: number;
+    }) =>
+      apiUpload<{ order: OrderDetailResponse["order"] }>(
+        `/orders/${id}/door-photo`,
+        {
+          doorPhoto: input.doorPhoto,
+          expectedVersion: String(input.expectedVersion),
+          idempotencyKey: Crypto.randomUUID(),
+        },
+        { timeoutMs: SEND_TIMEOUT_MS },
+      ),
+    onSuccess: async ({ order }) => {
+      queryClient.setQueryData<OrderDetailResponse>(queryKeys.order(id), (current) =>
+        current ? { ...current, order } : current,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["orders-calendar"] });
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
       await queryClient.invalidateQueries({ queryKey: queryKeys.order(id) });
     },
   });
@@ -1270,14 +1527,14 @@ export function useFieldOrderAction(id: string) {
         }),
       });
     },
-    onSuccess: async () => {
+    onSuccess: ({ order }) => {
       // A driver taps these standing beside the car, often on one bar of
-      // signal. He waits for his own order to update and nothing else — the
-      // day's list behind it catches up on its own.
+      // signal. The POST already returns the authoritative next state, so put
+      // it into the detail cache immediately. Refetching the same order here
+      // used to force an avoidable second render/network transition exactly
+      // when the driver confirmed arrival at the client.
+      queryClient.setQueryData(queryKeys.fieldOrder(id), { order });
       void queryClient.invalidateQueries({ queryKey: ["field-orders"] });
-      await queryClient.invalidateQueries({
-        queryKey: queryKeys.fieldOrder(id),
-      });
     },
   });
 }
@@ -1665,6 +1922,36 @@ export function useDeleteConversationLabel() {
         queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap }),
         queryClient.invalidateQueries({ queryKey: ["conversations"] }),
       ]);
+    },
+  });
+}
+
+/**
+ * The order screen's driver-tracking section. Polled only while a trip is
+ * live; otherwise the trail and verdict do not change on their own.
+ */
+export function useOrderTracking(id: string, enabled = true) {
+  return useQuery({
+    queryKey: ["order-tracking", id] as const,
+    queryFn: () => apiRequest<{ tracking: OrderTracking }>(`/orders/${id}/tracking`),
+    enabled: Boolean(id) && enabled,
+    staleTime: 10_000,
+    refetchInterval: (query) =>
+      query.state.data?.tracking.trip.state === "active" ? 20_000 : false,
+  });
+}
+
+/** Sends the driver the employee-approved "please allow location" notification. */
+export function useSendDriverLocationRequest(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { title: string; body: string }) =>
+      apiRequest<{ delivery: FieldPushDeliverySummary }>(
+        `/orders/${id}/tracking/location-request`,
+        { method: "POST", timeoutMs: SEND_TIMEOUT_MS, body: JSON.stringify(input) },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["order-tracking", id] });
     },
   });
 }

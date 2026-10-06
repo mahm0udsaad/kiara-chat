@@ -26,6 +26,7 @@ export type TemplateKey =
   | "conversation_opener"
   | "number_notice"
   | "open_conversation"
+  | "specialist_en_route_reminder"
   | "kiara_offer_verified_196"
   | "kiara_national_day_offers";
 
@@ -119,6 +120,20 @@ const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
     category: "marketing",
     body:
       "📢 تنويه مهم لعملائنا الكرام 🤍\n\nفي حال كان رقم الواتساب الخاص بكيارا لا يظهر لديكم أو لا يعمل بشكل صحيح، نرجو منكم حذف الرقم من جهات الاتصال في جوالكم ثم إعادة حفظه من جديد.\n\n📱 رقم كيارا سبا:\n966508421748\n\nبعد إعادة حفظ الرقم، افتحوا الواتساب من جديد وسيظهر لكم الحساب بإذن الله 🤍\n\nشاكرين لكم تفهّمكم وصبركم، ونسعد دائمًا بخدمتكم 🌿\nKiara Spa | كيارا سبا",
+    buttons: [],
+    variables: [],
+  },
+  specialist_en_route_reminder: {
+    env: "TWILIO_CONTENT_SID_SPECIALIST_EN_ROUTE_REMINDER",
+    metaEnv: "META_TEMPLATE_NAME_SPECIALIST_EN_ROUTE_REMINDER",
+    metaName: "kiara_specialist_en_route_reminder",
+    label: "تذكير العميلة بوصول الأخصائية",
+    description: "إبلاغ العميلة بأن الأخصائية في الطريق وطلب تجهيز غرفة مناسبة للخدمة.",
+    category: "utility",
+    body:
+      "مرحبا 🍃 الأخصائية متجهة لك الآن، وبتوصلك قريب بإذن الله. خليكِ منتبهة للجوال.\n\n" +
+      "نرجو تجهيز غرفة مناسبة وهادئة ومهيأة للخدمة، بحيث تكون الأجواء مريحة للأخصائية ولتقديم الخدمة بشكل أفضل 🌿\n\n" +
+      "وشكرًا لك.",
     buttons: [],
     variables: [],
   },

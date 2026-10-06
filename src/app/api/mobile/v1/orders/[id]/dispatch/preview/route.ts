@@ -1,4 +1,8 @@
-import { orderExists, previewBookingDispatch } from "@/lib/dispatch";
+import {
+  orderExists,
+  previewBookingDispatch,
+  RekazBookingError,
+} from "@/lib/dispatch";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -86,6 +90,13 @@ export async function POST(
     });
     return mobileData({ preview });
   } catch (error) {
+    if (error instanceof RekazBookingError) {
+      return mobileError(
+        409,
+        error.code,
+        error.detail ?? "حالة الحجز في ركاز لا تسمح بطلب السائق",
+      );
+    }
     // Building a preview for an order that already went out is not a server
     // fault — it is the app's answer to an employee opening dispatch twice,
     // and it has to carry the code the screen keys its message off. A 500 with

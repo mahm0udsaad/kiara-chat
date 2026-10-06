@@ -2,12 +2,6 @@ import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-au
 import { PLAYBACK_AUDIO_MODE } from "@/components/inbox/media-attachment";
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Animated, {
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated";
 import {
   Alert,
   Image,
@@ -30,7 +24,7 @@ import { Card, Divider } from "@/components/ui/card";
 import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Segmented } from "@/components/ui/segmented";
-import { duration as motionDuration, hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
+import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   formatPhone,
   locationLabel,
@@ -65,9 +59,7 @@ const REASON_OPTIONS: { code: LateReasonCode; label: string }[] = [
 
 function PunctualityCard({ value, onReason }: { value: PunctualitySummary; onReason: () => void }) {
   const { colors } = useTheme();
-  const reduceMotion = useReducedMotion();
   const [railWidth, setRailWidth] = useState(0);
-  const markerOffset = useSharedValue(0);
   const routeProgress = value.clientArrivedAt || value.serviceStartedAt
     ? 1
     : value.specialistPickupAt
@@ -110,16 +102,12 @@ function PunctualityCard({ value, onReason }: { value: PunctualitySummary; onRea
       ? `${Math.round(metres)} م`
       : `${(metres / 1000).toFixed(1)} كم`;
   const travelTime = (seconds: number | null) => seconds === null ? "غير متاح" : `نحو ${Math.ceil(seconds / 60)} د`;
-  const markerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: -markerOffset.value }],
-  }));
-
-  useEffect(() => {
-    const target = Math.max(0, railWidth - 36) * routeProgress;
-    markerOffset.value = reduceMotion
-      ? target
-      : withTiming(target, { duration: motionDuration.slow });
-  }, [markerOffset, railWidth, reduceMotion, routeProgress]);
+  // Keep this marker on the React Native layout thread. Reanimated used to
+  // move it at the exact moment `driver_client_arrived` refreshed the order;
+  // affected Android builds could terminate the screen during that native
+  // transition. A deterministic position is equally clear and cannot race the
+  // mutation-driven rerender.
+  const markerOffset = Math.max(0, railWidth - 36) * routeProgress;
 
   return (
     <View style={{ gap: spacing.sm }}>
@@ -165,27 +153,25 @@ function PunctualityCard({ value, onReason }: { value: PunctualitySummary; onRea
             </View>
           ))}
 
-          <Animated.View
-            style={[
-              {
-                position: "absolute",
-                top: 8,
-                right: 0,
-                width: 36,
-                height: 36,
-                borderRadius: radius.full,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: colors.brand,
-                borderWidth: 3,
-                borderColor: colors.surface,
-                zIndex: 2,
-              },
-              markerStyle,
-            ]}
+          <View
+            style={{
+              position: "absolute",
+              top: 8,
+              right: 0,
+              width: 36,
+              height: 36,
+              borderRadius: radius.full,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: colors.brand,
+              borderWidth: 3,
+              borderColor: colors.surface,
+              zIndex: 2,
+              transform: [{ translateX: -markerOffset }],
+            }}
           >
             <IconSymbol name="car" size={18} color={colors.onBrand} />
-          </Animated.View>
+          </View>
 
           <View style={{ position: "absolute", top: 52, left: 0, right: 0, flexDirection: "row-reverse", justifyContent: "space-between" }}>
             <Text style={{ width: 82, ...type.caption, color: colors.textSecondary, textAlign: "right" }}>نقطة الانطلاق</Text>
@@ -446,7 +432,13 @@ export default function FieldOrderDetailScreen() {
   useDriverTripTracking(
     id,
     // Unknown until loaded; a specialist's screen never touches the service.
-    !viewer || viewer.viewerRole !== "driver" ? null : Boolean(viewer.punctuality?.trackingActive),
+    // `tripTrackingActive` covers orders without a punctuality plan; a server
+    // that predates it still answers through the plan.
+    !viewer || viewer.viewerRole !== "driver"
+      ? null
+      : viewer.tripTrackingActive !== undefined
+        ? viewer.tripTrackingActive
+        : Boolean(viewer.punctuality?.trackingActive),
     refreshAfterLocation,
   );
   if (detail.isLoading) return <LoadingScreen label={t("loadingOrder")} />;
@@ -644,7 +636,17 @@ export default function FieldOrderDetailScreen() {
           <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
             <DetailRow icon="sparkles" label={t("specialist")} value={order.specialistName ?? t("unassignedFeminine")} />
             <Divider inset={46} />
-            <DetailRow icon="car" label={t("driver")} value={order.driverName ?? t("unassignedMasculine")} />
+            <DetailRow icon="car" label="سائق الذهاب" value={order.driverName ?? t("unassignedMasculine")} />
+            {order.returnDriverId ? (
+              <>
+                <Divider inset={46} />
+                <DetailRow
+                  icon="car"
+                  label="سائق العودة"
+                  value={order.returnDriverName ?? t("unassignedMasculine")}
+                />
+              </>
+            ) : null}
           </Card>
         </View>
 
@@ -682,7 +684,13 @@ export default function FieldOrderDetailScreen() {
         {cancelled ? (
           <PrimaryButton label={t("orderCancelled")} icon="xmark.circle" tone="danger" variant="tinted" disabled onPress={() => undefined} />
         ) : next && order.canAct ? (
-          <PrimaryButton label={actionLabel(next)} icon="checkmark.circle" loading={action.isPending} onPress={confirm} />
+          <PrimaryButton
+            testID="field-order-primary-action"
+            label={actionLabel(next)}
+            icon="checkmark.circle"
+            loading={action.isPending}
+            onPress={confirm}
+          />
         ) : next ? (
           <PrimaryButton label={actionLabel(next)} icon="hourglass" variant="tinted" disabled onPress={() => undefined} />
         ) : (

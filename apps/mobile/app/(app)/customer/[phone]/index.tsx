@@ -1,4 +1,4 @@
-import { Link, Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { memo, useCallback, useMemo, useState } from "react";
 import {
   FlatList,
@@ -137,6 +137,61 @@ function Stat({
         </Text>
       ) : null}
     </View>
+  );
+}
+
+function CustomerActionLink({
+  href,
+  label,
+  accessibilityHint,
+  icon,
+  variant = "primary",
+  testID,
+}: {
+  href: Href;
+  label: string;
+  accessibilityHint: string;
+  icon: "message" | "person.crop.circle";
+  variant?: "primary" | "secondary";
+  testID: string;
+}) {
+  const { colors } = useTheme();
+  const router = useRouter();
+  const primary = variant === "primary";
+  const foreground = primary ? colors.onBrand : colors.brand;
+
+  return (
+    <Pressable
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={accessibilityHint}
+      onPress={() => router.push(href)}
+      style={({ pressed }) => ({
+        minHeight: hitSize.control,
+        flexDirection: "row-reverse",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: spacing.sm,
+        paddingHorizontal: spacing.md,
+        borderRadius: radius.lg,
+        borderCurve: "continuous",
+        borderWidth: primary ? 0 : 1,
+        borderColor: colors.border,
+        backgroundColor: primary ? colors.brand : colors.surface,
+        opacity: pressed ? 0.78 : 1,
+        transform: [{ scale: pressed ? 0.985 : 1 }],
+      })}
+    >
+      <IconSymbol name={icon} size={18} color={foreground} />
+      <Text
+        numberOfLines={1}
+        style={{ flexShrink: 1, ...type.calloutStrong, color: foreground, ...rtlText }}
+      >
+        {label}
+      </Text>
+      <IconSymbol name="chevron.left" size={16} color={foreground} />
+    </Pressable>
   );
 }
 
@@ -574,41 +629,24 @@ export default function CustomerProfileScreen() {
               {customer?.conversationId ? (
                 <>
                   <Divider />
-                  <Link
+                  <CustomerActionLink
                     href={{
                       pathname: "/conversation/[id]",
                       params: { id: customer.conversationId },
                     }}
-                    asChild
-                  >
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="فتح المحادثة الكاملة"
-                      style={({ pressed }) => ({
-                        minHeight: hitSize.comfortable,
-                        flexDirection: "row-reverse",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: spacing.sm,
-                        borderRadius: radius.md,
-                        backgroundColor: colors.brandSoft,
-                        opacity: pressed ? 0.72 : 1,
-                      })}
-                    >
-                      <IconSymbol name="message" size={16} color={colors.onBrandSoft} />
-                      <Text style={{ ...type.calloutStrong, color: colors.onBrandSoft }}>
-                        {timeline.data?.messagesTotal
-                          ? `فتح المحادثة (${timeline.data.messagesTotal} رسالة)`
-                          : "فتح المحادثة الكاملة"}
-                      </Text>
-                    </Pressable>
-                  </Link>
+                    label={timeline.data?.messagesTotal
+                      ? `فتح المحادثة (${timeline.data.messagesTotal} رسالة)`
+                      : "فتح المحادثة"}
+                    accessibilityHint="يفتح محادثة العميلة في صندوق الوارد"
+                    icon="message"
+                    testID="customer-open-conversation"
+                  />
 
                   {/* Owner-only: who held this thread, and what each of them
                       did while they held it. Agents get a 403 from the API,
                       so the entrance is not shown to them either. */}
                   {isAdmin ? (
-                    <Link
+                    <CustomerActionLink
                       href={{
                         pathname: "/customer/[phone]/report",
                         params: {
@@ -616,33 +654,12 @@ export default function CustomerProfileScreen() {
                           conversationId: customer.conversationId,
                         },
                       }}
-                      asChild
-                    >
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="سجل المسؤولية والإجراءات"
-                        style={({ pressed }) => ({
-                          minHeight: hitSize.comfortable,
-                          flexDirection: "row-reverse",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: spacing.sm,
-                          borderRadius: radius.md,
-                          borderWidth: 1,
-                          borderColor: colors.border,
-                          opacity: pressed ? 0.72 : 1,
-                        })}
-                      >
-                        <IconSymbol
-                          name="person.crop.circle"
-                          size={16}
-                          color={colors.brand}
-                        />
-                        <Text style={{ ...type.calloutStrong, color: colors.brand }}>
-                          سجل المسؤولية والإجراءات
-                        </Text>
-                      </Pressable>
-                    </Link>
+                      label="سجل المسؤولية والإجراءات"
+                      accessibilityHint="يعرض الموظفات وإجراءاتهن على محادثة العميلة"
+                      icon="person.crop.circle"
+                      variant="secondary"
+                      testID="customer-responsibility-report"
+                    />
                   ) : null}
                 </>
               ) : null}

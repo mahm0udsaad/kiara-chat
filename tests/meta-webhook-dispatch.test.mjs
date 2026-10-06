@@ -70,6 +70,17 @@ function webhook({ customerProvider = "meta" } = {}) {
       "@/lib/bot/reply": { runBotTurn: async () => {} },
       "@/lib/inbox-notifications": { notifyInboundInboxMessage: async () => {} },
       "@/lib/tenant": { KIARA_RESTAURANT_ID: "tenant" },
+      // Only quoted replies read through it; no test message quotes one.
+      "@/lib/supabase/admin": {
+        getAdminSupabaseClient: () => {
+          const query = {
+            select: () => query,
+            eq: () => query,
+            maybeSingle: async () => ({ data: null, error: null }),
+          };
+          return { from: () => query };
+        },
+      },
       "@/lib/transport/meta-api": {
         metaCloudConfig: () => ({
           appSecret: APP_SECRET,

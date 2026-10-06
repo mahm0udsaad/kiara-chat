@@ -106,6 +106,92 @@ export interface MessagePage {
   hasMore: boolean;
 }
 
+type ReplyReference = {
+  message_id?: unknown;
+  external_id?: unknown;
+  media?: unknown;
+};
+
+/**
+ * Attach the quoted message's stored media to reply metadata.
+ *
+ * New Meta replies freeze this at ingest time, but older rows only contain
+ * the quoted message id. Resolving a page in one bounded batch makes those
+ * existing replies useful too, without one query per bubble.
+ */
+async function withReplyMedia(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  conversationId: string,
+  messages: Message[],
+): Promise<Message[]> {
+  const internalIds = new Set<string>();
+  const externalIds = new Set<string>();
+
+  for (const message of messages) {
+    const reply = message.metadata?.reply_to as ReplyReference | undefined;
+    if (!reply || (Array.isArray(reply.media) && reply.media.length)) continue;
+    if (typeof reply.message_id === "string" && reply.message_id) {
+      internalIds.add(reply.message_id);
+    } else if (typeof reply.external_id === "string" && reply.external_id) {
+      externalIds.add(reply.external_id);
+    }
+  }
+
+  if (!internalIds.size && !externalIds.size) return messages;
+
+  const lookups = [];
+  if (internalIds.size) {
+    lookups.push(
+      supabase
+        .from("messages")
+        .select("id, external_message_sid, metadata")
+        .eq("conversation_id", conversationId)
+        .in("id", [...internalIds]),
+    );
+  }
+  if (externalIds.size) {
+    lookups.push(
+      supabase
+        .from("messages")
+        .select("id, external_message_sid, metadata")
+        .eq("conversation_id", conversationId)
+        .in("external_message_sid", [...externalIds]),
+    );
+  }
+
+  const results = await Promise.all(lookups);
+  const referenced = new Map<string, unknown>();
+  for (const result of results) {
+    if (result.error) continue;
+    for (const row of result.data ?? []) {
+      const media = (row.metadata as { media?: unknown } | null)?.media;
+      if (!Array.isArray(media) || !media.length) continue;
+      referenced.set(String(row.id), media);
+      if (row.external_message_sid) {
+        referenced.set(String(row.external_message_sid), media);
+      }
+    }
+  }
+
+  return messages.map((message) => {
+    const metadata = message.metadata ?? {};
+    const reply = metadata.reply_to as ReplyReference | undefined;
+    if (!reply || (Array.isArray(reply.media) && reply.media.length)) return message;
+    const key =
+      typeof reply.message_id === "string" && reply.message_id
+        ? reply.message_id
+        : typeof reply.external_id === "string"
+          ? reply.external_id
+          : null;
+    const media = key ? referenced.get(key) : null;
+    if (!Array.isArray(media) || !media.length) return message;
+    return {
+      ...message,
+      metadata: { ...metadata, reply_to: { ...reply, media } },
+    };
+  });
+}
+
 /**
  * One page of a conversation's messages, newest page first.
  *
@@ -155,7 +241,11 @@ export async function getConversationMessages(
 
   const rows = (data ?? []) as Message[];
   const hasMore = rows.length > limit;
-  return { messages: rows.slice(0, limit).reverse(), hasMore };
+  const page = rows.slice(0, limit).reverse();
+  return {
+    messages: await withReplyMedia(supabase, conversationId, page),
+    hasMore,
+  };
 }
 
 /**

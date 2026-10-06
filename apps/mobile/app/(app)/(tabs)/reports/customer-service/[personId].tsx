@@ -1,17 +1,22 @@
 import { useState } from "react";
-import { Link, Redirect, Stack, useLocalSearchParams } from "expo-router";
+import { Link, Redirect, Stack, useLocalSearchParams, type Href } from "expo-router";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
 import { ErrorState } from "@/components/screen-state";
 import { PrimaryButton } from "@/components/primary-button";
 import { BulletList, Score } from "@/components/customer-analysis-view";
 import {
+  ReportMetricCard,
+  ReportMetricGrid,
+  ReportSectionHeader,
+} from "@/components/reports/report-metric-card";
+import {
   createReportDateSelection,
   ReportDateRangeFilter,
   type ReportDateSelection,
 } from "@/components/reports/report-date-range-filter";
 import { Card } from "@/components/ui/card";
-import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
+import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { durationLabel, relativeTimeLabel } from "@/lib/format";
 import { REPORT_LOCALE, reportInteger } from "@/lib/operations-report";
@@ -40,28 +45,6 @@ function initialSelection(from: string, to: string): ReportDateSelection {
     return { preset: "custom", from, to };
   }
   return createReportDateSelection("month");
-}
-
-function Metric({ icon, label, value }: { icon: IconName; label: string; value: number | string }) {
-  const { colors } = useTheme();
-  return (
-    <View
-      style={{
-        flex: 1,
-        minWidth: 120,
-        padding: spacing.md,
-        gap: spacing.xs,
-        borderRadius: radius.lg,
-        backgroundColor: colors.surface,
-      }}
-    >
-      <IconSymbol name={icon} size={18} color={colors.brand} />
-      <Text style={{ ...type.caption, ...rtlText, color: colors.textTertiary }}>{label}</Text>
-      <Text selectable style={{ ...type.title3, ...numeric, ...rtlText, color: colors.text }}>
-        {typeof value === "number" ? reportInteger.format(value) : value}
-      </Text>
-    </View>
-  );
 }
 
 export default function CustomerServiceEmployeeReportScreen() {
@@ -130,6 +113,18 @@ export default function CustomerServiceEmployeeReportScreen() {
   const name = employee?.name ?? fallbackName;
 
   const handledChats = activitiesQuery.data?.pages.flatMap((page) => page.chats) ?? [];
+  const detailParams = {
+    personId,
+    name,
+    from,
+    to,
+    startTime,
+    endTime,
+  };
+  const metricHref = (metric: string) => ({
+    pathname: "/reports/customer-service/details/[personId]/[metric]",
+    params: { ...detailParams, metric },
+  } as unknown as Href);
 
   return (
     <>
@@ -197,25 +192,66 @@ export default function CustomerServiceEmployeeReportScreen() {
               </Text>
             </Card>
 
-            <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
-              <Metric
+            <View style={{ gap: spacing.md }}>
+              <ReportSectionHeader title="ملخص الأداء" description="اضغطي على أي بطاقة لعرض تفاصيلها." />
+              <ReportMetricGrid>
+              <ReportMetricCard
                 icon="clock"
                 label="وقتها داخل التطبيق"
                 value={employee.activeMinutes ? durationLabel(employee.activeMinutes) : "—"}
+                href={metricHref("time")}
+                testID="customer-service-metric-time"
               />
-              <Metric icon="message" label="محادثات ردّت عليها" value={employee.handledConversations} />
+              <ReportMetricCard
+                icon="message"
+                label="محادثات ردّت عليها"
+                value={employee.handledConversations}
+                href={metricHref("conversations")}
+                testID="customer-service-metric-conversations"
+              />
               {/* What came of the chats. Rekaz stamps each reservation with the
                   name of whoever entered it, so her bookings sit beside the
                   work that produced them. */}
-              <Metric icon="calendar" label="حجوزات أدخلتها في ركاز" value={employee.rekazBookings ?? 0} />
-              <Metric
+              <ReportMetricCard
+                tone="brand"
+                icon="calendar"
+                label="حجوزات أدخلتها في ركاز"
+                value={employee.rekazBookings ?? 0}
+                href={metricHref("bookings")}
+                testID="customer-service-metric-bookings"
+              />
+              <ReportMetricCard
+                tone="success"
                 icon="banknote"
                 label="قيمة حجوزاتها"
                 value={employee.bookedRevenue ? reportInteger.format(employee.bookedRevenue) : "—"}
+                href={metricHref("revenue")}
+                testID="customer-service-metric-revenue"
               />
-              <Metric icon="tray" label="مسندة عليها الآن" value={employee.currentAssigned} />
-              <Metric icon="paperplane.fill" label="ردود أرسلتها" value={employee.messagesSent} />
-              <Metric icon="checkmark.circle" label="أغلقتها خلال الفترة" value={employee.resolvedConversations} />
+              <ReportMetricCard
+                tone="info"
+                icon="tray"
+                label="مسندة عليها الآن"
+                value={employee.currentAssigned}
+                href={metricHref("assigned")}
+                testID="customer-service-metric-assigned"
+              />
+              <ReportMetricCard
+                icon="paperplane.fill"
+                label="ردود أرسلتها"
+                value={employee.messagesSent}
+                href={metricHref("replies")}
+                testID="customer-service-metric-replies"
+              />
+              <ReportMetricCard
+                tone="success"
+                icon="checkmark.circle"
+                label="أغلقتها خلال الفترة"
+                value={employee.resolvedConversations}
+                href={metricHref("resolved")}
+                testID="customer-service-metric-resolved"
+              />
+              </ReportMetricGrid>
             </View>
 
             <Card variant="raised">

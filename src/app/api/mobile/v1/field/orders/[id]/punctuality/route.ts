@@ -42,14 +42,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (auth.response) return auth.response;
   const body = await request.json().catch(() => ({}));
   try {
-    const punctuality = await recordDriverLocation(auth.session, auth.id, {
+    // `punctuality` is null when the order has no plan (a pin is missing);
+    // the sample is still kept for the path, and `trackingActive` says
+    // whether the phone should keep sending.
+    const result = await recordDriverLocation(auth.session, auth.id, {
       latitude: Number(body.latitude),
       longitude: Number(body.longitude),
       accuracyMeters: Number(body.accuracyMeters),
       capturedAt: String(body.capturedAt ?? ""),
       speedMps: body.speedMps == null ? undefined : Number(body.speedMps),
     });
-    return mobileData({ punctuality });
+    return mobileData(result);
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
     // 409s tell the phone to stop its trip service for this order.

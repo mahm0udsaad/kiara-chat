@@ -23,7 +23,9 @@ import {
   buildDaySchedule,
   dayKeyFromToday,
   dayKeyOf,
+  draftNeedsRekazTime,
   mergeVisits,
+  rekazVisitStateLabel,
   visitMatchesFilter,
   visitMatchesSearch,
   type CalendarVisit,
@@ -83,6 +85,14 @@ const dayNumberFormatter = new Intl.DateTimeFormat("ar-EG", { day: "numeric" });
 
 function dayChipDate(dayKey: string) {
   return new Date(`${dayKey}T12:00:00Z`);
+}
+
+/** Keep one calendar request while moving among days of the same week. */
+function calendarRangeForDay(dayKey: string) {
+  const weekday = dayChipDate(dayKey).getUTCDay();
+  const monday = addDays(dayKey, -((weekday + 6) % 7));
+  const from = addDays(monday, -3);
+  return { from, to: addDays(from, 13) };
 }
 
 /**
@@ -343,6 +353,15 @@ const VisitCard = memo(function VisitCard({
   const createOrder = useCreateOrderFromReservation();
   const arrival = new Date(visit.arrivalAt);
   const order = visit.order;
+  // `sent_at` and `dispatch_state` cover older rows whose top-level status was
+  // not refreshed after dispatch. Any durable send signal should make the
+  // card unmistakable, especially now that its main colour belongs to Rekaz.
+  const wasSent = Boolean(
+    order &&
+      (order.status === "sent" ||
+        order.dispatch_state === "sent" ||
+        order.sent_at),
+  );
 
   // An order already out with a driver has a second kind of trouble the
   // dispatch status cannot show: a step nobody has taken. Both colour the card.
@@ -352,14 +371,55 @@ const VisitCard = memo(function VisitCard({
     order?.status === "failed" ||
     order?.dispatch_state === "uncertain" ||
     stalled;
+  const stateTone =
+    visit.rekazState === "request"
+      ? "warning"
+      : visit.rekazState === "confirmed"
+        ? "success"
+        : visit.rekazState === "completed"
+          ? "info"
+          : visit.rekazState === "cancelled"
+            ? "danger"
+            : "neutral";
+  const stateColor =
+    visit.rekazState === "request"
+      ? colors.warning
+      : visit.rekazState === "confirmed"
+        ? colors.success
+        : visit.rekazState === "completed"
+          ? colors.info
+          : visit.rekazState === "cancelled"
+            ? colors.danger
+            : colors.border;
+  const stateBackground =
+    visit.rekazState === "request"
+      ? colors.warningSoft
+      : visit.rekazState === "confirmed"
+        ? colors.successSoft
+        : visit.rekazState === "completed"
+          ? colors.infoSoft
+          : visit.rekazState === "cancelled"
+            ? colors.dangerSoft
+            : colors.surface;
+  const canRequestDriver =
+    !visit.reservation || visit.rekazState === "confirmed";
 
   const requestDriver = useCallback(() => {
+    if (visit.reservation && visit.rekazState !== "confirmed") {
+      Alert.alert(
+        visit.rekazState === "completed" ? "الزيارة مكتملة" : "الحجز ما زال طلبًا",
+        visit.rekazState === "completed"
+          ? "سجل ركاز أن الخدمة انتهت وتم الدفع."
+          : "الحجز يحتاج أن يصبح «مؤكد» في ركاز قبل طلب السائق.",
+      );
+      return;
+    }
     // Raising the order row is not the commitment — the dispatch is. So an
     // order left behind by an earlier tap that never reached the send is
     // RESUMED, not raised again: the server refuses a second order for the
     // same Rekaz visit (ORDER_ALREADY_LINKED), and the only way forward is
     // the dispatch screen the employee backed out of.
-    if (order) {
+    if (order && !draftNeedsRekazTime(order, visit.reservation)) {
       router.push({
         pathname: "/orders/[id]/dispatch",
         params: { id: order.id, specialistName: visit.providers[0] ?? "" },
@@ -382,7 +442,22 @@ const VisitCard = memo(function VisitCard({
       onError: (error) =>
         Alert.alert("تعذّر إنشاء الطلب", error.message),
     });
-  }, [createOrder, order, router, visit.providers, visit.reservation]);
+  }, [createOrder, order, router, visit.providers, visit.rekazState, visit.reservation]);
+
+  const openOrder = useCallback(() => {
+    if (!order) return;
+    tapFeedback();
+    if (!draftNeedsRekazTime(order, visit.reservation)) {
+      router.push({ pathname: "/orders/[id]", params: { id: order.id } });
+      return;
+    }
+    if (createOrder.isPending || !visit.reservation) return;
+    createOrder.mutate(visit.reservation.id, {
+      onSuccess: (result) =>
+        router.push({ pathname: "/orders/[id]", params: { id: result.order.id } }),
+      onError: (error) => Alert.alert("تعذّرت مزامنة الموعد", error.message),
+    });
+  }, [createOrder, order, router, visit.reservation]);
 
   const body = (
     <View
@@ -392,11 +467,33 @@ const VisitCard = memo(function VisitCard({
         borderRadius: radius.xl,
         borderCurve: "continuous",
         borderWidth: 1,
-        borderColor: needsAttention ? colors.danger : colors.border,
-        backgroundColor: colors.surface,
+        borderColor: needsAttention ? colors.danger : stateColor,
+        backgroundColor: stateBackground,
         boxShadow: "0 1px 2px rgba(24, 33, 77, 0.05)",
       }}
     >
+      {wasSent ? (
+        <View
+          accessibilityLabel="تم إرسال الطلب"
+          style={{
+            minHeight: 32,
+            flexDirection: "row-reverse",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: spacing.xs + 2,
+            paddingHorizontal: spacing.md,
+            paddingVertical: spacing.xs,
+            borderRadius: radius.md,
+            backgroundColor: colors.success,
+          }}
+        >
+          <IconSymbol name="checkmark.circle" color={colors.onSuccess} size={16} />
+          <Text style={{ ...type.subheadStrong, color: colors.onSuccess, ...rtlText }}>
+            تم إرسال الطلب
+          </Text>
+        </View>
+      ) : null}
+
       <View style={{ flexDirection: "row-reverse", gap: spacing.md }}>
         <View style={{ alignItems: "center", gap: 2, minWidth: 62 }}>
           {showDay ? (
@@ -473,15 +570,15 @@ const VisitCard = memo(function VisitCard({
                 </Text>
               </Pressable>
             </Link>
-            {order ? (
+            {order && !wasSent ? (
               <Badge
                 label={orderStatusLabel[order.status]}
                 tone={orderStatusTone[order.status]}
                 icon={orderStatusIcon[order.status] as "clock"}
               />
-            ) : (
+            ) : !order ? (
               <Badge label="بدون طلب" tone="warning" icon="clock" />
-            )}
+            ) : null}
           </View>
 
           {visit.services.length ? (
@@ -537,8 +634,8 @@ const VisitCard = memo(function VisitCard({
           >
             {visit.reservation ? (
               <Badge
-                label={visit.reservation.status || "ركاز"}
-                tone={visit.reservation.status === "Confirmed" ? "success" : "neutral"}
+                label={visit.rekazState ? rekazVisitStateLabel[visit.rekazState] : "ركاز"}
+                tone={stateTone}
               />
             ) : (
               <Badge label="بدون حجز ركاز" tone="neutral" />
@@ -553,7 +650,10 @@ const VisitCard = memo(function VisitCard({
               />
             ) : null}
             {order?.driver_name ? (
-              <Badge label={order.driver_name} tone="brand" icon="car" />
+              <Badge label={`ذهاب: ${order.driver_name}`} tone="brand" icon="car" />
+            ) : null}
+            {order?.return_driver_name ? (
+              <Badge label={`عودة: ${order.return_driver_name}`} tone="brand" icon="car" />
             ) : null}
             {order?.dispatch_state === "processing" ? (
               <Badge label="جاري الإرسال" tone="info" icon="clock" />
@@ -626,7 +726,7 @@ const VisitCard = memo(function VisitCard({
           all: too late for "طلب سائق", too early for "متابعة التنفيذ". The
           gate is the driver, not the row — which also covers a WhatsApp
           booking that has an order but no Rekaz reservation behind it. */}
-      {!order?.driver_id && (order || visit.reservation) ? (
+      {!order?.driver_id && (order || visit.reservation) && canRequestDriver ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`طلب سائق لزيارة ${visit.customerName || visit.customerPhone}`}
@@ -656,21 +756,60 @@ const VisitCard = memo(function VisitCard({
           )}
         </Pressable>
       ) : null}
+      {!order?.driver_id && visit.rekazState === "request" ? (
+        <View
+          style={{
+            minHeight: hitSize.comfortable,
+            flexDirection: "row-reverse",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: spacing.sm,
+            paddingHorizontal: spacing.md,
+            borderRadius: radius.md,
+            backgroundColor: colors.warningSoft,
+          }}
+        >
+          <IconSymbol name="exclamationmark.triangle" color={colors.onWarningSoft} size={16} />
+          <Text style={{ flex: 1, ...type.footnote, color: colors.onWarningSoft, ...rtlText }}>
+            بانتظار أن يصبح الحجز «مؤكد» في ركاز قبل طلب السائق
+          </Text>
+        </View>
+      ) : null}
+      {!order?.driver_id && visit.rekazState === "completed" ? (
+        <View
+          style={{
+            minHeight: hitSize.comfortable,
+            flexDirection: "row-reverse",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: spacing.sm,
+            paddingHorizontal: spacing.md,
+            borderRadius: radius.md,
+            backgroundColor: colors.infoSoft,
+          }}
+        >
+          <IconSymbol name="checkmark.circle" color={colors.onInfoSoft} size={16} />
+          <Text style={{ flex: 1, ...type.footnote, color: colors.onInfoSoft, ...rtlText }}>
+            مكتمل في ركاز — انتهت الخدمة وتم الدفع
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 
   if (!order) return body;
   return (
-    <Link href={{ pathname: "/orders/[id]", params: { id: order.id } }} asChild>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`طلب ${visit.customerName || visit.customerPhone}، ${
-          orderStatusLabel[order.status]
-        }، ${formatters.time.format(arrival)}`}
-      >
-        {body}
-      </Pressable>
-    </Link>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`طلب ${visit.customerName || visit.customerPhone}، ${
+        wasSent ? "تم إرسال الطلب" : orderStatusLabel[order.status]
+      }، ${formatters.time.format(arrival)}`}
+      disabled={createOrder.isPending}
+      onPress={openOrder}
+      style={{ opacity: createOrder.isPending ? 0.6 : 1 }}
+    >
+      {body}
+    </Pressable>
   );
 });
 
@@ -695,11 +834,9 @@ export default function OrdersScreen() {
     [todayKey], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
-  // One bounded range around the selected day. Fetching the neighbours in the
-  // same request is what makes moving a day forward feel instant instead of
-  // showing a spinner on every tap.
-  const from = useMemo(() => addDays(selectedDay, -3), [selectedDay]);
-  const to = useMemo(() => addDays(selectedDay, 7), [selectedDay]);
+  // Anchor the range to a week. A sliding range made every day tap a new
+  // query key, so the prefetched neighbours were never actually reused.
+  const { from, to } = useMemo(() => calendarRangeForDay(selectedDay), [selectedDay]);
   const calendar = useOrdersCalendar(from, to);
 
   const visits = useMemo(

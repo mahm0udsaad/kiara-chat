@@ -31,6 +31,39 @@ export type CalendarVisit = {
   providers: string[];
   location: string;
   amount: number;
+  /** The business state Rekaz owns for this visit. Null for app-only orders. */
+  rekazState: RekazVisitState | null;
+};
+
+export type RekazVisitState = "request" | "confirmed" | "completed" | "cancelled";
+
+/**
+ * Rekaz is the authority for whether operations may dispatch this visit.
+ * Its green Confirmed state is the salon's operational go-ahead. Payment is
+ * managed in Rekaz, but must not hold a confirmed visit from the driver.
+ */
+export function rekazVisitStateOf(
+  reservations: RekazReservation[],
+): RekazVisitState {
+  const live = reservations.filter((item) => item.status !== "Cancelled");
+  if (!live.length) return "cancelled";
+  if (
+    live.every((item) => item.status === "Done") &&
+    live.every((item) => item.payment === "Paid")
+  ) {
+    return "completed";
+  }
+  if (live.some((item) => item.status === "Pending")) {
+    return "request";
+  }
+  return "confirmed";
+}
+
+export const rekazVisitStateLabel: Record<RekazVisitState, string> = {
+  request: "طلب",
+  confirmed: "مؤكد",
+  completed: "مكتمل",
+  cancelled: "ملغي",
 };
 
 /** `YYYY-MM-DD` in the salon's own timezone, not the device's. */
@@ -232,6 +265,7 @@ export function mergeVisits(
       providers: responsibleProvider ? [responsibleProvider] : [],
       location: first.location?.label?.trim() || order?.customer_location || "",
       amount: group.reduce((total, item) => total + (item.amount || 0), 0),
+      rekazState: rekazVisitStateOf(group),
     });
   }
 
@@ -256,6 +290,7 @@ export function mergeVisits(
       providers: [order.specialist_name].filter(Boolean) as string[],
       location: order.customer_location,
       amount: order.price ?? 0,
+      rekazState: null,
     });
   }
 
@@ -288,7 +323,12 @@ export function visitMatchesFilter(
     case "today":
       return dayKeyOf(visit.arrivalAt) === todayKey;
     case "needs_driver":
-      return !visit.order || !visit.order.driver_id || !visit.order.specialist_id;
+      return (
+        visit.rekazState !== "request" &&
+        visit.rekazState !== "completed" &&
+        visit.rekazState !== "cancelled" &&
+        (!visit.order || !visit.order.driver_id || !visit.order.specialist_id)
+      );
     case "driver_requested":
       return Boolean(visit.order?.driver_id);
     case "exception":
@@ -369,6 +409,7 @@ export type ScheduleSlot = {
   services: string[];
   serviceCount: number;
   order: OrderSummary | null;
+  rekazState: RekazVisitState;
 };
 
 export type DaySchedule = {
@@ -378,6 +419,29 @@ export type DaySchedule = {
   startHour: number;
   endHour: number;
 };
+
+/**
+ * A draft order may have been created manually before its Rekaz reservation
+ * was matched.  The calendar then correctly shows Rekaz's appointment while
+ * opening the stale draft shows a different time.  Drafts are safe to bring
+ * back to the source appointment; dispatched orders are not, because staff
+ * may already have confirmed their time with the field team.
+ */
+export function draftNeedsRekazTime(
+  order: OrderSummary | null,
+  reservation: RekazReservation | null,
+): boolean {
+  if (!order || !reservation || order.status !== "pending" || order.sent_at) {
+    return false;
+  }
+  const orderAt = Date.parse(order.arrival_at);
+  const reservationAt = Date.parse(reservation.arrivalAt);
+  return (
+    Number.isFinite(orderAt) &&
+    Number.isFinite(reservationAt) &&
+    Math.abs(orderAt - reservationAt) >= 60_000
+  );
+}
 
 const clockFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: RIYADH_TZ,
@@ -530,6 +594,7 @@ export function buildDaySchedule(
         0,
       ),
       order,
+      rekazState: rekazVisitStateOf(group),
     });
     byColumn.set(columnId, bucket);
   }

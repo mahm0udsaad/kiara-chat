@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -16,7 +17,11 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { useKeyboardPadding } from "@/lib/keyboard";
 import { successFeedback, tapFeedback } from "@/lib/haptics";
-import { useCreateSavedReply } from "@/lib/queries";
+import {
+  useCreateSavedReply,
+  useDeleteSavedReply,
+  useUpdateSavedReply,
+} from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { SavedReply } from "@/types/api";
 
@@ -59,18 +64,23 @@ export function SavedRepliesSheet({
   replies,
   onClose,
   onPick,
+  canManageReplies = false,
 }: {
   open: boolean;
   replies: SavedReply[];
   onClose: () => void;
   onPick: (reply: SavedReply) => void;
+  canManageReplies?: boolean;
 }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const keyboard = useKeyboardPadding();
   const create = useCreateSavedReply();
+  const update = useUpdateSavedReply();
+  const remove = useDeleteSavedReply();
   const [query, setQuery] = useState("");
   const [composing, setComposing] = useState(false);
+  const [editingReplyId, setEditingReplyId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [validation, setValidation] = useState<string | null>(null);
@@ -87,8 +97,10 @@ export function SavedRepliesSheet({
     setComposing(false);
     setTitle("");
     setBody("");
+    setEditingReplyId(null);
     setValidation(null);
     create.reset();
+    update.reset();
   };
 
   const save = () => {
@@ -101,19 +113,48 @@ export function SavedRepliesSheet({
       return;
     }
     setValidation(null);
-    create.mutate(
-      { title: title.trim(), body: body.trim() },
-      {
-        onSuccess: ({ savedReply }) => {
-          successFeedback();
-          closeComposer();
-          // Straight into the draft: the reason she wrote it now is that she
-          // needs to send it now.
-          onPick(savedReply);
-          onClose();
-        },
+    const values = { title: title.trim(), body: body.trim() };
+    if (editingReplyId) {
+      update.mutate(
+        { id: editingReplyId, ...values },
+        { onSuccess: () => { successFeedback(); closeComposer(); } },
+      );
+      return;
+    }
+    create.mutate(values, {
+      onSuccess: ({ savedReply }) => {
+        successFeedback();
+        closeComposer();
+        // Straight into the draft: the reason she wrote it now is that she
+        // needs to send it now.
+        onPick(savedReply);
+        onClose();
       },
-    );
+    });
+  };
+
+  const editSavedReply = (reply: SavedReply) => {
+    tapFeedback();
+    setEditingReplyId(reply.id);
+    setTitle(reply.title);
+    setBody(reply.body);
+    setValidation(null);
+    update.reset();
+    setComposing(true);
+  };
+
+  const confirmDelete = (reply: SavedReply) => {
+    Alert.alert("حذف الرسالة الجاهزة؟", `سيُحذف «${reply.title}» من قائمة الفريق.`, [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "حذف",
+        style: "destructive",
+        onPress: () => remove.mutate(reply.id, {
+          onSuccess: successFeedback,
+          onError: (error) => Alert.alert("تعذّر الحذف", error.message),
+        }),
+      },
+    ]);
   };
 
   const inputStyle = {
@@ -230,7 +271,7 @@ export function SavedRepliesSheet({
             composing ? (
               <View style={{ gap: spacing.md }}>
                 <Text style={{ ...type.headline, color: colors.text, ...rtlText }}>
-                  رسالة جاهزة جديدة
+                  {editingReplyId ? "تعديل الرسالة الجاهزة" : "رسالة جاهزة جديدة"}
                 </Text>
 
                 {/* Welcome lines are what gets written from the phone, so the
@@ -337,11 +378,12 @@ export function SavedRepliesSheet({
 
                 {validation ? <InlineAlert message={validation} /> : null}
                 {create.error ? <InlineAlert message={create.error.message} /> : null}
+                {update.error ? <InlineAlert message={update.error.message} /> : null}
 
                 <PrimaryButton
-                  label="حفظ وإدراج في الرد"
+                  label={editingReplyId ? "حفظ التعديلات" : "حفظ وإدراج في الرد"}
                   icon="checkmark.circle"
-                  loading={create.isPending}
+                  loading={create.isPending || update.isPending}
                   onPress={save}
                 />
                 <PrimaryButton
@@ -354,7 +396,7 @@ export function SavedRepliesSheet({
             ) : (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="إضافة رسالة جاهزة جديدة"
+              accessibilityLabel="إضافة رسالة جاهزة جديدة"
                 onPress={() => {
                   tapFeedback();
                   setComposing(true);
@@ -398,34 +440,46 @@ export function SavedRepliesSheet({
             )
           }
           renderItem={({ item }) => (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={item.title}
-              onPress={() => {
-                tapFeedback();
-                onPick(item);
-                onClose();
-              }}
-              style={({ pressed }) => ({
-                gap: spacing.xs,
-                padding: spacing.md,
-                borderRadius: radius.lg,
-                borderCurve: "continuous",
-                borderWidth: 1,
-                borderColor: pressed ? colors.brand : colors.border,
-                backgroundColor: pressed ? colors.brandSoft : colors.surface,
-              })}
-            >
-              <Text style={{ ...type.calloutStrong, color: colors.text, ...rtlText }}>
-                {item.title}
-              </Text>
-              <Text
-                numberOfLines={3}
-                style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}
+            <View style={{ flexDirection: "row-reverse", alignItems: "stretch", gap: spacing.sm, padding: spacing.md, borderRadius: radius.lg, borderCurve: "continuous", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`إدراج ${item.title} في الرد`}
+                onPress={() => {
+                  tapFeedback();
+                  onPick(item);
+                  onClose();
+                }}
+                style={({ pressed }) => ({ flex: 1, gap: spacing.xs, opacity: pressed ? 0.68 : 1 })}
               >
-                {item.body}
-              </Text>
-            </Pressable>
+                <Text style={{ ...type.calloutStrong, color: colors.text, ...rtlText }}>
+                  {item.title}
+                </Text>
+                <Text numberOfLines={3} style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+                  {item.body}
+                </Text>
+              </Pressable>
+              {canManageReplies ? (
+                <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.xs }}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`تعديل ${item.title}`}
+                    onPress={() => editSavedReply(item)}
+                    style={({ pressed }) => ({ width: hitSize.min, height: hitSize.min, alignItems: "center", justifyContent: "center", borderRadius: radius.full, backgroundColor: pressed ? colors.brandSoft : colors.surfaceSunken })}
+                  >
+                    <IconSymbol name="pencil" color={colors.brand} size={17} />
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`حذف ${item.title}`}
+                    disabled={remove.isPending}
+                    onPress={() => confirmDelete(item)}
+                    style={({ pressed }) => ({ width: hitSize.min, height: hitSize.min, alignItems: "center", justifyContent: "center", borderRadius: radius.full, backgroundColor: pressed ? colors.dangerSoft : colors.surfaceSunken, opacity: remove.isPending ? 0.45 : 1 })}
+                  >
+                    <IconSymbol name="trash" color={colors.danger} size={17} />
+                  </Pressable>
+                </View>
+              ) : null}
+            </View>
           )}
         />
       </KeyboardAvoidingView>

@@ -1,20 +1,25 @@
 import { useRouter } from "expo-router";
-import { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import {
   Alert,
   Pressable,
   ScrollView,
   Text,
   View,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
 } from "react-native";
+import Animated, {
+  scrollTo,
+  useAnimatedRef,
+  useAnimatedScrollHandler,
+} from "react-native-reanimated";
 
 import { radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   RIYADH_TZ,
   UNASSIGNED_COLUMN,
   dayKeyOf,
+  draftNeedsRekazTime,
+  rekazVisitStateLabel,
   riyadhMinutesOf,
   type DaySchedule,
   type ScheduleColumn,
@@ -94,7 +99,27 @@ const SlotCard = memo(function SlotCard({
   const open = () => {
     tapFeedback();
     if (order) {
+      if (draftNeedsRekazTime(order, reservation)) {
+        if (createOrder.isPending) return;
+        createOrder.mutate(reservation.id, {
+          onSuccess: (result) =>
+            router.push({ pathname: "/orders/[id]", params: { id: result.order.id } }),
+          onError: (error) => Alert.alert("تعذّرت مزامنة الموعد", error.message),
+        });
+        return;
+      }
       router.push({ pathname: "/orders/[id]", params: { id: order.id } });
+      return;
+    }
+    if (slot.rekazState === "request") {
+      Alert.alert(
+        "الحجز ما زال طلبًا",
+        "الحجز يحتاج أن يصبح «مؤكد» في ركاز قبل طلب السائق.",
+      );
+      return;
+    }
+    if (slot.rekazState === "completed") {
+      Alert.alert("الزيارة مكتملة", "سجل ركاز أن الخدمة انتهت وتم الدفع.");
       return;
     }
     if (createOrder.isPending) return;
@@ -112,6 +137,39 @@ const SlotCard = memo(function SlotCard({
   };
 
   const needsDriver = !order?.driver_id;
+  // The card colour now communicates Rekaz state, so dispatch needs its own
+  // written signal. Keep the legacy fallbacks because older sent rows may only
+  // carry one of these fields.
+  const wasSent = Boolean(
+    order &&
+      (order.status === "sent" ||
+        order.dispatch_state === "sent" ||
+        order.sent_at),
+  );
+  const stateColor =
+    slot.rekazState === "request"
+      ? colors.warning
+      : slot.rekazState === "completed"
+        ? colors.info
+        : slot.rekazState === "cancelled"
+          ? colors.danger
+          : colors.success;
+  const stateBackground =
+    slot.rekazState === "request"
+      ? colors.warningSoft
+      : slot.rekazState === "completed"
+        ? colors.infoSoft
+        : slot.rekazState === "cancelled"
+          ? colors.dangerSoft
+          : colors.successSoft;
+  const stateInk =
+    slot.rekazState === "request"
+      ? colors.onWarningSoft
+      : slot.rekazState === "completed"
+        ? colors.onInfoSoft
+        : slot.rekazState === "cancelled"
+          ? colors.onDangerSoft
+          : colors.onSuccessSoft;
   const time = riyadhClock.format(new Date(reservation.arrivalAt));
   const roomForServices = height > 56;
 
@@ -120,7 +178,7 @@ const SlotCard = memo(function SlotCard({
       accessibilityRole="button"
       accessibilityLabel={`${reservation.customerName || reservation.customerPhone}، ${slot.services.join(
         "، ",
-      )}، ${time}${needsDriver ? "، بحاجة إلى سائق" : ""}`}
+      )}، ${time}${wasSent ? "، تم إرسال الطلب" : ""}${needsDriver ? "، بحاجة إلى سائق" : ""}`}
       onPress={open}
       style={{
         position: "absolute",
@@ -143,22 +201,24 @@ const SlotCard = memo(function SlotCard({
           borderRadius: radius.md,
           borderCurve: "continuous",
           borderWidth: 1,
-          borderColor: needsDriver ? colors.border : colors.brand,
+          borderColor: stateColor,
           borderRightWidth: 3,
-          borderRightColor: needsDriver ? colors.textTertiary : colors.brand,
-          backgroundColor: needsDriver ? colors.surface : colors.brandSoft,
+          borderRightColor: stateColor,
+          backgroundColor: stateBackground,
         }}
       >
         <Text
           numberOfLines={1}
           style={{
             ...type.caption,
-            color: needsDriver ? colors.textSecondary : colors.onBrandSoft,
+            color: stateInk,
             fontVariant: ["tabular-nums"],
             ...rtlText,
           }}
         >
-          {time}
+          {wasSent
+            ? `✓ تم إرسال الطلب · ${time}`
+            : `${time} · ${rekazVisitStateLabel[slot.rekazState]}`}
           {/* The services are named below when there is room; the count is
               for the short card, where naming them would not fit. */}
           {slot.serviceCount > 1 && !roomForServices
@@ -170,7 +230,7 @@ const SlotCard = memo(function SlotCard({
           style={{
             ...type.footnote,
             fontWeight: "700",
-            color: needsDriver ? colors.text : colors.onBrandSoft,
+            color: stateInk,
             ...rtlText,
           }}
         >
@@ -182,7 +242,7 @@ const SlotCard = memo(function SlotCard({
             style={{
               ...type.caption,
               fontWeight: "400",
-              color: needsDriver ? colors.textTertiary : colors.onBrandSoft,
+              color: stateInk,
               ...rtlText,
             }}
           >
@@ -199,7 +259,7 @@ const SlotCard = memo(function SlotCard({
               ...type.caption,
               fontWeight: "400",
               marginTop: "auto",
-              color: needsDriver ? colors.textTertiary : colors.onBrandSoft,
+              color: stateInk,
               ...rtlText,
             }}
           >
@@ -285,16 +345,10 @@ export function ScheduleGrid({
    * the body uses. It gets its own, driven from the body's offset: a column
    * whose title has slid away from it is worse than no title at all.
    */
-  const namesRef = useRef<ScrollView>(null);
-  const onBodyScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      namesRef.current?.scrollTo({
-        x: event.nativeEvent.contentOffset.x,
-        animated: false,
-      });
-    },
-    [],
-  );
+  const namesRef = useAnimatedRef<ScrollView>();
+  const onBodyScroll = useAnimatedScrollHandler((event) => {
+    scrollTo(namesRef, event.contentOffset.x, 0, false);
+  });
 
   // The "now" line only means something on the day being looked at.
   const nowOffset = useMemo(() => {
@@ -321,7 +375,7 @@ export function ScheduleGrid({
         }}
       >
         <View style={{ width: GUTTER_WIDTH }} />
-        <ScrollView
+        <Animated.ScrollView
           ref={namesRef}
           horizontal
           scrollEnabled={false}
@@ -335,7 +389,7 @@ export function ScheduleGrid({
               width={laneWidthOf(column) * column.maxLanes}
             />
           ))}
-        </ScrollView>
+        </Animated.ScrollView>
       </View>
 
       {columns.length === 0 ? (
@@ -371,7 +425,7 @@ export function ScheduleGrid({
           ))}
         </View>
 
-        <ScrollView
+        <Animated.ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           onScroll={onBodyScroll}
@@ -427,7 +481,7 @@ export function ScheduleGrid({
               </View>
             );
           })}
-        </ScrollView>
+        </Animated.ScrollView>
       </View>
     </ScrollView>
   );
