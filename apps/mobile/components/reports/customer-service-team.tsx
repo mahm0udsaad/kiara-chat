@@ -142,7 +142,7 @@ function EmployeeRow({
             </View>
             <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
               {lastActivity ? `آخر نشاط ${relativeTimeLabel(lastActivity)}` : "لا يوجد نشاط مسجل"}
-              {employee.activeMinutes ? ` · في التطبيق ${durationLabel(employee.activeMinutes)}` : ""}
+              {employee.chatMinutes ? ` · في المحادثات ${durationLabel(employee.chatMinutes)}` : ""}
             </Text>
           </View>
           <IconSymbol name="chevron.left" size={20} color={colors.textTertiary} />
@@ -188,7 +188,7 @@ export function CustomerServiceTeam({ report }: { report: CustomerServiceReport 
         <ReportSectionHeader title="أداء الفترة" description="ملخص الفريق خلال الفترة المختارة." />
         <ReportMetricGrid>
           <ReportMetricCard icon="checkmark.circle" label="نشطات الآن" value={report.totals.activeNow} href={metricHref("active-now")} testID="customer-service-team-active-now" />
-          <ReportMetricCard icon="clock" label="وقت الفريق بالتطبيق" value={report.totals.activeMinutes ? durationLabel(report.totals.activeMinutes) : "—"} href={metricHref("time")} testID="customer-service-team-time" />
+          <ReportMetricCard icon="clock" label="وقت الفريق في المحادثات" value={report.totals.chatMinutes ? durationLabel(report.totals.chatMinutes) : "—"} href={metricHref("time")} testID="customer-service-team-time" />
           <ReportMetricCard icon="message" label="محادثات" value={report.totals.handledConversations} href={metricHref("conversations")} testID="customer-service-team-conversations" />
           <ReportMetricCard icon="calendar" label="حجوزات ركاز" value={report.totals.rekazBookings ?? 0} href={metricHref("bookings")} testID="customer-service-team-bookings" />
           <ReportMetricCard icon="banknote" label="قيمة الحجوزات" value={report.totals.bookedRevenue ? reportInteger.format(report.totals.bookedRevenue) : "—"} href={metricHref("revenue")} testID="customer-service-team-revenue" />

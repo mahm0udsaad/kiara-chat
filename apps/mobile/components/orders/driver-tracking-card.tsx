@@ -129,10 +129,32 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function EtaPanel({ eta }: { eta: NonNullable<OrderTracking["eta"]> }) {
+const STAGE_LABEL: Record<NonNullable<OrderTracking["clientEta"]>["stage"], string> = {
+  to_specialist: "السائق في الطريق للأخصائية، ثم للعميلة",
+  waiting_specialist: "السائق عند الأخصائية بانتظار ركوبها",
+  to_client: "السائق والأخصائية في الطريق للعميلة",
+};
+
+/**
+ * The driver's arrival at the client leads — that is what customer service is
+ * asked about — with the next stop underneath while the specialist is not in
+ * the car yet. Falls back to the next-stop estimate on servers without
+ * `clientEta`.
+ */
+function EtaPanel({ tracking }: { tracking: OrderTracking }) {
   const { colors } = useTheme();
-  const late = eta.lateByMinutes != null && eta.lateByMinutes > 0;
-  const where = eta.target === "client" ? "للعميلة" : "للأخصائية";
+  const client = tracking.clientEta ?? null;
+  const next = tracking.eta;
+  const headline = client
+    ? { at: client.at, remaining: client.remainingSeconds, distance: client.distanceMetres, scheduledAt: client.scheduledAt, late: client.lateByMinutes, where: "للعميلة" }
+    : next
+      ? { at: next.at, remaining: next.remainingSeconds, distance: next.distanceMetres, scheduledAt: next.scheduledAt, late: next.lateByMinutes, where: next.target === "client" ? "للعميلة" : "للأخصائية" }
+      : null;
+  if (!headline) return null;
+  const late = headline.late != null && headline.late > 0;
+  const ink = late ? colors.onDangerSoft : colors.onBrandSoft;
+  const live = (client?.source ?? next?.source) === "live_speed";
+  const specialistNext = next?.target === "specialist" ? next : null;
   return (
     <View
       style={{
@@ -144,36 +166,43 @@ function EtaPanel({ eta }: { eta: NonNullable<OrderTracking["eta"]> }) {
       }}
     >
       <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
-        <Text style={{ flex: 1, ...type.footnote, color: late ? colors.onDangerSoft : colors.onBrandSoft, ...rtlText }}>
-          {`الوصول المتوقع ${where}`}
+        <Text style={{ flex: 1, ...type.footnote, color: ink, ...rtlText }}>
+          {`وصول السائق المتوقع ${headline.where}`}
         </Text>
-        {eta.lateByMinutes != null ? (
+        {headline.late != null ? (
           <Badge
-            label={late ? `متأخر ${eta.lateByMinutes} د` : eta.lateByMinutes < 0 ? `قبل الموعد بـ ${-eta.lateByMinutes} د` : "في الموعد"}
+            label={late ? `متأخر ${headline.late} د` : headline.late < 0 ? `قبل الموعد بـ ${-headline.late} د` : "في الموعد"}
             tone={late ? "danger" : "success"}
             icon={late ? "exclamationmark.triangle" : "checkmark.circle"}
           />
         ) : null}
       </View>
-      <Text
-        style={{
-          ...type.title2,
-          color: late ? colors.onDangerSoft : colors.onBrandSoft,
-          fontVariant: ["tabular-nums"],
-          ...rtlText,
-        }}
-      >
-        {eta.remainingSeconds <= 60 ? "وصل تقريبًا" : time(eta.at)}
+      <Text style={{ ...type.title2, color: ink, fontVariant: ["tabular-nums"], ...rtlText }}>
+        {headline.remaining <= 60 ? "وصل تقريبًا" : time(headline.at)}
       </Text>
-      <Text style={{ ...type.caption, color: late ? colors.onDangerSoft : colors.onBrandSoft, ...rtlText }}>
+      <Text style={{ ...type.caption, color: ink, ...rtlText }}>
         {[
-          eta.remainingSeconds > 60 ? `بعد ${minutesLabel(eta.remainingSeconds)}` : null,
-          eta.distanceMetres > 0 ? `${distanceLabel(eta.distanceMetres)} متبقية` : null,
-          eta.scheduledAt ? `الموعد ${time(eta.scheduledAt)}` : null,
-          eta.source === "live_speed" ? "حسب سرعة السائق الحالية" : "تقدير تقريبي",
+          headline.remaining > 60 ? `بعد ${minutesLabel(headline.remaining)}` : null,
+          headline.distance > 0 ? `${distanceLabel(headline.distance)} متبقية` : null,
+          headline.scheduledAt ? `الموعد ${time(headline.scheduledAt)}` : null,
         ]
           .filter(Boolean)
           .join(" · ")}
+      </Text>
+      {client ? (
+        <Text style={{ ...type.caption, color: ink, ...rtlText }}>{STAGE_LABEL[client.stage]}</Text>
+      ) : null}
+      {client && specialistNext ? (
+        <Text style={{ ...type.caption, color: ink, ...rtlText }}>
+          {`يصل للأخصائية ${specialistNext.remainingSeconds <= 60 ? "الآن تقريبًا" : `${time(specialistNext.at)} (بعد ${minutesLabel(specialistNext.remainingSeconds)})`}`}
+        </Text>
+      ) : null}
+      <Text style={{ ...type.caption, color: ink, opacity: 0.8, ...rtlText }}>
+        {client?.approximate
+          ? "تقدير تقريبي: موقع ركوب الأخصائية غير محفوظ، فلا يُحسب مشوار السائق إليها بدقة."
+          : live
+            ? "محسوب من سرعة السائق الفعلية في آخر دقائق."
+            : "تقدير بمتوسط سرعة السير في المدينة."}
       </Text>
     </View>
   );
@@ -312,7 +341,7 @@ export function DriverTrackingCard({ orderId }: { orderId: string }) {
           </Text>
         ) : null}
 
-        {tracking.eta ? <EtaPanel eta={tracking.eta} /> : null}
+        <EtaPanel tracking={tracking} />
 
         {tracking.enabled ? (
           <>

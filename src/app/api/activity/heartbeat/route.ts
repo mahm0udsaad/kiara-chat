@@ -9,10 +9,14 @@ export async function POST(request: Request) {
   if (!session.teamMemberId) {
     return NextResponse.json({ error: "Team member required" }, { status: 403 });
   }
-  const body = (await request.json().catch(() => null)) as { state?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as {
+    state?: unknown;
+    screen?: unknown;
+  } | null;
   const state = body?.state === "background" ? "background" : "active";
+  const screen = body?.screen === "chat" ? "chat" : "other";
   try {
-    await recordEmployeeAppPresence({ session, state, platform: "web" });
+    await recordEmployeeAppPresence({ session, state, platform: "web", screen });
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[app-presence]", error);

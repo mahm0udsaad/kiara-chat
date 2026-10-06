@@ -197,8 +197,8 @@ export default function CustomerServiceEmployeeReportScreen() {
               <ReportMetricGrid>
               <ReportMetricCard
                 icon="clock"
-                label="وقتها داخل التطبيق"
-                value={employee.activeMinutes ? durationLabel(employee.activeMinutes) : "—"}
+                label="وقتها في المحادثات"
+                value={employee.chatMinutes ? durationLabel(employee.chatMinutes) : "—"}
                 href={metricHref("time")}
                 testID="customer-service-metric-time"
               />
@@ -341,10 +341,10 @@ export default function CustomerServiceEmployeeReportScreen() {
                         ...type.subheadStrong,
                         ...numeric,
                         ...rtlText,
-                        color: day.activeMinutes ? colors.brand : colors.textTertiary,
+                        color: day.chatMinutes ? colors.brand : colors.textTertiary,
                       }}
                     >
-                      {day.activeMinutes ? durationLabel(day.activeMinutes) : "—"}
+                      {day.chatMinutes ? durationLabel(day.chatMinutes) : "—"}
                     </Text>
                   </View>
                 ))

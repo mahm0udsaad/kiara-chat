@@ -62,6 +62,7 @@ import { tapFeedback } from "@/lib/haptics";
 import { useTheme } from "@/providers/theme-provider";
 import { useIsTyping } from "@/providers/inbox-live-provider";
 import type { ConversationMessage, MediaSlot } from "@/types/api";
+import { markChatInteraction, useChatScreenPresence } from "@/lib/employee-presence";
 
 /** A message, or the date chip that introduces the messages below it. */
 type ChatItem =
@@ -497,6 +498,9 @@ export default function ConversationScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const keyboard = useKeyboardPadding();
+  // Time on this screen, while she is touching or typing, is the report's
+  // "time in chats".
+  useChatScreenPresence();
   const router = useRouter();
   const params = useLocalSearchParams<{
     id: string | string[];
@@ -663,6 +667,7 @@ export default function ConversationScreen() {
       behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={process.env.EXPO_OS === "ios" ? insets.top + 44 : 0}
       onLayout={keyboard.onLayout}
+      onTouchStart={markChatInteraction}
       style={{
         flex: 1,
         backgroundColor: colors.background,

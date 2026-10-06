@@ -1,16 +1,33 @@
 import Constants from "expo-constants";
-import { useEffect } from "react";
-import { AppState } from "react-native";
+import { useFocusEffect } from "expo-router";
+import { useCallback, useEffect } from "react";
+import { AppState, Keyboard } from "react-native";
 
 import { apiRequest } from "@/lib/api";
 
 const HEARTBEAT_MS = 45_000;
+/**
+ * A conversation counts as being worked only while someone is actually at it:
+ * a touch or the keyboard inside this window. A thread left open on a phone
+ * that is not being used is app time, not chat time.
+ */
+const CHAT_IDLE_MS = 3 * 60_000;
+
+/** Only operations staff report presence; set by the tabs layout. */
+let presenceEnabled = false;
+let chatOpen = false;
+let lastInteractionAt = 0;
+
+function screen(): "chat" | "other" {
+  return chatOpen && Date.now() - lastInteractionAt <= CHAT_IDLE_MS ? "chat" : "other";
+}
 
 function send(state: "active" | "background") {
   return apiRequest<{ receivedAt: string }>("/activity/heartbeat", {
     method: "POST",
     body: JSON.stringify({
       state,
+      screen: screen(),
       platform: process.env.EXPO_OS === "ios" ? "ios" : "android",
       appVersion: Constants.expoConfig?.version ?? null,
     }),
@@ -37,9 +54,40 @@ async function leave() {
   await send("background");
 }
 
+/** A touch or keystroke in an open conversation: she is working it. */
+export function markChatInteraction() {
+  lastInteractionAt = Date.now();
+}
+
+/**
+ * Marks the conversation screen as open while it is focused.
+ *
+ * Entering and leaving are boundaries, so each sends a beat at once: the
+ * server credits every gap to the screen of the beat that started it, and a
+ * beat on the boundary keeps the list's time out of chat time and the chat's
+ * tail inside it.
+ */
+export function useChatScreenPresence() {
+  useFocusEffect(
+    useCallback(() => {
+      chatOpen = true;
+      lastInteractionAt = Date.now();
+      if (presenceEnabled && AppState.currentState === "active") void send("active");
+      // Typing happens on the keyboard, which no screen touch reports.
+      const typing = Keyboard.addListener("keyboardDidShow", markChatInteraction);
+      return () => {
+        typing.remove();
+        chatOpen = false;
+        if (presenceEnabled && AppState.currentState === "active") void send("active");
+      };
+    }, []),
+  );
+}
+
 /** Recent authenticated heartbeats are the report's definition of online. */
 export function useEmployeePresence(enabled: boolean) {
   useEffect(() => {
+    presenceEnabled = enabled;
     if (!enabled) return;
     if (AppState.currentState === "active") void send("active");
     const timer = setInterval(() => {
@@ -52,10 +100,14 @@ export function useEmployeePresence(enabled: boolean) {
       // background ended the stretch each time, which threw away the minutes
       // around them, and counted hundreds of "sessions" in a day.
       if (state === "inactive") return;
-      if (state === "active") void send("active");
-      else void leave();
+      if (state === "active") {
+        // Coming back to an open conversation is picking it up again.
+        if (chatOpen) markChatInteraction();
+        void send("active");
+      } else void leave();
     });
     return () => {
+      presenceEnabled = false;
       clearInterval(timer);
       subscription.remove();
       void leave();

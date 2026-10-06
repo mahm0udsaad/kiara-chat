@@ -24,6 +24,7 @@ export async function POST(request: Request) {
     state?: unknown;
     platform?: unknown;
     appVersion?: unknown;
+    screen?: unknown;
   } | null;
   const state = body?.state;
   const platform = body?.platform;
@@ -42,6 +43,9 @@ export async function POST(request: Request) {
       state: state as EmployeeAppState,
       platform: platform as EmployeeAppPlatform,
       appVersion: typeof body?.appVersion === "string" ? body.appVersion : null,
+      // Anything but an explicit "chat" — including builds that send nothing —
+      // is app time only.
+      screen: body?.screen === "chat" ? "chat" : "other",
     });
     return mobileData({ receivedAt: new Date().toISOString() });
   } catch (error) {

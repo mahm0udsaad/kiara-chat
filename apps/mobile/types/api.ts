@@ -652,6 +652,8 @@ export type CustomerServiceDailyActivity = {
   actions: number;
   /** Foreground app time that day. Absent on reports served before it existed. */
   activeMinutes?: number;
+  /** Time inside an open conversation, actually interacting. Absent on older servers. */
+  chatMinutes?: number;
 };
 
 export type CustomerServiceEmployee = {
@@ -694,6 +696,8 @@ export type CustomerServiceEmployee = {
   medianHoursToBooking?: number | null;
   /** Foreground app time across the period. Absent on older report responses. */
   activeMinutes?: number;
+  /** Time inside an open conversation, actually interacting. Absent on older servers. */
+  chatMinutes?: number;
   sessions?: number;
   daily: CustomerServiceDailyActivity[];
   recentActivity?: CustomerServiceActivity[];
@@ -745,6 +749,8 @@ export type CustomerServiceReport = {
     actions: number;
     /** Team app time across the period. Absent on older report responses. */
     activeMinutes?: number;
+    /** Team time inside conversations. Absent on older servers. */
+    chatMinutes?: number;
     /** Rekaz bookings the team entered. Absent on older report responses. */
     rekazBookings?: number;
     bookingsFromHerChats?: number;
@@ -1117,6 +1123,17 @@ export type OrderTracking = {
     source: "live_speed" | "osrm" | "estimate";
     scheduledAt: string | null;
     lateByMinutes: number | null;
+  } | null;
+  /** Arrival at the client whatever the next stop is; absent on older servers. */
+  clientEta?: {
+    at: string;
+    remainingSeconds: number;
+    distanceMetres: number;
+    scheduledAt: string;
+    lateByMinutes: number;
+    stage: "to_specialist" | "waiting_specialist" | "to_client";
+    approximate: boolean;
+    source: "live_speed" | "osrm" | "estimate";
   } | null;
   stats: {
     distanceMetres: number;

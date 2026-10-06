@@ -23,8 +23,8 @@ type EmployeeMetric = "time" | "conversations" | "bookings" | "revenue" | "assig
 
 const METRIC_DETAILS: Record<EmployeeMetric, { title: string; description: string; icon: IconName }> = {
   time: {
-    title: "وقتها داخل التطبيق",
-    description: "وقت ظهور التطبيق في الواجهة، موزع حسب اليوم خلال الفترة المختارة.",
+    title: "وقتها في المحادثات",
+    description: "الوقت الذي كانت فيه داخل محادثة مفتوحة وتتفاعل معها (لمس أو كتابة خلال آخر ٣ دقائق)، موزع حسب اليوم. وقت فتح التطبيق كاملًا يظهر بجانبه للمقارنة.",
     icon: "clock",
   },
   conversations: {
@@ -136,7 +136,7 @@ export default function CustomerServiceMetricDetailsScreen() {
   const value = !employee
     ? "—"
     : metric === "time"
-      ? employee.activeMinutes ? durationLabel(employee.activeMinutes) : "—"
+      ? employee.chatMinutes ? durationLabel(employee.chatMinutes) : "—"
       : metric === "conversations"
         ? reportInteger.format(employee.handledConversations)
         : metric === "bookings"
@@ -172,6 +172,11 @@ export default function CustomerServiceMetricDetailsScreen() {
             </View>
           </View>
           <Text style={{ ...type.body, ...rtlText, color: colors.textSecondary }}>{details.description}</Text>
+          {metric === "time" && employee?.activeMinutes ? (
+            <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
+              {`التطبيق مفتوح: ${durationLabel(employee.activeMinutes)}`}
+            </Text>
+          ) : null}
           <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
             {name}{from && to ? ` · ${dateLabel.format(new Date(`${from}T12:00:00+03:00`))} – ${dateLabel.format(new Date(`${to}T12:00:00+03:00`))}` : ""}
           </Text>
@@ -193,10 +198,11 @@ export default function CustomerServiceMetricDetailsScreen() {
                     </Text>
                     <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textSecondary }}>
                       {reportInteger.format(day.handledConversations)} محادثة · {reportInteger.format(day.messagesSent)} رد
+                      {day.activeMinutes ? ` · التطبيق مفتوح ${durationLabel(day.activeMinutes)}` : ""}
                     </Text>
                   </View>
                   <Text selectable style={{ ...type.subheadStrong, ...numeric, ...rtlText, color: colors.brand }}>
-                    {day.activeMinutes ? durationLabel(day.activeMinutes) : "—"}
+                    {day.chatMinutes ? durationLabel(day.chatMinutes) : "—"}
                   </Text>
                 </View>
               </View>

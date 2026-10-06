@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { PrimaryButton } from "@/components/primary-button";
@@ -49,17 +49,68 @@ export function CustomerReminderCard({
 
   return (
     <>
-      <Card style={{ gap: spacing.md }}>
-        <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
-          <IconSymbol name={sent ? "checkmark.circle" : "paperplane.fill"} size={20} color={sent ? colors.success : colors.brand} />
-          <View style={{ flex: 1, gap: spacing.xs }}>
-            <Text selectable style={{ ...type.headline, color: colors.text, ...rtlText }}>تذكير العميلة</Text>
-            <Text selectable style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+      {/* One row: the reminder is one tap among many on this screen, so it
+          must not push the order itself below the fold. */}
+      <Card style={{ gap: spacing.sm }}>
+        <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.md }}>
+          <View
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: radius.full,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: sent ? colors.successSoft : colors.brandSoft,
+            }}
+          >
+            <IconSymbol
+              name={sent ? "checkmark.circle" : "paperplane.fill"}
+              size={17}
+              color={sent ? colors.onSuccessSoft : colors.onBrandSoft}
+            />
+          </View>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>تذكير العميلة</Text>
+            <Text numberOfLines={1} style={{ ...type.caption, color: colors.textSecondary, ...rtlText }}>
               {sent && state?.sentAt
                 ? `أُرسل ${formatters.dateTime.format(new Date(state.sentAt))}`
-                : "أخبري العميلة أن الأخصائية في الطريق واطلبي تجهيز غرفة مناسبة."}
+                : status === "sending"
+                  ? "جارٍ إرسال التذكير…"
+                  : !canSend
+                    ? "يُتاح بعد إرسال الطلب للفريق"
+                    : "الأخصائية في الطريق وتجهيز غرفة مناسبة"}
             </Text>
           </View>
+          {sent ? null : (
+            <Pressable
+              testID="order-remind-client"
+              accessibilityRole="button"
+              accessibilityLabel={label}
+              accessibilityState={{ disabled: !editable, busy: reminder.isLoading }}
+              disabled={!editable}
+              onPress={openConfirmation}
+              style={({ pressed }) => ({
+                minHeight: 36,
+                minWidth: 72,
+                flexDirection: "row-reverse",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: spacing.xs,
+                paddingHorizontal: spacing.md,
+                borderRadius: radius.full,
+                backgroundColor: colors.brand,
+                opacity: !editable ? 0.4 : pressed ? 0.8 : 1,
+              })}
+            >
+              {reminder.isLoading ? (
+                <ActivityIndicator size="small" color={colors.onBrand} />
+              ) : (
+                <Text style={{ ...type.caption, fontWeight: "600", color: colors.onBrand }}>
+                  {status === "uncertain" ? "تحققي" : "إرسال"}
+                </Text>
+              )}
+            </Pressable>
+          )}
         </View>
 
         {reminder.isError ? (
@@ -71,16 +122,6 @@ export function CustomerReminderCard({
         {status === "uncertain" ? (
           <InlineAlert message="لا يمكن تأكيد نتيجة الإرسال. تحققي من المحادثة قبل إعادة المحاولة." />
         ) : null}
-        <PrimaryButton
-          testID="order-remind-client"
-          label={label}
-          icon={sent ? "checkmark.circle" : "paperplane.fill"}
-          variant={sent ? "tinted" : "filled"}
-          disabled={!editable}
-          loading={reminder.isLoading}
-          loadingLabel="جارٍ تحميل التذكير…"
-          onPress={openConfirmation}
-        />
       </Card>
 
       <Modal visible={open} transparent animationType="slide" onRequestClose={() => !send.isPending && setOpen(false)}>

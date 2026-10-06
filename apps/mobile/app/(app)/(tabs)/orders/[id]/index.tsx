@@ -1,13 +1,12 @@
 import { OrderServiceChanges } from "@/components/order-service-changes";
-import { Link, useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo } from "react";
-import { Alert, Linking, Pressable, ScrollView, Text, View } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useMemo, useState } from "react";
+import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
 import { TripCostEditor } from "@/components/orders/trip-cost-editor";
 import { CustomerReminderCard } from "@/components/orders/customer-reminder-card";
-import { DriverTrackingCard } from "@/components/orders/driver-tracking-card";
 import { ServiceTimingCard } from "@/components/orders/service-timing-card";
 import { ErrorState, LoadingScreen } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
@@ -15,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, Divider } from "@/components/ui/card";
 import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { OptionsSheet } from "@/components/ui/options-sheet";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   executionIsStalled,
@@ -218,6 +218,7 @@ export default function OrderDetailScreen() {
   );
   const detail = useOrder(id);
   const extraTeam = useCreateExtraTeamOrder();
+  const [moreOpen, setMoreOpen] = useState(false);
   const bootstrap = useBootstrap();
 
   if (detail.isLoading) return <LoadingScreen label="جارٍ تحميل الطلب…" />;
@@ -561,7 +562,7 @@ export default function OrderDetailScreen() {
             ) : null}
             <StepRail steps={execution.steps} />
             <PrimaryButton
-              label="متابعة التنفيذ وإرسال تذكير"
+              label="متابعة التنفيذ وتتبع السائق"
               icon="figure.walk"
               variant="outline"
               silent
@@ -584,9 +585,6 @@ export default function OrderDetailScreen() {
             />
           </Card>
         </View>
-
-        {/* Its own request: a tracking failure stays inside this card. */}
-        {order.driver_id ? <DriverTrackingCard orderId={order.id} /> : null}
 
         <ServiceTimingCard
           scheduledAt={order.arrival_at}
@@ -689,55 +687,93 @@ export default function OrderDetailScreen() {
         </View>
       </ScrollView>
 
+      {/* One primary action in view; the rest sit behind "more" so the
+          order itself stays readable. */}
       <ActionBar bottomInset={insets.bottom}>
-        <PrimaryButton
-          label="طلب سائق وتأكيد الإرسال"
-          icon="paperplane.fill"
-          onPress={() => router.push({ pathname: "/orders/[id]/dispatch", params: { id } })}
-        />
-        <Link href={{ pathname: "/orders/[id]/edit", params: { id } }} asChild>
-          <PrimaryButton
-            label="تعديل بيانات الطلب"
-            icon="pencil"
-            variant="tinted"
-            silent
-            onPress={() => {}}
-          />
-        </Link>
-        {/* Another specialist with her own driver for the same visit: a new
-            pending order that goes through the ordinary dispatch screen. */}
-        {order.driver_id && order.status !== "cancelled" ? (
-          <PrimaryButton
-            label="إرسال فريق إضافي لنفس الزيارة"
-            loading={extraTeam.isPending}
-            loadingLabel="جارٍ إنشاء الطلب…"
-            icon="person.2"
-            variant="outline"
-            onPress={() =>
-              Alert.alert(
-                "فريق إضافي",
-                "سيُنشأ طلب جديد بنفس الموعد والموقع، ثم تختارين له الأخصائية والسائق.",
-                [
-                  { text: "إلغاء", style: "cancel" },
-                  {
-                    text: "متابعة",
-                    onPress: () =>
-                      extraTeam.mutate(order.id, {
-                        onSuccess: ({ order: created }) =>
-                          router.push({
-                            pathname: "/orders/[id]/dispatch",
-                            params: { id: created.id },
-                          }),
-                        onError: (error) =>
-                          Alert.alert("تعذّر إنشاء الطلب", error.message),
-                      }),
-                  },
-                ],
-              )
-            }
-          />
-        ) : null}
+        <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+          <View style={{ flex: 1 }}>
+            <PrimaryButton
+              label="طلب سائق وتأكيد الإرسال"
+              icon="paperplane.fill"
+              onPress={() => router.push({ pathname: "/orders/[id]/dispatch", params: { id } })}
+            />
+          </View>
+          <Pressable
+            testID="order-more-actions"
+            accessibilityRole="button"
+            accessibilityLabel="إجراءات أخرى للطلب"
+            accessibilityState={{ busy: extraTeam.isPending }}
+            disabled={extraTeam.isPending}
+            onPress={() => {
+              tapFeedback();
+              setMoreOpen(true);
+            }}
+            style={({ pressed }) => ({
+              width: hitSize.control,
+              height: hitSize.control,
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: radius.lg,
+              borderCurve: "continuous",
+              backgroundColor: colors.brandSoft,
+              opacity: pressed ? 0.75 : 1,
+            })}
+          >
+            {extraTeam.isPending ? (
+              <ActivityIndicator color={colors.onBrandSoft} />
+            ) : (
+              <IconSymbol name="ellipsis" color={colors.onBrandSoft} size={22} />
+            )}
+          </Pressable>
+        </View>
       </ActionBar>
+      <OptionsSheet
+        visible={moreOpen}
+        title="إجراءات الطلب"
+        onClose={() => setMoreOpen(false)}
+        options={[
+          {
+            key: "edit",
+            label: "تعديل بيانات الطلب",
+            detail: "الموعد، الموقع، الخدمات والفريق",
+            icon: "pencil",
+            onPress: () => router.push({ pathname: "/orders/[id]/edit", params: { id } }),
+          },
+          // Another specialist with her own driver for the same visit: a new
+          // pending order that goes through the ordinary dispatch screen.
+          ...(order.driver_id && order.status !== "cancelled"
+            ? [
+                {
+                  key: "extra-team",
+                  label: "إرسال فريق إضافي لنفس الزيارة",
+                  detail: "طلب جديد بنفس الموعد والموقع",
+                  icon: "person.2" as const,
+                  onPress: () =>
+                    Alert.alert(
+                      "فريق إضافي",
+                      "سيُنشأ طلب جديد بنفس الموعد والموقع، ثم تختارين له الأخصائية والسائق.",
+                      [
+                        { text: "إلغاء", style: "cancel" },
+                        {
+                          text: "متابعة",
+                          onPress: () =>
+                            extraTeam.mutate(order.id, {
+                              onSuccess: ({ order: created }) =>
+                                router.push({
+                                  pathname: "/orders/[id]/dispatch",
+                                  params: { id: created.id },
+                                }),
+                              onError: (error) =>
+                                Alert.alert("تعذّر إنشاء الطلب", error.message),
+                            }),
+                        },
+                      ],
+                    ),
+                },
+              ]
+            : []),
+        ]}
+      />
     </View>
   );
 }

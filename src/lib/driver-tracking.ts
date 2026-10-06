@@ -83,6 +83,19 @@ export type TrackingFlag =
   | { code: "no_fixes" }
   | { code: "expected_late"; minutes: number; target: "specialist" | "client" };
 
+export type ClientEta = {
+  at: string;
+  remainingSeconds: number;
+  /** Road distance still to drive, through the specialist when she is not in the car yet. */
+  distanceMetres: number;
+  scheduledAt: string;
+  lateByMinutes: number;
+  stage: "to_specialist" | "waiting_specialist" | "to_client";
+  /** Heading to a specialist whose pickup pin is not saved: her leg is guessed. */
+  approximate: boolean;
+  source: "live_speed" | "osrm" | "estimate";
+};
+
 export type OrderTracking = {
   enabled: boolean;
   disabledReason: "switched_off" | "order_before_tracking" | null;
@@ -114,6 +127,13 @@ export type OrderTracking = {
     scheduledAt: string | null;
     lateByMinutes: number | null;
   } | null;
+  /**
+   * When the driver should reach the client, whatever stop is next: before
+   * pickup it runs through the specialist (drive there, her few minutes to
+   * come down, then on to the client). Separate from `eta`, which the apps
+   * already in drivers' hands read as "the next stop".
+   */
+  clientEta: ClientEta | null;
   stats: TrackStats;
   milestones: TrackingMilestone[];
   flags: TrackingFlag[];
@@ -287,6 +307,81 @@ function tripWindow(progress: Row | null, status: string, plan: Row | null) {
   return { startedAt, endedAt, state };
 }
 
+/** Drive time between two points at this driver's pace; zero inside the fence. */
+async function drive(from: Point, to: Point, speed: { kph: number; live: boolean }, geofenceMetres: number) {
+  if (metresBetween(from, to) <= geofenceMetres) return { distanceMetres: 0, seconds: 0, osrm: false };
+  const route = await routeBetween(from, to, speed.kph);
+  // A real road route keeps its own duration; the straight-line estimate is
+  // re-timed with the speed this driver is actually making.
+  const seconds = route.source === "osrm" && !speed.live
+    ? route.durationSeconds
+    : Math.round(route.distanceMetres / (speed.kph / 3.6));
+  return { distanceMetres: route.distanceMetres, seconds, osrm: route.source === "osrm" };
+}
+
+async function clientEtaFor(input: {
+  latest: TrackFix;
+  fixes: TrackFix[];
+  places: { specialist: Point | null; client: Point };
+  progress: Row | null;
+  scheduledAt: string;
+  config: { fallback_speed_kph: number; geofence_metres: number; pickup_buffer_minutes: number };
+}): Promise<ClientEta> {
+  const nowMs = Date.now();
+  const fixMs = Date.parse(input.latest.at);
+  const here = { lat: input.latest.lat, lng: input.latest.lng };
+  const speed = plannedSpeedKph(input.fixes, nowMs, Number(input.config.fallback_speed_kph));
+  const fence = Number(input.config.geofence_metres);
+  const bufferMs = Number(input.config.pickup_buffer_minutes) * 60_000;
+  const { specialist, client } = input.places;
+  const arrivedMs = msOf(input.progress?.driver_arrived_at);
+
+  let atMs: number;
+  let distanceMetres: number;
+  let osrm: boolean;
+  let stage: ClientEta["stage"];
+  let approximate = false;
+  if (input.progress?.specialist_pickup_at) {
+    const leg = await drive(here, client, speed, fence);
+    atMs = Math.max(nowMs, fixMs + leg.seconds * 1_000);
+    ({ distanceMetres, osrm } = leg);
+    stage = "to_client";
+  } else if (arrivedMs != null) {
+    // Parked at the specialist's: what is left of her few minutes, then the drive.
+    const leg = await drive(specialist ?? here, client, speed, fence);
+    atMs = nowMs + Math.max(0, bufferMs - (nowMs - arrivedMs)) + leg.seconds * 1_000;
+    ({ distanceMetres, osrm } = leg);
+    stage = "waiting_specialist";
+  } else if (specialist) {
+    const [toSpecialist, toClient] = await Promise.all([
+      drive(here, specialist, speed, fence),
+      drive(specialist, client, speed, fence),
+    ]);
+    atMs = Math.max(nowMs, fixMs + toSpecialist.seconds * 1_000) + bufferMs + toClient.seconds * 1_000;
+    distanceMetres = toSpecialist.distanceMetres + toClient.distanceMetres;
+    osrm = toSpecialist.osrm && toClient.osrm;
+    stage = "to_specialist";
+  } else {
+    // No pickup pin: the detour to her is unknown, so this is the straight
+    // run to the client plus her usual few minutes — said to be approximate.
+    const leg = await drive(here, client, speed, fence);
+    atMs = Math.max(nowMs, fixMs + leg.seconds * 1_000) + bufferMs;
+    ({ distanceMetres, osrm } = leg);
+    stage = "to_specialist";
+    approximate = true;
+  }
+  return {
+    at: new Date(atMs).toISOString(),
+    remainingSeconds: Math.max(0, Math.round((atMs - nowMs) / 1_000)),
+    distanceMetres,
+    scheduledAt: input.scheduledAt,
+    lateByMinutes: Math.round((atMs - Date.parse(input.scheduledAt)) / 60_000),
+    stage,
+    approximate,
+    source: speed.live ? "live_speed" : osrm ? "osrm" : "estimate",
+  };
+}
+
 async function etaFor(input: {
   latest: TrackFix;
   fixes: TrackFix[];
@@ -298,21 +393,9 @@ async function etaFor(input: {
 }): Promise<NonNullable<OrderTracking["eta"]>> {
   const nowMs = Date.now();
   const from = { lat: input.latest.lat, lng: input.latest.lng };
-  const straight = metresBetween(from, input.point);
   const speed = plannedSpeedKph(input.fixes, nowMs, input.fallbackKph);
-  let distanceMetres = 0;
-  let seconds = 0;
-  let source: "live_speed" | "osrm" | "estimate" = speed.live ? "live_speed" : "estimate";
-  if (straight > input.geofenceMetres) {
-    const route = await routeBetween(from, input.point, speed.kph);
-    distanceMetres = route.distanceMetres;
-    // A real road route keeps its own duration; the straight-line estimate
-    // is re-timed with the speed this driver is actually making.
-    seconds = route.source === "osrm" && !speed.live
-      ? route.durationSeconds
-      : Math.round(route.distanceMetres / (speed.kph / 3.6));
-    if (route.source === "osrm") source = speed.live ? "live_speed" : "osrm";
-  }
+  const { distanceMetres, seconds, osrm } = await drive(from, input.point, speed, input.geofenceMetres);
+  const source: "live_speed" | "osrm" | "estimate" = speed.live ? "live_speed" : osrm ? "osrm" : "estimate";
   // Counted from the fix, not from now: a fix two minutes old already left
   // two minutes of the drive behind it.
   const atMs = Math.max(nowMs, Date.parse(input.latest.at) + seconds * 1_000);
@@ -400,6 +483,17 @@ export async function getOrderTracking(orderId: string): Promise<OrderTracking |
         geofenceMetres: Number(config.geofence_metres),
       }).catch(() => null)
     : null;
+  const clientPoint = places.client;
+  const clientEta = trip.state === "active" && latestFix && freshEnough && clientPoint
+    ? await clientEtaFor({
+        latest: latestFix,
+        fixes: usable,
+        places: { specialist: places.specialist, client: clientPoint },
+        progress,
+        scheduledAt: order.arrival_at,
+        config,
+      }).catch(() => null)
+    : null;
 
   const specialistTapDistance = tapDistanceFrom(usable, text(progress?.driver_arrived_at), places.specialist);
   const clientTapDistance = tapDistanceFrom(usable, text(progress?.driver_client_arrived_at), places.client);
@@ -465,8 +559,13 @@ export async function getOrderTracking(orderId: string): Promise<OrderTracking |
   if (enabled && trip.state !== "not_started" && trip.state !== "cancelled" && !usable.length) {
     flags.push({ code: "no_fixes" });
   }
-  if (eta?.lateByMinutes != null && eta.lateByMinutes > Number(config.grace_minutes)) {
-    flags.push({ code: "expected_late", minutes: eta.lateByMinutes, target: eta.target });
+  const grace = Number(config.grace_minutes);
+  if (eta?.target === "specialist" && eta.lateByMinutes != null && eta.lateByMinutes > grace) {
+    flags.push({ code: "expected_late", minutes: eta.lateByMinutes, target: "specialist" });
+  }
+  const clientLate = clientEta?.lateByMinutes ?? (eta?.target === "client" ? eta.lateByMinutes : null);
+  if (clientLate != null && clientLate > grace) {
+    flags.push({ code: "expected_late", minutes: clientLate, target: "client" });
   }
 
   const path = downsample(usable, MAX_PATH_POINTS).map((fix) => ({ lat: fix.lat, lng: fix.lng, at: fix.at }));
@@ -501,6 +600,7 @@ export async function getOrderTracking(orderId: string): Promise<OrderTracking |
       client: places.client,
     },
     eta,
+    clientEta,
     stats,
     milestones,
     flags,

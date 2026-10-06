@@ -52,6 +52,8 @@ export type CustomerServiceDailyActivity = {
    * than inferred from actions — a quiet day still shows the hours worked.
    */
   activeMinutes: number;
+  /** The part of it spent inside an open conversation, actually interacting. */
+  chatMinutes: number;
 };
 
 export type CustomerServiceEmployee = {
@@ -98,6 +100,11 @@ export type CustomerServiceEmployee = {
   medianHoursToBooking: number | null;
   /** Foreground app time across the whole selected period. */
   activeMinutes: number;
+  /**
+   * Time inside an open conversation with recent interaction — what the owner
+   * means by "working the chats". Zero for days before it was measured.
+   */
+  chatMinutes: number;
   /** Distinct stretches of use across the period — a rough shift count. */
   sessions: number;
   daily: CustomerServiceDailyActivity[];
@@ -120,6 +127,7 @@ export type CustomerServiceReport = {
     messagesSent: number;
     actions: number;
     activeMinutes: number;
+    chatMinutes: number;
     rekazBookings: number;
     bookingsFromHerChats: number;
     bookedRevenue: number;
@@ -195,6 +203,8 @@ type DailyPresenceRow = {
   team_member_id: string;
   day: string;
   active_seconds: number;
+  /** Absent until the chat-time migration lands. */
+  chat_seconds?: number;
   sessions: number;
 };
 type MessageRow = {
@@ -245,6 +255,7 @@ type MutableEmployee = CustomerServiceEmployee & {
       messages: number;
       actions: number;
       activeSeconds: number;
+      chatSeconds: number;
     }
   >;
 };
@@ -316,6 +327,37 @@ const EVENT_LABELS: Record<string, string> = {
   "conversation.bot_resumed": "أعادت المحادثة للبوت",
   "conversation.customer_renamed": "عدّلت اسم العميلة",
 };
+
+/**
+ * Per-day app and chat time. Falls back to app time alone while the
+ * chat-time column does not exist yet, so the report never breaks on deploy
+ * order.
+ */
+async function dailyPresenceRows(
+  admin: ReturnType<typeof getAdminSupabaseClient>,
+  memberIds: string[],
+  from: string,
+  to: string,
+): Promise<DailyPresenceRow[]> {
+  const load = (columns: string) =>
+    pageRows<DailyPresenceRow>((start, end) =>
+      admin
+        .from("team_member_app_daily_presence")
+        .select(columns)
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .in("team_member_id", memberIds)
+        .gte("day", from)
+        .lte("day", to)
+        .order("day", { ascending: true })
+        .range(start, end),
+    );
+  try {
+    return await load("team_member_id, day, active_seconds, chat_seconds, sessions");
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("chat_seconds")) throw error;
+    return load("team_member_id, day, active_seconds, sessions");
+  }
+}
 
 async function pageRows<T>(load: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
   const rows: T[] = [];
@@ -436,17 +478,7 @@ export async function getCustomerServiceReport(
       // is daily, so unlike every other figure here it cannot honour the
       // start/end time-of-day filter — it always covers the whole day.
       memberIds.length
-        ? pageRows<DailyPresenceRow>((from, to) =>
-            admin
-              .from("team_member_app_daily_presence")
-              .select("team_member_id, day, active_seconds, sessions")
-              .eq("restaurant_id", KIARA_RESTAURANT_ID)
-              .in("team_member_id", memberIds)
-              .gte("day", input.from)
-              .lte("day", input.to)
-              .order("day", { ascending: true })
-              .range(from, to),
-          )
+        ? dailyPresenceRows(admin, memberIds, input.from, input.to)
         : Promise.resolve([]),
       memberIds.length
         ? pageRows<MessageRow>((from, to) =>
@@ -659,6 +691,7 @@ export async function getCustomerServiceReport(
       bookedRevenue: 0,
       medianHoursToBooking: null,
       activeMinutes: 0,
+      chatMinutes: 0,
       sessions: 0,
       daily: [],
       recentActivity: [],
@@ -707,6 +740,7 @@ export async function getCustomerServiceReport(
       messages: 0,
       actions: 0,
       activeSeconds: 0,
+      chatSeconds: 0,
     };
     daily.conversations.add(inputActivity.conversationId);
     if (inputActivity.isMessage) daily.messages += 1;
@@ -841,10 +875,14 @@ export async function getCustomerServiceReport(
       messages: 0,
       actions: 0,
       activeSeconds: 0,
+      chatSeconds: 0,
     };
+    const chatSeconds = Number(row.chat_seconds) || 0;
     daily.activeSeconds += seconds;
+    daily.chatSeconds += chatSeconds;
     employee.dailyMap.set(row.day, daily);
     employee.activeMinutes += seconds / 60;
+    employee.chatMinutes += chatSeconds / 60;
     employee.sessions += Number(row.sessions) || 0;
   }
 
@@ -879,6 +917,7 @@ export async function getCustomerServiceReport(
     employee.bookedRevenue = credit.bookedRevenue;
     employee.medianHoursToBooking = credit.medianHoursToBooking;
     employee.activeMinutes = Math.round(employee.activeMinutes);
+    employee.chatMinutes = Math.round(employee.chatMinutes);
     employee.handledConversations = employee.handledIds.size;
     // Conversion is against the chats she actually worked, so a quiet day with
     // three chats and two bookings reads as the good day it was.
@@ -896,6 +935,7 @@ export async function getCustomerServiceReport(
         messagesSent: value.messages,
         actions: value.actions,
         activeMinutes: Math.round(value.activeSeconds / 60),
+        chatMinutes: Math.round(value.chatSeconds / 60),
       }))
       .sort((a, b) => b.day.localeCompare(a.day));
   }
@@ -936,6 +976,7 @@ export async function getCustomerServiceReport(
       messagesSent: output.reduce((sum, employee) => sum + employee.messagesSent, 0),
       actions: output.reduce((sum, employee) => sum + employee.actions, 0),
       activeMinutes: output.reduce((sum, employee) => sum + employee.activeMinutes, 0),
+      chatMinutes: output.reduce((sum, employee) => sum + employee.chatMinutes, 0),
       rekazBookings: output.reduce((sum, employee) => sum + employee.rekazBookings, 0),
       bookingsFromHerChats: output.reduce(
         (sum, employee) => sum + employee.bookingsFromHerChats,

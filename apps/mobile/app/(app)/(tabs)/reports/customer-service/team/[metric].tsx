@@ -34,7 +34,7 @@ const METRICS: Record<TeamMetric, { title: string; description: string; icon: Ic
   "no-reply": { title: "العميلات اللاتي لم يرددن", description: "المحادثات الواردة التي سُجلت نتيجتها أن العميلة لم ترد.", icon: "phone", last24: true },
   "awaiting-outcome": { title: "بانتظار النتيجة", description: "المحادثات الواردة التي لم تُسجل لها نتيجة نهائية بعد.", icon: "clock", last24: true },
   "active-now": { title: "النشطات الآن", description: "موظفات خدمة العملاء الظاهرات كنشطات وقت تحديث التقرير.", icon: "checkmark.circle" },
-  time: { title: "وقت الفريق بالتطبيق", description: "وقت ظهور التطبيق في الواجهة لكل موظفة خلال الفترة المختارة.", icon: "clock" },
+  time: { title: "وقت الفريق في المحادثات", description: "الوقت الذي كانت فيه كل موظفة داخل محادثة مفتوحة وتتفاعل معها (لمس أو كتابة خلال آخر ٣ دقائق) خلال الفترة المختارة.", icon: "clock" },
   conversations: { title: "المحادثات التي تعامل معها الفريق", description: "عدد المحادثات المختلفة التي تعاملت معها كل موظفة خلال الفترة المختارة.", icon: "message" },
   bookings: { title: "حجوزات ركاز", description: "الحجوزات التي سجلها ركاز باسم كل موظفة خلال الفترة المختارة.", icon: "calendar" },
   revenue: { title: "قيمة الحجوزات", description: "قيمة الحجوزات المنسوبة لكل موظفة، مع استبعاد الحجوزات الملغاة.", icon: "banknote" },
@@ -57,7 +57,7 @@ function asMetric(value: string): TeamMetric {
 
 function employeeValue(employee: CustomerServiceEmployee, metric: TeamMetric): string {
   if (metric === "active-now") return employee.activeNow ? "نشطة الآن" : "غير نشطة";
-  if (metric === "time") return employee.activeMinutes ? durationLabel(employee.activeMinutes) : "—";
+  if (metric === "time") return employee.chatMinutes ? durationLabel(employee.chatMinutes) : "—";
   if (metric === "conversations") return reportInteger.format(employee.handledConversations);
   if (metric === "bookings") return reportInteger.format(employee.rekazBookings ?? 0);
   if (metric === "revenue") return currency.format(employee.bookedRevenue ?? 0);
@@ -136,7 +136,7 @@ export default function CustomerServiceTeamMetricScreen() {
                 : metric === "active-now"
                   ? reportInteger.format(data.totals.activeNow)
                   : metric === "time"
-                    ? data.totals.activeMinutes ? durationLabel(data.totals.activeMinutes) : "—"
+                    ? data.totals.chatMinutes ? durationLabel(data.totals.chatMinutes) : "—"
                     : metric === "conversations"
                       ? reportInteger.format(data.totals.handledConversations)
                       : metric === "bookings"

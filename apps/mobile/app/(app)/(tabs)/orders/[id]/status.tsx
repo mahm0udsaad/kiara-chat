@@ -11,6 +11,7 @@ import {
 } from "react-native";
 
 import { PrimaryButton } from "@/components/primary-button";
+import { DriverTrackingCard } from "@/components/orders/driver-tracking-card";
 import { ServiceTimingCard } from "@/components/orders/service-timing-card";
 import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
@@ -452,6 +453,10 @@ export default function OrderStatusScreen() {
           </Text>
         ) : null}
       </Card>
+
+      {/* Where the driver is and when he reaches the client. Its own request:
+          a tracking failure stays inside this card. */}
+      {order.driver_id ? <DriverTrackingCard orderId={order.id} /> : null}
 
       {/* The chain itself. */}
       <View style={{ gap: spacing.sm }}>
