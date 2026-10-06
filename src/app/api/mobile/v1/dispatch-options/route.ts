@@ -4,6 +4,7 @@ import {
   listSpecialists,
 } from "@/lib/dispatch";
 import { listDistricts } from "@/lib/districts";
+import { canSeeTripCost } from "@/lib/orders-visibility";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -23,8 +24,8 @@ export async function GET(request: Request) {
       auth.session.role === "admin"
         ? getDispatchSettings()
         : Promise.resolve(null),
-      // Every employee may pick one; only admins see what it costs.
-      listDistricts({ activeOnly: true, withPrice: auth.session.role === "admin" }),
+      // Every employee may pick one; only the owner sees what it costs.
+      listDistricts({ activeOnly: true, withPrice: canSeeTripCost(auth.session) }),
     ]);
     return mobileData({ specialists, drivers, settings, districts });
   } catch (error) {

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getKiaraSession } from "@/lib/tenant";
 import { listDriverOrders } from "@/lib/dispatch";
-import { stripPrices } from "@/lib/orders-visibility";
+import { canSeeTripCost, stripPrices } from "@/lib/orders-visibility";
 
 /** The orders list, refetched by the page's refresh button. */
 export async function GET() {
@@ -11,7 +11,7 @@ export async function GET() {
   try {
     const orders = await listDriverOrders();
     return NextResponse.json({
-      orders: session.role === "admin" ? orders : stripPrices(orders),
+      orders: canSeeTripCost(session) ? orders : stripPrices(orders),
     });
   } catch (e) {
     return NextResponse.json(

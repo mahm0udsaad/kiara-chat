@@ -6,6 +6,7 @@ import {
   listSpecialists,
 } from "@/lib/dispatch";
 import { listDistricts } from "@/lib/districts";
+import { canSeeTripCost } from "@/lib/orders-visibility";
 
 /**
  * The order sheet used to make separate requests for specialists, drivers, and
@@ -24,8 +25,8 @@ export async function GET() {
     session.role === "admin"
       ? getDispatchSettings()
       : Promise.resolve(null),
-    // Every employee may pick one; only admins see what it costs.
-    listDistricts({ activeOnly: true, withPrice: session.role === "admin" }),
+    // Every employee may pick one; only the owner sees what it costs.
+    listDistricts({ activeOnly: true, withPrice: canSeeTripCost(session) }),
   ]);
 
   return NextResponse.json({ specialists, drivers, settings, districts });

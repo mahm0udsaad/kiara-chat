@@ -65,7 +65,8 @@ export async function GET(request: Request) {
       capabilities: {
         canTakeConversations: Boolean(session.teamMemberId),
         canManageTeam: session.role === "admin",
-        canViewOrderPrices: session.role === "admin",
+        // Trip costs are the owner's alone, managers included.
+        canViewOrderPrices: session.isOwner,
         canManageDistricts: session.role === "admin",
         canViewReports: session.isOwner,
       },

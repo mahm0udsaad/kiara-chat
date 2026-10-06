@@ -7,6 +7,7 @@ import {
 } from "@/lib/dispatch";
 import { getKiaraSession } from "@/lib/tenant";
 import { OperationalCommandError } from "@/lib/operational-commands";
+import { canSeeTripCost } from "@/lib/orders-visibility";
 import {
   DISTRICT_UNAVAILABLE_MESSAGE,
   isDistrictUnavailable,
@@ -89,8 +90,8 @@ export async function PATCH(
     patch.returnDriverId = (String(body.returnDriverId ?? "").trim() || null) as string | null;
   }
   if (body?.price !== undefined) {
-    if (session.role !== "admin") {
-      return NextResponse.json({ error: "الأجرة للمالك أو المدير فقط" }, { status: 403 });
+    if (!canSeeTripCost(session)) {
+      return NextResponse.json({ error: "تكلفة المشوار للمالكة فقط" }, { status: 403 });
     }
     const price = body.price === null || body.price === "" ? null : Number(body.price);
     if (price !== null && (!Number.isFinite(price) || price < 0)) {
@@ -99,8 +100,8 @@ export async function PATCH(
     patch.price = price;
   }
   if (body?.returnPrice !== undefined) {
-    if (session.role !== "admin") {
-      return NextResponse.json({ error: "أجرة العودة للمالك أو المدير فقط" }, { status: 403 });
+    if (!canSeeTripCost(session)) {
+      return NextResponse.json({ error: "تكلفة العودة للمالكة فقط" }, { status: 403 });
     }
     const returnPrice = body.returnPrice === null || body.returnPrice === ""
       ? null
@@ -151,10 +152,9 @@ export async function PATCH(
     });
     return NextResponse.json({
       ok: true,
-      order:
-        session.role === "admin"
-          ? order
-          : { ...order, price: null, return_price: null },
+      order: canSeeTripCost(session)
+        ? order
+        : { ...order, price: null, return_price: null },
     });
   } catch (error) {
     if (isDistrictUnavailable(error)) {
@@ -201,7 +201,7 @@ export async function DELETE(
 
     return NextResponse.json({
       ok: true,
-      order: session.role === "admin" ? order : { ...order, price: null },
+      order: canSeeTripCost(session) ? order : { ...order, price: null, return_price: null },
     });
   } catch (error) {
     return NextResponse.json(

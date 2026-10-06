@@ -4,7 +4,7 @@ import {
   getReservationsSnapshot,
   withFixedTestReservation,
 } from "@/lib/reservations";
-import { stripPrices } from "@/lib/orders-visibility";
+import { canSeeTripCost, stripPrices } from "@/lib/orders-visibility";
 import { listReservationFollowUps } from "@/lib/reservation-follow-up-server";
 import { OrdersClient } from "@/components/orders-client";
 
@@ -21,6 +21,7 @@ const TODAY_KEY_FMT = new Intl.DateTimeFormat("en-CA", {
 export default async function OrdersPage() {
   const session = await requireKiaraSession();
   const isAdmin = session.role === "admin";
+  const showTripCost = canSeeTripCost(session);
   const todayKey = TODAY_KEY_FMT.format(new Date());
   const [orders, rawSnapshot] = await Promise.all([
     listDriverOrders(),
@@ -34,8 +35,9 @@ export default async function OrdersPage() {
 
   return (
     <OrdersClient
-      initialOrders={isAdmin ? orders : stripPrices(orders)}
+      initialOrders={showTripCost ? orders : stripPrices(orders)}
       isAdmin={isAdmin}
+      canSeeTripCost={showTripCost}
       todayKey={todayKey}
       reservationsSnapshot={snapshot}
       initialReservationFollowUps={reservationFollowUps}

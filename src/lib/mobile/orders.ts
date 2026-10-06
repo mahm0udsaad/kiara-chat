@@ -3,7 +3,7 @@ import {
   type MobileOrder,
   type MobilePage,
 } from "@/lib/mobile/contracts";
-import { stripPrices } from "@/lib/orders-visibility";
+import { canSeeTripCost, stripPrices } from "@/lib/orders-visibility";
 import { phoneMatches } from "@/lib/phone";
 import { type KiaraSession } from "@/lib/tenant";
 
@@ -13,7 +13,7 @@ export function orderForMobileSession(
   order: MobileOrder,
   session: KiaraSession
 ): MobileOrder {
-  return session.role === "admin" ? order : stripPrices([order])[0]!;
+  return canSeeTripCost(session) ? order : stripPrices([order])[0]!;
 }
 
 export async function getMobileOrderById(
@@ -42,7 +42,7 @@ export async function listMobileOrdersInRange(options: {
     to: options.to,
     limit: MAX_MOBILE_ORDER_SCAN,
   });
-  return options.session.role === "admin" ? orders : stripPrices(orders);
+  return canSeeTripCost(options.session) ? orders : stripPrices(orders);
 }
 
 function matchesOrderSearch(order: MobileOrder, rawQuery: string): boolean {
@@ -70,7 +70,7 @@ export async function listMobileOrders(options: {
   // screen. Prices remain owner/manager-only — that is a role rule about money,
   // not about whose chat it is.
   let visible = await listDriverOrders(MAX_MOBILE_ORDER_SCAN);
-  if (options.session.role !== "admin") visible = stripPrices(visible);
+  if (!canSeeTripCost(options.session)) visible = stripPrices(visible);
 
   const matching = visible.filter((order) =>
     matchesOrderSearch(order, options.search)

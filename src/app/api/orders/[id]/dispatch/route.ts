@@ -8,6 +8,7 @@ import {
 import { isLocationUnset } from "@/lib/format";
 import { getKiaraSession } from "@/lib/tenant";
 import { OperationalCommandError } from "@/lib/operational-commands";
+import { canSeeTripCost } from "@/lib/orders-visibility";
 import {
   DISTRICT_UNAVAILABLE_MESSAGE,
   isDistrictUnavailable,
@@ -208,7 +209,7 @@ export async function POST(
       ok: true,
       ...result,
       order:
-        session.role === "admin"
+        canSeeTripCost(session)
           ? result.order
           : { ...result.order, price: null, return_price: null },
     });

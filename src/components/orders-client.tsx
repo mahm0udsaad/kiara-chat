@@ -2,9 +2,11 @@
 
 import { OrderServiceChanges } from "@/components/order-service-changes";
 import {
+  createContext,
   lazy,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -168,15 +170,20 @@ function statusMeta(order: DriverOrderRow): {
   return { label: "استلام البيانات", variant: "outline" };
 }
 
+/** Trip costs are the owner's alone; managers run orders without seeing them. */
+const TripCostVisibility = createContext(false);
+
 export function OrdersClient({
   initialOrders,
   isAdmin,
+  canSeeTripCost = false,
   todayKey,
   reservationsSnapshot = null,
   initialReservationFollowUps = {},
 }: {
   initialOrders: DriverOrderRow[];
   isAdmin: boolean;
+  canSeeTripCost?: boolean;
   todayKey: string;
   reservationsSnapshot?: ReservationsSnapshot | null;
   initialReservationFollowUps?: ReservationFollowUpMap;
@@ -333,6 +340,7 @@ export function OrdersClient({
     selectedDay === todayKey ? "طلبات اليوم" : DAY_FMT.format(dateOfKey(selectedDay));
 
   return (
+    <TripCostVisibility.Provider value={canSeeTripCost}>
     <div className="dashboard-page max-w-6xl">
       <div className="dashboard-page-header">
         <div>
@@ -364,7 +372,7 @@ export function OrdersClient({
         <StatCard icon={Send} label="تم تأكيدها" value={stats.sent} />
         <StatCard icon={AlertTriangle} label="تحتاج مراجعة" value={stats.failed} />
         <StatCard icon={Clock3} label="السائق متأخر" value={stats.late} />
-        {isAdmin ? (
+        {canSeeTripCost ? (
           <StatCard
             icon={Wallet}
             label="إجمالي الأجرة"
@@ -553,6 +561,7 @@ export function OrdersClient({
         </Tabs>
       )}
     </div>
+    </TripCostVisibility.Provider>
   );
 }
 
@@ -829,6 +838,7 @@ function OrderDetailsSheet({
 }) {
   const arrival = new Date(order.arrival_at);
   const status = statusMeta(order);
+  const canSeeTripCost = useContext(TripCostVisibility);
 
   const [date, setDate] = useState(() => toDateInput(arrival));
   const [time, setTime] = useState(() => toTimeInput(arrival));
@@ -1160,7 +1170,7 @@ function OrderDetailsSheet({
                     ) : null}
                     {districts.map((item) => (
                       <SelectItem key={item.id} value={item.id}>
-                        {isAdmin && item.trip_price != null
+                        {canSeeTripCost && item.trip_price != null
                           ? `${item.name} — ${item.trip_price} ر.س`
                           : item.name}
                       </SelectItem>
@@ -1169,7 +1179,7 @@ function OrderDetailsSheet({
                 </SelectContent>
               </Select>
               <FieldDescription>
-                {isAdmin
+                {canSeeTripCost
                   ? order.price == null
                     ? "تكلفة المشوار تُحسب تلقائيًا من الحي. بدون حي لا تُسجل تكلفة."
                     : `تكلفة المشوار الحالية: ${order.price} ر.س${
