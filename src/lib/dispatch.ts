@@ -47,7 +47,7 @@ import {
   type SpecialistFieldCopy,
 } from "@/lib/field-notification-copy";
 import { uploadBase64Media } from "@/lib/storage-media";
-import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
+import { isOpenWaConfigured, ordersNumber } from "@/lib/orders-number";
 import type {
   Specialist,
   Driver,
@@ -1698,7 +1698,7 @@ async function deliverOutboxText(input: {
     return { sent: false, error: "OPENWA_NOT_CONFIGURED" };
   }
   try {
-    await openWaTransport.sendText(
+    await ordersNumber.sendText(
       claimed.event.payload.recipient,
       claimed.event.payload.body,
     );
@@ -1868,7 +1868,7 @@ export async function dispatchBooking(
   // order either way — so each of them still has it in the app when WhatsApp
   // is down.
   if (specialistDelivery.sent && input.specialistVoice && context.specialist.phone) {
-    await openWaTransport
+    await ordersNumber
       .sendMedia(context.specialist.phone, {
         base64: input.specialistVoice.base64,
         contentType: input.specialistVoice.contentType,
@@ -1882,7 +1882,7 @@ export async function dispatchBooking(
     input.specialistVoice &&
     context.secondSpecialist?.phone
   ) {
-    await openWaTransport
+    await ordersNumber
       .sendMedia(context.secondSpecialist.phone, {
         base64: input.specialistVoice.base64,
         contentType: input.specialistVoice.contentType,
@@ -1892,7 +1892,7 @@ export async function dispatchBooking(
       .catch(() => undefined);
   }
   if (driverDelivery.sent && input.doorPhoto && context.driver.phone) {
-    await openWaTransport
+    await ordersNumber
       .sendMedia(context.driver.phone, {
         base64: input.doorPhoto.base64,
         contentType: input.doorPhoto.contentType,
@@ -2181,7 +2181,7 @@ export async function updateDriverOrder(
             .eq("restaurant_id", KIARA_RESTAURANT_ID)
             .maybeSingle();
           if (res.data?.phone) {
-            await openWaTransport.sendText(
+            await ordersNumber.sendText(
               res.data.phone,
               `🚗 *تحديث في الطلب*\n\nتم تعديل تفاصيل الطلب لـ ${nameStr}.\n🕒 موعد الوصول: ${arrival}\n📍 الموقع: ${location}`,
             );
@@ -2196,7 +2196,7 @@ export async function updateDriverOrder(
             .eq("restaurant_id", KIARA_RESTAURANT_ID)
             .maybeSingle();
           if (res.data?.phone) {
-            await openWaTransport.sendText(
+            await ordersNumber.sendText(
               res.data.phone,
               `🚗 *رحلة عودة جديدة*\n\nستعيد الأخصائية من منزل ${nameStr} بعد انتهاء الخدمة.\n🕒 موعد الزيارة: ${arrival}\n📍 الموقع: ${location}`,
             );
@@ -2204,7 +2204,7 @@ export async function updateDriverOrder(
         }
 
         if (specialistPhone && specialistCopy) {
-          await openWaTransport.sendText(specialistPhone, specialistCopy.whatsappBody);
+          await ordersNumber.sendText(specialistPhone, specialistCopy.whatsappBody);
         }
       } catch {
         // WhatsApp errors are non-fatal
@@ -2317,7 +2317,7 @@ export async function cancelDriverOrder(
             .eq("restaurant_id", KIARA_RESTAURANT_ID)
             .maybeSingle();
           if (res.data?.phone) {
-            await openWaTransport.sendText(
+            await ordersNumber.sendText(
               res.data.phone,
               `❌ *إلغاء رحلة*\n\nتم إلغاء الرحلة المخصصة لك لـ ${nameStr}.`,
             );
@@ -2325,7 +2325,7 @@ export async function cancelDriverOrder(
         }
 
         if (specialistPhone && specialistCopy) {
-          await openWaTransport.sendText(specialistPhone, specialistCopy.whatsappBody);
+          await ordersNumber.sendText(specialistPhone, specialistCopy.whatsappBody);
         }
       } catch {
         // WhatsApp errors are non-fatal
@@ -2385,7 +2385,7 @@ export async function resendDriverOrder(
   const phone = driver?.phone as string | null | undefined;
   let whatsappSent = false;
   if (note && phone && isOpenWaConfigured()) {
-    whatsappSent = await openWaTransport
+    whatsappSent = await ordersNumber
       .sendText(phone, note)
       .then(() => true)
       .catch(() => false);

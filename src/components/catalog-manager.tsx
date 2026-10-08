@@ -1,7 +1,18 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { BookOpen, Check, Eye, EyeOff, Loader2, Pencil, Plus, Search, X } from "lucide-react";
+import {
+  BookOpen,
+  Check,
+  Eye,
+  EyeOff,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { CatalogThumb } from "@/components/catalog-thumb";
 import { cn } from "@/lib/utils";
@@ -43,8 +54,109 @@ export function CatalogManager({ initial }: { initial: CatalogItem[] }) {
         إدارة الباقات والخدمات
       </button>
 
+      <RekazSync onItems={setItems} />
+
       <CatalogSheet open={open} onClose={() => setOpen(false)} items={items} onItems={setItems} />
     </section>
+  );
+}
+
+type SyncResult = {
+  rekazCount: number;
+  added: string[];
+  updated: { name: string; changes: string[] }[];
+  notOnRekaz: string[];
+};
+
+/**
+ * Pull new and changed services from Rekaz. Rekaz is where the salon adds and
+ * prices services; without this a new one only reached the app when someone
+ * ran a script by hand.
+ */
+function RekazSync({ onItems }: { onItems: (items: CatalogItem[]) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<SyncResult | null>(null);
+
+  const sync = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/catalog/sync", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || "تعذّر جلب الخدمات من ركاز");
+      setResult(body as SyncResult);
+      const list = await fetch("/api/catalog?all=1").then((r) => r.json());
+      if (Array.isArray(list?.items)) onItems(list.items);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "تعذّر جلب الخدمات من ركاز");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => void sync()}
+        disabled={busy}
+        className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border px-4 text-sm font-medium text-[var(--brand)] disabled:opacity-60"
+      >
+        {busy ? (
+          <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+        ) : (
+          <RefreshCw size={15} aria-hidden="true" />
+        )}
+        {busy ? "جارٍ جلب الخدمات من ركاز…" : "تحديث الخدمات من ركاز"}
+      </button>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {result ? <SyncSummary result={result} /> : null}
+    </div>
+  );
+}
+
+function SyncSummary({ result }: { result: SyncResult }) {
+  const nothing = !result.added.length && !result.updated.length;
+  return (
+    <div className="space-y-2 rounded-xl border p-3 text-sm" role="status">
+      <p className="text-[var(--foreground)]">
+        {nothing
+          ? `الخدمات مطابقة لركاز (${result.rekazCount.toLocaleString("ar")} خدمة) — لا جديد.`
+          : `أُضيفت ${result.added.length.toLocaleString("ar")} وحُدّثت ${result.updated.length.toLocaleString("ar")} من ${result.rekazCount.toLocaleString("ar")} خدمة في ركاز.`}
+      </p>
+      {result.added.length ? (
+        <ul className="space-y-0.5 text-[var(--foreground)]">
+          {result.added.map((name) => (
+            <li key={name}>+ {name}</li>
+          ))}
+        </ul>
+      ) : null}
+      {result.updated.length ? (
+        <ul className="space-y-0.5 text-muted-foreground">
+          {result.updated.map((row) => (
+            <li key={row.name}>
+              {row.name} — {row.changes.join("، ")}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {result.notOnRekaz.length ? (
+        <details className="text-muted-foreground">
+          <summary className="cursor-pointer">
+            {result.notOnRekaz.length.toLocaleString("ar")} خدمة ظاهرة هنا وغير موجودة في موقع ركاز
+          </summary>
+          <p className="mt-1 text-xs">
+            لم تُخفَ تلقائيًا — قد تكون عرضًا أو قسيمة غير معروضة في الموقع. أخفي ما لم يعد متاحًا من «إدارة الباقات والخدمات».
+          </p>
+          <ul className="mt-1 space-y-0.5 text-xs">
+            {result.notOnRekaz.map((name) => (
+              <li key={name}>{name}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
   );
 }
 

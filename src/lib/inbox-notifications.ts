@@ -229,7 +229,8 @@ export type InboxAlertKind =
   | "inbox_message"
   | "inbox_unassigned"
   | "inbox_danger"
-  | "order_step";
+  | "order_step"
+  | "orders_number";
 
 async function sendPush(input: {
   teamMemberIds: string | string[];
@@ -244,19 +245,22 @@ async function sendPush(input: {
   const tokens = await activeInboxTokens(input.teamMemberIds);
   if (!tokens.length) return;
 
-  // An order alert opens the visit; everything else opens the chat. Both
-  // carry their id beside the url so the app can route without parsing it.
+  // An order alert opens the visit, a chat alert opens the chat. Both carry
+  // their id beside the url so the app can route without parsing it. An alert
+  // about neither carries no url, and a tap simply opens the app.
   const data = input.orderId
     ? {
         type: input.kind,
         orderId: input.orderId,
         url: `/orders/${input.orderId}`,
       }
-    : {
-        type: input.kind,
-        conversationId: input.conversationId,
-        url: `/inbox/${input.conversationId}`,
-      };
+    : input.conversationId
+      ? {
+          type: input.kind,
+          conversationId: input.conversationId,
+          url: `/inbox/${input.conversationId}`,
+        }
+      : { type: input.kind };
 
   const messages = tokens.map((to) => ({
     to,
@@ -620,4 +624,45 @@ export async function notifyOrderStepWatchers(input: {
   } catch (cause) {
     console.error("[inbox-notifications] order step alert failed", input.orderId, cause);
   }
+}
+
+/**
+ * Who is told when the orders number stops sending.
+ *
+ * Like the order-step watchers, this is a named job rather than a role: حنان
+ * and وسيله are the two who can re-link the number. Override with
+ * `ORDERS_NUMBER_WATCHERS` (comma-separated team-member ids) to hand it to
+ * someone else without a deploy; an empty value turns the alerts off.
+ */
+const DEFAULT_ORDERS_NUMBER_WATCHERS = [
+  "a686f770-5994-4d1e-9c9b-4ff33b2a1bc2", // حنان
+  "e50f02d1-0033-44b7-b705-68a95bf99a82", // وسيله
+];
+
+function ordersNumberWatcherIds(): string[] {
+  const configured = process.env.ORDERS_NUMBER_WATCHERS;
+  if (configured === undefined) return DEFAULT_ORDERS_NUMBER_WATCHERS;
+  return configured
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Tell the watchers about the orders number's connection. Throws when the push
+ * could not be handed to Expo, so the caller can leave the alert un-recorded
+ * and try again on the next failed send.
+ */
+export async function notifyOrdersNumberWatchers(input: {
+  title: string;
+  body: string;
+}): Promise<void> {
+  const watchers = ordersNumberWatcherIds();
+  if (!watchers.length) return;
+  await sendPush({
+    teamMemberIds: watchers,
+    kind: "orders_number",
+    title: input.title,
+    body: input.body,
+  });
 }

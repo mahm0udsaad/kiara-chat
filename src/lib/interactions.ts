@@ -16,10 +16,10 @@ import {
   isProviderConfigured,
   transportErrorCode,
   transportFor,
-  transportForConversation,
 } from "@/lib/transport";
 import type { MessageTransport, SendResult } from "@/lib/transport/types";
 import { getServiceWindow, isWindowClosedError } from "@/lib/transport/window";
+import { inboxTransportFor, staffKindForConversation } from "@/lib/staff-threads";
 import {
   contentSidFor,
   greetingName,
@@ -67,7 +67,8 @@ function deliverInBackground(
     // Resolving which number answers this thread costs a read, so it happens
     // here rather than on the send path — the message row already exists and
     // the UI is showing it as queued either way.
-    const transport = await transportForConversation(conversationId);
+    // Driver and specialist threads answer from the orders number, not Meta.
+    const transport = await inboxTransportFor(conversationId);
     const configured = isProviderConfigured(transport.provider);
     const { data: convRow } = await admin
       .from("conversations")
@@ -493,7 +494,8 @@ function deliverTextReply(params: {
 }): void {
   after(async () => {
     const admin = getAdminSupabaseClient();
-    const transport = await transportForConversation(params.conversationId);
+    // Driver and specialist threads answer from the orders number, not Meta.
+    const transport = await inboxTransportFor(params.conversationId);
     const configured = isProviderConfigured(transport.provider);
 
     // The number she wrote to, recorded from the inbound message itself. Sending
@@ -714,6 +716,14 @@ export async function sendTemplateReply(
 ): Promise<{ messageId: string | null; sent: boolean; error: string | null }> {
   if (inboxProvider() === "openwa") {
     throw new Error("القوالب المعتمدة متوقفة مؤقتًا. يمكنك إرسال رسالة نصية مباشرة عبر واتساب المرتبط.");
+  }
+  // A template is a paid Business message whose only purpose is reopening the
+  // 24-hour window. Field-team threads run on the orders number, which has no
+  // window, so sending one here would only spend money to say less.
+  if (await staffKindForConversation(conversationId)) {
+    throw new Error(
+      "محادثات السائقين والأخصائيات تُرسل من رقم الطلبات بدون قيد الـ24 ساعة — اكتبي الرسالة مباشرة، لا حاجة لقالب.",
+    );
   }
   const admin = getAdminSupabaseClient();
   const { data: conv } = await admin

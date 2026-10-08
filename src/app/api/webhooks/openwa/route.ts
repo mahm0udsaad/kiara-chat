@@ -1,5 +1,7 @@
 import { isOpenWaEvent } from "@/lib/transport/openwa-events";
 import { inboxProvider } from "@/lib/transport/inbox-provider";
+import { staffKindForConversation, staffKindForPhone } from "@/lib/staff-threads";
+import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 /**
  * POST /api/webhooks/openwa
  * Ingest endpoint for the persistent OpenWA service. Server-to-server, bearer
@@ -57,6 +59,59 @@ function normalizeE164(value: string): string | null {
   return digits ? `+${digits}` : null;
 }
 
+/**
+ * Is this event from (or to) a driver or specialist? While customers are on
+ * the Business number, those are the only chats the orders number carries —
+ * see `src/lib/staff-threads.ts`.
+ */
+async function isFieldTeamEvent(event: OpenWaEvent): Promise<boolean> {
+  if (event.type !== "message" && event.type !== "presence") return false;
+  if (event.type === "message" && event.chatJid?.trim().endsWith("@g.us")) return false;
+  const phone = normalizeE164(event.customerPhone ?? "");
+  if (phone) return Boolean(await staffKindForPhone(phone));
+  const lid = event.chatLid?.trim();
+  if (!lid) return false;
+  const conv = await findConversationByLid(lid);
+  return Boolean(conv && (await staffKindForConversation(conv.id)));
+}
+
+/** How long after the app records a send its own echo can still arrive. */
+const ECHO_WINDOW_MS = 2 * 60_000;
+
+/**
+ * The engine echoes every message the number sends, including the ones this
+ * app just sent. Those are already stored — but the WhatsApp id is written
+ * only once the send call returns, and the echo can beat it here. Without
+ * this, the dedupe above misses and the reply shows twice. Claim the app's
+ * own pending row instead: same thread, same text, sent moments ago, no id yet.
+ */
+async function claimPendingAppSend(
+  conversationId: string,
+  waMessageId: string,
+  body: string,
+): Promise<boolean> {
+  const admin = getAdminSupabaseClient();
+  const { data } = await admin
+    .from("messages")
+    .select("id, content")
+    .eq("conversation_id", conversationId)
+    .eq("role", "agent")
+    .is("external_message_sid", null)
+    .eq("metadata->>source", "app")
+    .gte("created_at", new Date(Date.now() - ECHO_WINDOW_MS).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(5);
+  const pending = (data ?? []).find((row) => (row.content ?? "") === body);
+  if (!pending) return false;
+  const { data: claimed } = await admin
+    .from("messages")
+    .update({ external_message_sid: waMessageId })
+    .eq("id", pending.id)
+    .is("external_message_sid", null)
+    .select("id");
+  return Boolean(claimed?.length);
+}
+
 export async function POST(request: NextRequest) {
   if (!authorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -74,9 +129,15 @@ export async function POST(request: NextRequest) {
   }
 
   // A rollback must not let the linked device replay into the active inbox.
-  // Acks remain useful for messages already sent before the switch.
+  // Acks remain useful for messages already sent before the switch. The one
+  // exception is the field team: their chats run on this number on purpose,
+  // so their messages are taken in while customers who write here are not.
+  let fieldTeamOnly = false;
   if (event.type !== "ack" && inboxProvider() !== "openwa") {
-    return NextResponse.json({ ok: true, standby: true });
+    if (!(await isFieldTeamEvent(event))) {
+      return NextResponse.json({ ok: true, standby: true });
+    }
+    fieldTeamOnly = true;
   }
 
   // Delivery/read acks.
@@ -150,6 +211,10 @@ export async function POST(request: NextRequest) {
   }
   const conversationId = conv.id;
 
+  if (event.fromMe && (await claimPendingAppSend(conversationId, event.waMessageId, event.body || ""))) {
+    return NextResponse.json({ deduped: true });
+  }
+
   let messageType = event.messageType || "text";
   const mediaSlots: StoredMediaSlot[] = [];
   if (event.media?.length) {
@@ -212,7 +277,11 @@ export async function POST(request: NextRequest) {
   }
 
   // fromMe + new id => sent from the phone app (our sends are deduped above).
-  if (event.fromMe && isLive(event.timestamp)) await markHandledOnWhatsApp(conv.id);
+  // Not for the field team: the orders number also sends their order
+  // notifications, and each of those echoes back here as a phone-app send.
+  if (event.fromMe && !fieldTeamOnly && isLive(event.timestamp)) {
+    await markHandledOnWhatsApp(conv.id);
+  }
 
   // Hand the message to the auto-reply bot off the response path — the engine
   // gets its 200 immediately and a slow model call can't stall ingestion. Live
@@ -221,7 +290,8 @@ export async function POST(request: NextRequest) {
   // than staying quiet.
   // Groups are excluded outright: the assistant answers a customer asking a
   // question, and a staff group is a room full of people talking to each other.
-  if (!event.fromMe && !groupJid && phone && isLive(event.timestamp)) {
+  // Nor the field team: a driver saying "وصلت" is not a customer question.
+  if (!event.fromMe && !groupJid && !fieldTeamOnly && phone && isLive(event.timestamp)) {
     after(() =>
       runBotTurn({
         conversationId,

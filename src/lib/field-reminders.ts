@@ -26,7 +26,7 @@ import {
 } from "@/lib/field-staff";
 import { formatDuration, TRIP_TYPE_LABEL } from "@/lib/format";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
-import { isOpenWaConfigured, openWaTransport } from "@/lib/transport/openwa";
+import { isOpenWaConfigured, ordersNumber } from "@/lib/orders-number";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import type { FieldOrderProgressState, TripType } from "@/lib/types";
 
@@ -442,7 +442,7 @@ export async function sendFieldReminder(input: {
         })
       : Promise.resolve(null),
     wantsWhatsapp && person.phone
-      ? openWaTransport
+      ? ordersNumber
           .sendText(person.phone, message)
           .then(() => ({ sent: true, error: null as string | null }))
           .catch((error) => ({

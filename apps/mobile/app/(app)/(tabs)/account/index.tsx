@@ -12,7 +12,7 @@ import { Card, Divider } from "@/components/ui/card";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { rtlText, spacing, type } from "@/constants/theme";
-import { useBootstrap } from "@/lib/queries";
+import { useBootstrap, useSyncCatalogFromRekaz, type CatalogSyncResult } from "@/lib/queries";
 import {
   notificationStateLabel,
   unregisterInboxNotifications,
@@ -44,6 +44,7 @@ export default function AccountScreen() {
   const notification = useNotificationStatus();
   const notificationsOn = notification.registration?.state === "registered";
   const notificationsMuted = notification.registration?.state === "muted";
+  const catalogSync = useSyncCatalogFromRekaz();
 
   if (bootstrap.isLoading) return <LoadingScreen />;
   if (bootstrap.isError || !bootstrap.data) {
@@ -218,6 +219,32 @@ export default function AccountScreen() {
         </View>
       ) : null}
 
+      {/* Rekaz is where the salon adds and prices services; this brings a new
+          one into the app's service list without waiting for anyone. */}
+      <View style={{ gap: spacing.sm }}>
+        <SectionHeader title="الخدمات" />
+        <Card>
+          <Text style={{ ...type.footnote, color: colors.textSecondary, ...rtlText }}>
+            اجلبي الخدمات الجديدة وتحديثات الأسعار والصور من ركاز إلى قائمة الخدمات في التطبيق.
+          </Text>
+          <PrimaryButton
+            label="تحديث الخدمات من ركاز"
+            loadingLabel="جارٍ جلب الخدمات من ركاز…"
+            loading={catalogSync.isPending}
+            variant="tinted"
+            icon="arrow.clockwise"
+            testID="account-catalog-sync"
+            onPress={() => catalogSync.mutate()}
+          />
+          {catalogSync.isError ? (
+            <Text style={{ ...type.footnote, color: colors.danger, ...rtlText }}>
+              {catalogSync.error?.message ?? "تعذّر جلب الخدمات من ركاز"}
+            </Text>
+          ) : null}
+          {catalogSync.data ? <CatalogSyncSummary result={catalogSync.data} /> : null}
+        </Card>
+      </View>
+
       {/* Notifications — a phone that never registered used to look identical
           to one that did, and simply received nothing. */}
       <View style={{ gap: spacing.sm }}>
@@ -298,5 +325,35 @@ export default function AccountScreen() {
         onPress={confirmLogout}
       />
     </ScrollView>
+  );
+}
+
+function CatalogSyncSummary({ result }: { result: CatalogSyncResult }) {
+  const { colors } = useTheme();
+  const nothing = !result.added.length && !result.updated.length;
+  const line = { ...type.footnote, color: colors.textSecondary, ...rtlText };
+  return (
+    <View style={{ gap: spacing.xs }} accessibilityLiveRegion="polite">
+      <Text style={{ ...type.subhead, color: colors.text, ...rtlText }}>
+        {nothing
+          ? `الخدمات مطابقة لركاز (${result.rekazCount} خدمة) — لا جديد.`
+          : `أُضيفت ${result.added.length} وحُدّثت ${result.updated.length} من ${result.rekazCount} خدمة في ركاز.`}
+      </Text>
+      {result.added.map((name) => (
+        <Text key={`added-${name}`} style={{ ...line, color: colors.text }}>
+          + {name}
+        </Text>
+      ))}
+      {result.updated.map((row) => (
+        <Text key={`updated-${row.name}`} style={line}>
+          {row.name} — {row.changes.join("، ")}
+        </Text>
+      ))}
+      {result.notOnRekaz.length ? (
+        <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
+          {`${result.notOnRekaz.length} خدمة ظاهرة في التطبيق وغير موجودة في موقع ركاز. لم تُخفَ تلقائيًا — أخفي ما لم يعد متاحًا من إعدادات الباقات في لوحة كيارا.`}
+        </Text>
+      ) : null}
+    </View>
   );
 }

@@ -268,6 +268,9 @@ const ConversationRow = memo(function ConversationRow({
 
   const isGroup = conversation.isGroup ?? false;
   const replyWindowOpen = useWhatsAppReplyWindow(conversation.last_inbound_at);
+  // Driver and specialist chats run on the orders number, which has no
+  // 24-hour window, so the badge would only ever show a lock that isn't there.
+  const showReplyWindow = !isGroup && !staff;
   // Nobody owes a group a reply — chatter in it is not an unanswered customer —
   // so the overdue clock is off here, in the row's spoken label as well as its
   // badge.
@@ -305,7 +308,7 @@ const ConversationRow = memo(function ConversationRow({
         testID={`conversation-row-${conversation.id}`}
         accessibilityRole="button"
         accessibilityLabel={`محادثة ${displayName}${assigneeName ? `، الموظفة ${assigneeName}` : ""}${unread ? `، ${unread} رسائل غير مقروءة` : ""}${
-          isGroup
+          !showReplyWindow
             ? ""
             : replyWindowOpen
               ? "، داخل نافذة الأربع وعشرين ساعة"
@@ -417,7 +420,7 @@ const ConversationRow = memo(function ConversationRow({
                   paddingTop: spacing.xs,
                 }}
               >
-                {!isGroup ? (
+                {showReplyWindow ? (
                   <Badge
                     tone={replyWindowOpen ? "success" : "warning"}
                     icon={replyWindowOpen ? "clock" : "lock"}

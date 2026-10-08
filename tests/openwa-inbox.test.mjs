@@ -65,8 +65,22 @@ test("OpenWA sends text and media using only the engine bearer token", async () 
   assert.equal(requests[1].body.media.base64, "YQ==");
 });
 
-function webhook({ provider = "openwa", duplicate = false, concurrentDuplicate = false } = {}) {
-  const calls = { messages: [], activity: [], handled: [], jobs: [], transport: [], acks: [] };
+/** A chainable stand-in for the service-role query builder. */
+function chain(result) {
+  const builder = new Proxy({}, {
+    get: (_, key) => (key === "then" ? (resolve) => resolve(result()) : () => builder),
+  });
+  return builder;
+}
+
+function webhook({
+  provider = "openwa",
+  duplicate = false,
+  concurrentDuplicate = false,
+  staffPhones = [],
+  pendingAppSends = [],
+} = {}) {
+  const calls = { messages: [], activity: [], handled: [], jobs: [], transport: [], acks: [], claimed: [] };
   const db = {
     hasMessageWithSid: async () => duplicate,
     findOrCreateConversation: async () => ({ id: "customer" }),
@@ -92,6 +106,21 @@ function webhook({ provider = "openwa", duplicate = false, concurrentDuplicate =
     "@/lib/storage-media": {
       uploadBase64Media: async () => ({ path: "stored" }),
       messageTypeFromContentType: () => "image",
+    },
+    "@/lib/staff-threads": {
+      staffKindForPhone: async (phone) => (staffPhones.includes(phone) ? "driver" : null),
+      staffKindForConversation: async () => null,
+    },
+    "@/lib/supabase/admin": {
+      getAdminSupabaseClient: () => ({
+        from: () => ({
+          select: () => chain(() => ({ data: pendingAppSends })),
+          update: (patch) => {
+            calls.claimed.push(patch);
+            return chain(() => ({ data: pendingAppSends.slice(0, 1) }));
+          },
+        }),
+      }),
     },
   }, { OPENWA_INGEST_TOKEN: "ingest-test-token" });
   const send = (event, token = "ingest-test-token") => POST(new Request("https://app.example/api/webhooks/openwa", {
@@ -161,6 +190,34 @@ test("rollback stops OpenWA ingestion while accepting outstanding delivery acks"
   assert.equal(calls.messages.length, 0);
   await send({ type: "ack", waMessageId: "wa-old", status: "read" });
   assert.deepEqual(calls.acks, [["wa-old", "read"]]);
+});
+
+test("with customers on Meta, the orders number still takes in the field team", async () => {
+  const driver = "+966503319364";
+  const { send, calls } = webhook({ provider: "meta", staffPhones: [driver] });
+  assert.equal((await (await send({ ...inbound, customerPhone: driver })).json()).ok, true);
+  assert.equal(calls.messages[0].role, "customer");
+  // Notified, but never answered by the bot.
+  assert.equal(calls.jobs.length, 1);
+
+  // A customer writing to the orders number is still ignored.
+  assert.equal((await (await send({ ...inbound, waMessageId: "wa-2" })).json()).standby, true);
+  assert.equal(calls.messages.length, 1);
+});
+
+test("order notifications echoing back do not flag a field-team chat as handled on the phone", async () => {
+  const driver = "+966503319364";
+  const { send, calls } = webhook({ provider: "meta", staffPhones: [driver] });
+  await send({ ...inbound, fromMe: true, customerPhone: driver, body: "🚗 طلب جديد" });
+  assert.equal(calls.messages[0].role, "agent");
+  assert.deepEqual(calls.handled, []);
+});
+
+test("the echo of an app reply claims the pending row instead of storing it twice", async () => {
+  const { send, calls } = webhook({ pendingAppSends: [{ id: "queued-reply", content: "Hello" }] });
+  assert.equal((await (await send({ ...inbound, fromMe: true })).json()).deduped, true);
+  assert.equal(calls.messages.length, 0);
+  assert.deepEqual(calls.claimed, [{ external_message_sid: "wa-inbound" }]);
 });
 
 test("replayed activity cannot move an existing chat backwards or inflate unread", async () => {

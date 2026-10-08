@@ -481,6 +481,34 @@ export function useCatalog(enabled = true) {
   });
 }
 
+/** What a pull from Rekaz changed in the services list. */
+export type CatalogSyncResult = {
+  checkedAt: string;
+  rekazCount: number;
+  added: string[];
+  updated: { name: string; changes: string[] }[];
+  notOnRekaz: string[];
+};
+
+/**
+ * Pull new and changed services from Rekaz into the app. The catalogue is
+ * cached for half an hour above, so a pull refreshes it at once rather than
+ * leaving the new service invisible until the cache runs out.
+ */
+export function useSyncCatalogFromRekaz() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiRequest<CatalogSyncResult>("/catalog/sync", {
+        method: "POST",
+        // Two Rekaz reads and a batch of writes; more than the default allows.
+        timeoutMs: 60_000,
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.catalog }),
+  });
+}
+
 /**
  * A signed URL for one stored attachment. The signature lasts an hour, so the
  * cache is held just under that and never refetched in the background — a

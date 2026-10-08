@@ -29,6 +29,26 @@ const ENGINE_TIMEOUT_MS = 8_000;
 /** A send crosses to WhatsApp itself, so it gets more room than a status poll. */
 const ENGINE_SEND_TIMEOUT_MS = 15_000;
 
+/**
+ * The orders number cannot send at all right now — the engine is unreachable,
+ * or it answered that its WhatsApp session is down. Told apart from a send the
+ * engine refused for this one message (a bad number, a missing file), because
+ * only this kind means every staff notification is failing until someone acts.
+ */
+export class EngineUnavailableError extends Error {
+  /** `unreachable` needs the server looked at; `disconnected` needs a QR scan. */
+  readonly reason: "unreachable" | "disconnected";
+
+  constructor(
+    message: string,
+    options?: { cause?: unknown; reason?: "unreachable" | "disconnected" },
+  ) {
+    super(message, options);
+    this.name = "EngineUnavailableError";
+    this.reason = options?.reason ?? "unreachable";
+  }
+}
+
 async function engineFetch(
   url: string,
   init: RequestInit,
@@ -39,7 +59,7 @@ async function engineFetch(
   try {
     return await fetch(url, { ...init, signal: controller.signal, cache: "no-store" });
   } catch (cause) {
-    throw new Error(
+    throw new EngineUnavailableError(
       controller.signal.aborted
         ? `OpenWA engine did not respond within ${timeoutMs}ms`
         : "OpenWA engine unreachable",
@@ -75,7 +95,12 @@ async function post(
 async function parse(res: Response): Promise<SendResult> {
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    throw new Error(`OpenWA send failed (${res.status}): ${detail}`);
+    const message = `OpenWA send failed (${res.status}): ${detail}`;
+    // The engine answers 503 when its own WhatsApp session is not connected.
+    if (res.status === 503) {
+      throw new EngineUnavailableError(message, { reason: "disconnected" });
+    }
+    throw new Error(message);
   }
   const data = await res.json();
   return { providerMessageId: data.waMessageId ?? data.id ?? "" };
