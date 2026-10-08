@@ -169,6 +169,24 @@ export async function signMediaUrl(
 }
 
 /**
+ * The stored file's bytes, base64-encoded.
+ *
+ * A file the phone uploaded straight to the bucket reaches the server as a
+ * path only. Twilio and Meta fetch it from there themselves, but the orders
+ * number is a linked device that has to be handed the bytes — sending it the
+ * empty string it got before is what made the engine answer "invalid media".
+ */
+export async function downloadStoredMediaBase64(storagePath: string): Promise<string> {
+  const { data, error } = await getAdminSupabaseClient()
+    .storage.from(WHATSAPP_MEDIA_BUCKET)
+    .download(storagePath);
+  if (error || !data) {
+    throw new Error(`Stored media could not be read: ${error?.message ?? storagePath}`);
+  }
+  return Buffer.from(await data.arrayBuffer()).toString("base64");
+}
+
+/**
  * Twilio answers a media URL with 404 or 5xx for a moment after the webhook
  * fires — the message is delivered before the media finishes landing in its
  * own store — so roughly one inbound file in twenty was being dropped by a

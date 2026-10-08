@@ -29,6 +29,7 @@ import {
 } from "@/lib/templates";
 import {
   uploadBase64Media,
+  downloadStoredMediaBase64,
   messageTypeFromContentType,
   maxMediaBytesForContentType,
   WHATSAPP_MEDIA_BUCKET,
@@ -967,9 +968,16 @@ export async function sendMediaReply(
   if (error) throw new Error(`Failed to record media message: ${error.message}`);
 
   const messageId = msg!.id as string;
-  deliverInBackground(messageId, conversationId, (transport, sendOptions) =>
+  deliverInBackground(messageId, conversationId, async (transport, sendOptions) =>
     transport.sendMedia(conv.customer_phone as string, {
-      base64,
+      // A phone upload arrives as a storage path with no bytes. The Business
+      // providers fetch it themselves; the orders number needs the bytes.
+      base64:
+        base64 || transport.provider !== "openwa"
+          ? base64
+          : await downloadStoredMediaBase64(
+              slot.storage_path ?? "(media was never stored)",
+            ),
       contentType: normalizedContentType,
       filename: file.filename ?? undefined,
       caption: caption || undefined,
