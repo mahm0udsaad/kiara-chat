@@ -18,6 +18,11 @@ import { normalizePhone } from "@/lib/phone";
  * up — every distinct name seen in a month of production matched a roster row
  * this way.
  *
+ * Spelling is folded the way Arabic is actually typed: a final ة and ه, the
+ * hamza forms of alif, final ى and ي, and vowel marks are one letter each. Rekaz
+ * files رحمة and نسمة as «رحمه» and «نسمه»; without folding, neither was ever
+ * credited for a booking (90 of them in their first two weeks).
+ *
  * Matching stays exact after normalization, never fuzzy or by prefix. Two women
  * on the roster can share a stem, and crediting one for the other's work is
  * worse than crediting nobody.
@@ -31,6 +36,10 @@ import { normalizePhone } from "@/lib/phone";
 export function normalizeStaffName(value: string | null | undefined): string {
   return (value ?? "")
     .replace(/ـ/g, "")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
     .replace(/[^\p{L}\p{N}\s]/gu, "")
     .trim()
     .replace(/\s+/g, " ");
