@@ -10,6 +10,7 @@ import {
   getEngineState,
   isOpenWaConfigured,
   openWaTransport,
+  seedEngineLids,
 } from "@/lib/transport/openwa";
 import type { MessageTransport, OutboundMedia, SendResult } from "@/lib/transport/types";
 
@@ -227,6 +228,19 @@ async function watched(send: () => Promise<SendResult>): Promise<SendResult> {
   return result;
 }
 
+/** Every driver's and specialist's phone, so the engine knows their lids. */
+async function seedRosterLids(): Promise<void> {
+  const admin = getAdminSupabaseClient();
+  const [drivers, specialists] = await Promise.all([
+    admin.from("drivers").select("phone").eq("restaurant_id", KIARA_RESTAURANT_ID),
+    admin.from("specialists").select("phone").eq("restaurant_id", KIARA_RESTAURANT_ID),
+  ]);
+  const phones = [...(drivers.data ?? []), ...(specialists.data ?? [])]
+    .map((row) => String(row.phone ?? "").replace(/\D/g, ""))
+    .filter((digits) => digits.length >= 8);
+  await seedEngineLids([...new Set(phones)]);
+}
+
 /**
  * States the engine passes through on its way to `ready` after a restart or a
  * fresh scan. Seeing one is not an outage — a check landing mid-reconnect
@@ -243,6 +257,9 @@ export async function checkOrdersNumber(): Promise<{ state: string }> {
   const engine = await getEngineState();
   if (engine.state === "ready") {
     await reportUp();
+    await seedRosterLids().catch((cause) =>
+      console.error("[orders-number] lid seed failed", cause),
+    );
   } else if (engine.state === "unreachable") {
     await reportDown(
       new EngineUnavailableError("OpenWA engine unreachable", { reason: "unreachable" }),

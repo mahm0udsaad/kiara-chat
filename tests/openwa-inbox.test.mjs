@@ -241,6 +241,19 @@ test("a lid-only message no thread knows is reported, not silently swallowed", a
   assert.match(warnings[0], /unbound lid.*999@lid.*عبدالفتاح/);
 });
 
+test("a reaction and a shared location arrive readable, and the bot leaves them alone", async () => {
+  const { send, calls } = webhook();
+  await send({ ...inbound, waMessageId: "wa-r", messageType: "reaction", body: "تفاعل بـ 👍", reactionTo: "wa-unknown" });
+  assert.equal(calls.messages[0].messageType, "reaction");
+  assert.equal(calls.messages[0].content, "تفاعل بـ 👍 على رسالة");
+  assert.equal(calls.messages[0].metadata.reaction_to, "wa-unknown");
+  const location = { latitude: 17.49, longitude: 44.13, name: "حي الضباط" };
+  await send({ ...inbound, waMessageId: "wa-l", messageType: "location", body: "📍 الموقع: حي الضباط", location });
+  assert.deepEqual(calls.messages[1].metadata.location, location);
+  // One notification job each, and no bot turn for either.
+  assert.equal(calls.jobs.length, 2);
+});
+
 test("replayed activity cannot move an existing chat backwards or inflate unread", async () => {
   const updates = [];
   const row = { last_message_at: "2026-09-13T10:00:00+00:00", last_inbound_at: "2026-09-13T09:00:00+00:00", unread_count: 3 };

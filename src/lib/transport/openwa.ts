@@ -204,6 +204,26 @@ export async function refreshEngineQr(): Promise<void> {
 }
 
 /**
+ * Have the engine learn the hidden lid of each of these phones ahead of time.
+ *
+ * WhatsApp addresses some chats only by an anonymized lid, and a message that
+ * arrives that way can be placed only if the engine can map it back to a
+ * phone. Seeding the roster means a driver's first reply to the orders number
+ * lands in his thread instead of being dropped. The engine only asks WhatsApp
+ * about phones it has not mapped yet.
+ */
+export async function seedEngineLids(phones: string[]): Promise<{ mapped: number }> {
+  if (!phones.length) return { mapped: 0 };
+  const res = await post("/lids/seed", { phones });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`lid seed failed (${res.status}): ${detail}`);
+  }
+  const data = (await res.json().catch(() => ({}))) as { mapped?: number };
+  return { mapped: Number(data.mapped ?? 0) };
+}
+
+/**
  * Ask the engine to watch these chats for typing indicators. WhatsApp only
  * pushes presence for subscribed chats, and the subscriptions die with the
  * socket — so the inbox re-sends its list rather than assuming they stuck.

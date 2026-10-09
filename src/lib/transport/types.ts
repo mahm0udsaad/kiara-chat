@@ -106,6 +106,15 @@ export interface OpenWaMessageEvent {
    */
   customerName?: string | null;
   media?: InboundMediaBlob[];
+  /** On a `reaction`: the WhatsApp id of the message being reacted to. */
+  reactionTo?: string | null;
+  /** On a `location`: where, so the row keeps the coordinates, not just a link. */
+  location?: {
+    latitude: number;
+    longitude: number;
+    name?: string | null;
+    address?: string | null;
+  } | null;
 }
 
 /** A delivery/read acknowledgement pushed by the OpenWA service. */

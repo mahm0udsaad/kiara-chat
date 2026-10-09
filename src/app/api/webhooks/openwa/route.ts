@@ -95,6 +95,30 @@ async function learnChatLid(event: OpenWaEvent): Promise<void> {
   if (conv) await rememberChatLid(conv.id, lid);
 }
 
+/** Message kinds that are notices rather than something to reply to. */
+const NOTICE_TYPES = new Set(["reaction", "location", "contacts"]);
+
+/**
+ * A reaction says which message it is about, the way the Meta webhook shows
+ * it: "تفاعل بـ 👍 على: «…»". The target is usually an order notification or
+ * a reply the office sent, both stored with their WhatsApp id.
+ */
+async function quoteReaction(
+  conversationId: string,
+  body: string,
+  targetId: string,
+): Promise<string> {
+  const { data } = await getAdminSupabaseClient()
+    .from("messages")
+    .select("content")
+    .eq("conversation_id", conversationId)
+    .eq("external_message_sid", targetId)
+    .maybeSingle();
+  const text = ((data?.content as string | null) ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return `${body} على رسالة`;
+  return `${body} على: «${text.length > 60 ? `${text.slice(0, 60)}…` : text}»`;
+}
+
 /** How long after the app records a send its own echo can still arrive. */
 const ECHO_WINDOW_MS = 2 * 60_000;
 
@@ -267,6 +291,12 @@ export async function POST(request: NextRequest) {
 
   const role: "customer" | "agent" = event.fromMe ? "agent" : "customer";
   const metadata: Record<string, unknown> = { provider: "openwa" };
+  let body = event.body || "";
+  if (messageType === "reaction" && event.reactionTo) {
+    body = await quoteReaction(conversationId, body, event.reactionTo);
+    metadata.reaction_to = event.reactionTo;
+  }
+  if (event.location) metadata.location = event.location;
   if (mediaSlots.length) metadata.media = mediaSlots;
   if (event.fromMe) metadata.source = "whatsapp_app";
   // In a group the thread is the group, so the bubble has to carry its own
@@ -279,7 +309,7 @@ export async function POST(request: NextRequest) {
   const messageId = await saveMessage({
     conversationId: conv.id,
     role,
-    content: event.body || "",
+    content: body,
     messageType,
     externalMessageSid: event.waMessageId,
     metadata,
@@ -322,7 +352,15 @@ export async function POST(request: NextRequest) {
   // Groups are excluded outright: the assistant answers a customer asking a
   // question, and a staff group is a room full of people talking to each other.
   // Nor the field team: a driver saying "وصلت" is not a customer question.
-  if (!event.fromMe && !groupJid && !fieldTeamOnly && phone && isLive(event.timestamp)) {
+  // A reaction, a shared location or a contact card asks nothing to answer.
+  if (
+    !event.fromMe &&
+    !groupJid &&
+    !fieldTeamOnly &&
+    !NOTICE_TYPES.has(messageType) &&
+    phone &&
+    isLive(event.timestamp)
+  ) {
     after(() =>
       runBotTurn({
         conversationId,
