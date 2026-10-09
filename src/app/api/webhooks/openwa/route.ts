@@ -75,6 +75,26 @@ async function isFieldTeamEvent(event: OpenWaEvent): Promise<boolean> {
   return Boolean(conv && (await staffKindForConversation(conv.id)));
 }
 
+/**
+ * Bind a chat's lid to its thread whenever an event names both.
+ *
+ * WhatsApp addresses many chats only by an anonymized lid, and a lid-only
+ * message can be placed only in a thread that already knows that lid. The
+ * binding used to happen deep in message handling — after the dedupe, so the
+ * echo of the app's own send, which is often the one event carrying both the
+ * phone and the lid, returned before it could teach anything. Learning first,
+ * from any event and before any early return, means the next lid-only reply
+ * from that person lands in their thread instead of being dropped.
+ */
+async function learnChatLid(event: OpenWaEvent): Promise<void> {
+  if (event.type !== "message") return;
+  const lid = event.chatLid?.trim();
+  const phone = normalizeE164(event.customerPhone ?? "");
+  if (!lid || !phone || event.chatJid?.trim().endsWith("@g.us")) return;
+  const conv = await findConversationByPhone(phone);
+  if (conv) await rememberChatLid(conv.id, lid);
+}
+
 /** How long after the app records a send its own echo can still arrive. */
 const ECHO_WINDOW_MS = 2 * 60_000;
 
@@ -132,9 +152,20 @@ export async function POST(request: NextRequest) {
   // Acks remain useful for messages already sent before the switch. The one
   // exception is the field team: their chats run on this number on purpose,
   // so their messages are taken in while customers who write here are not.
+  await learnChatLid(event);
+
   let fieldTeamOnly = false;
   if (event.type !== "ack" && inboxProvider() !== "openwa") {
     if (!(await isFieldTeamEvent(event))) {
+      // A message that names no phone and whose lid no thread knows yet cannot
+      // be told apart from a customer's, so it is not taken in. Say so: a
+      // driver's reply lost this way is otherwise invisible — the engine got a
+      // 200, the office got nothing, and nobody can see why.
+      if (event.type === "message" && !event.customerPhone && event.chatLid) {
+        console.warn(
+          `[openwa] unbound lid, message not stored: lid=${event.chatLid} fromMe=${event.fromMe} name=${event.customerName ?? ""} type=${event.messageType}`,
+        );
+      }
       return NextResponse.json({ ok: true, standby: true });
     }
     fieldTeamOnly = true;

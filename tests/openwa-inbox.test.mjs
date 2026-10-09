@@ -80,14 +80,14 @@ function webhook({
   staffPhones = [],
   pendingAppSends = [],
 } = {}) {
-  const calls = { messages: [], activity: [], handled: [], jobs: [], transport: [], acks: [], claimed: [] };
+  const calls = { messages: [], activity: [], handled: [], jobs: [], transport: [], acks: [], claimed: [], lids: [] };
   const db = {
     hasMessageWithSid: async () => duplicate,
     findOrCreateConversation: async () => ({ id: "customer" }),
     findOrCreateGroupConversation: async () => ({ id: "group" }),
     findConversationByLid: async () => ({ id: "customer" }),
     findConversationByPhone: async () => ({ id: "customer" }),
-    rememberChatLid: async () => {},
+    rememberChatLid: async (...args) => calls.lids.push(args),
     saveMessage: async (message) => { calls.messages.push(message); return concurrentDuplicate ? null : "message"; },
     bumpConversationActivity: async (...args) => calls.activity.push(args),
     markHandledOnWhatsApp: async (id) => calls.handled.push(id),
@@ -218,6 +218,27 @@ test("the echo of an app reply claims the pending row instead of storing it twic
   assert.equal((await (await send({ ...inbound, fromMe: true })).json()).deduped, true);
   assert.equal(calls.messages.length, 0);
   assert.deepEqual(calls.claimed, [{ external_message_sid: "wa-inbound" }]);
+});
+
+test("the echo of an app send still teaches the chat's lid, even though it is a duplicate", async () => {
+  const { send, calls } = webhook({ provider: "meta", duplicate: true });
+  await send({ ...inbound, fromMe: true, chatLid: "123@lid" });
+  assert.deepEqual(calls.lids, [["customer", "123@lid"]]);
+});
+
+test("a lid-only message no thread knows is reported, not silently swallowed", async () => {
+  const { send, calls } = webhook({ provider: "meta" });
+  const warnings = [];
+  const warn = console.warn;
+  console.warn = (line) => warnings.push(line);
+  try {
+    const body = await (await send({ ...inbound, customerPhone: null, chatLid: "999@lid", customerName: "عبدالفتاح" })).json();
+    assert.equal(body.standby, true);
+  } finally {
+    console.warn = warn;
+  }
+  assert.equal(calls.messages.length, 0);
+  assert.match(warnings[0], /unbound lid.*999@lid.*عبدالفتاح/);
 });
 
 test("replayed activity cannot move an existing chat backwards or inflate unread", async () => {
