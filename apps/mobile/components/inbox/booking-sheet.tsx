@@ -774,9 +774,10 @@ export function BookingSheet({
               {dispatchOptions.data?.districts?.length ? (
                 <DistrictPicker
                   districts={dispatchOptions.data.districts}
+                  tripType={tripType}
                   value={districtId}
                   onChange={setDistrictId}
-                  hint="اختياري — تكلفة المشوار تُحسب من الحي، ويمكن اختياره لاحقًا."
+                  hint="اختياري — تكلفة المشوار تُحسب من الحي (الذهاب فقط بنصف السعر)، ويمكن اختياره لاحقًا."
                 />
               ) : null}
 

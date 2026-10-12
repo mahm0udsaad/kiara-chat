@@ -736,10 +736,11 @@ function DispatchForm({
 
             <DistrictPicker
               districts={options.data.districts ?? []}
+              tripType={current.trip_type}
               value={districtId}
               currentName={current.district_name}
               onChange={setDistrictId}
-              hint="تكلفة المشوار تُحسب من الحي. يمكن تركه الآن واختياره لاحقًا من صفحة الطلب."
+              hint="تكلفة المشوار تُحسب من الحي، والذهاب فقط بنصف السعر. يمكن تركه الآن واختياره لاحقًا من صفحة الطلب."
             />
 
             {/* A pin puts the driver on the street; the photo tells him which

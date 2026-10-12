@@ -74,7 +74,7 @@ export function TripDistrictCard({
             {order.district_name ?? "لم يُحدد الحي"}
           </Text>
           <Text style={{ ...type.caption, ...rtlText, color: colors.textSecondary }}>
-            تكلفة المشوار تُحسب تلقائيًا من الحي.
+            تكلفة المشوار تُحسب تلقائيًا من الحي، والذهاب فقط بنصف السعر.
           </Text>
         </View>
       </View>
@@ -93,6 +93,7 @@ export function TripDistrictCard({
             <DistrictPicker
               label="الحي"
               districts={districts}
+              tripType={order.trip_type}
               value={districtId}
               currentName={order.district_name}
               onChange={setDistrictId}

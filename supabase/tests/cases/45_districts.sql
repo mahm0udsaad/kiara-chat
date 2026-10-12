@@ -1,7 +1,8 @@
 -- An order's trip cost follows its district: choosing one prices the order,
 -- changing it re-prices, clearing it clears the cost, and a return driver is
--- priced from the same district. Choosing a district is open to agents and
--- stays optional at dispatch.
+-- priced from the same district. The district's fare is for a round trip; a
+-- one-way leg is half of it. Choosing a district is open to agents and stays
+-- optional at dispatch.
 
 \set ON_ERROR_STOP on
 set client_min_messages = notice;
@@ -60,8 +61,8 @@ begin
     jsonb_build_object('districtId', 'd1000000-0000-0000-0000-000000000001'));
   select * into v_row from public.driver_orders where id = v_order;
   perform kiara_test.ok(
-    v_row.district_id = 'd1000000-0000-0000-0000-000000000001' and v_row.price = 25,
-    'an agent may set the district and the order takes its fare'
+    v_row.district_id = 'd1000000-0000-0000-0000-000000000001' and v_row.price = 12.5,
+    'an agent may set the district and a one-way order takes half its fare'
   );
   perform kiara_test.ok(
     exists (select 1 from public.operation_events
@@ -84,20 +85,20 @@ begin
     tenant, v_order, v_row.version, gen_random_uuid(), agent_user, agent_tm, 'agent',
     jsonb_build_object('districtId', 'd1000000-0000-0000-0000-000000000002'));
   select * into v_row from public.driver_orders where id = v_order;
-  perform kiara_test.ok(v_row.price = 35, 'changing the district re-prices the order');
+  perform kiara_test.ok(v_row.price = 17.5, 'changing the district re-prices the order');
 
   -- Editing something else leaves the fare alone.
   perform public.kiara_command_update_driver_order(
     tenant, v_order, v_row.version, gen_random_uuid(), agent_user, agent_tm, 'agent',
     jsonb_build_object('durationMinutes', 90));
   select * into v_row from public.driver_orders where id = v_order;
-  perform kiara_test.ok(v_row.price = 35, 'an unrelated edit keeps the district fare');
+  perform kiara_test.ok(v_row.price = 17.5, 'an unrelated edit keeps the district fare');
 
   -- A district price correction never rewrites a trip already priced.
   update public.districts set trip_price = 45
     where id = 'd1000000-0000-0000-0000-000000000002';
   perform kiara_test.ok(
-    (select price from public.driver_orders where id = v_order) = 35,
+    (select price from public.driver_orders where id = v_order) = 17.5,
     'the fare is a snapshot, not a live lookup'
   );
 
@@ -107,14 +108,43 @@ begin
     jsonb_build_object('returnDriverId', 'c0000000-0000-0000-0000-000000000002'));
   select * into v_row from public.driver_orders where id = v_order;
   perform kiara_test.ok(
-    v_row.return_price = 45 and v_row.price = 35,
-    'assigning a return driver prices the return leg from the district'
+    v_row.return_price = 22.5 and v_row.price = 17.5,
+    'assigning a return driver prices the return leg at half the district fare'
   );
   perform public.kiara_command_update_driver_order(
     tenant, v_order, v_row.version, gen_random_uuid(), admin_user, admin_tm, 'admin',
     jsonb_build_object('returnDriverId', null));
   select * into v_row from public.driver_orders where id = v_order;
   perform kiara_test.ok(v_row.return_price is null, 'removing the return driver drops its fare');
+
+  -- The trip type prices the order too: a round trip is the whole fare.
+  perform public.kiara_command_update_driver_order(
+    tenant, v_order, v_row.version, gen_random_uuid(), agent_user, agent_tm, 'agent',
+    jsonb_build_object('tripType', 'round_trip'));
+  select * into v_row from public.driver_orders where id = v_order;
+  perform kiara_test.ok(
+    v_row.price = 45 and v_row.return_price is null,
+    'switching to a round trip charges the whole district fare'
+  );
+  perform public.kiara_command_update_driver_order(
+    tenant, v_order, v_row.version, gen_random_uuid(), agent_user, agent_tm, 'agent',
+    jsonb_build_object('tripType', 'one_way'));
+  select * into v_row from public.driver_orders where id = v_order;
+  perform kiara_test.ok(v_row.price = 22.5, 'switching back to one way halves it again');
+
+  -- A visit split between two drivers costs what one round trip costs.
+  perform public.kiara_command_update_driver_order(
+    tenant, v_order, v_row.version, gen_random_uuid(), admin_user, admin_tm, 'admin',
+    jsonb_build_object('returnDriverId', 'c0000000-0000-0000-0000-000000000002'));
+  select * into v_row from public.driver_orders where id = v_order;
+  perform kiara_test.ok(
+    v_row.price + v_row.return_price = 45,
+    'two one-way legs add up to the round-trip fare'
+  );
+  perform public.kiara_command_update_driver_order(
+    tenant, v_order, v_row.version, gen_random_uuid(), admin_user, admin_tm, 'admin',
+    jsonb_build_object('returnDriverId', null));
+  select * into v_row from public.driver_orders where id = v_order;
 
   -- Archived and foreign districts are refused.
   perform kiara_test.raises(
@@ -162,6 +192,7 @@ declare
   tenant uuid := '2ba8f6c8-aff9-4147-8f13-cdcb732de698';
   with_district uuid := 'e0000000-0000-0000-0000-000000000046';
   without_district uuid := 'e0000000-0000-0000-0000-000000000047';
+  retyped uuid := 'e0000000-0000-0000-0000-000000000048';
   v_result jsonb;
 begin
   v_result := public.kiara_command_prepare_order_dispatch_v3(
@@ -178,9 +209,9 @@ begin
     '+966500000012', '+966500000002', null, null,
     'd1000000-0000-0000-0000-000000000002'::uuid);
   perform kiara_test.ok(
-    (select district_id = 'd1000000-0000-0000-0000-000000000002' and price = 45
+    (select district_id = 'd1000000-0000-0000-0000-000000000002' and price = 22.5
       from public.driver_orders where id = with_district),
-    'a district chosen at dispatch prices the order'
+    'a district chosen at dispatch prices a one-way order at half the fare'
   );
 
   v_result := public.kiara_command_prepare_order_dispatch_v3(
@@ -200,6 +231,37 @@ begin
     (select district_id is null and price is null
       from public.driver_orders where id = without_district),
     'dispatch without a district goes out with no cost'
+  );
+
+  -- The trip type chosen at dispatch prices the order, even though dispatch
+  -- hands back the fare the order already carried.
+  insert into public.driver_orders (
+    id, restaurant_id, conversation_id, arrival_at, customer_location,
+    customer_phone, duration_minutes, trip_type, district_id
+  ) values (
+    retyped, tenant, 'd0000000-0000-0000-0000-000000000002',
+    now() + interval '30 hours', 'حي الفهد، شارع ٢', '+966555000002',
+    60, 'one_way', 'd1000000-0000-0000-0000-000000000001');
+  perform kiara_test.ok(
+    (select price = 12.5 from public.driver_orders where id = retyped),
+    'an order created one-way in a district starts at half the fare'
+  );
+  v_result := public.kiara_command_prepare_order_dispatch_v3(
+    tenant, retyped,
+    (select version from public.driver_orders where id = retyped),
+    gen_random_uuid(),
+    '33333333-3333-3333-3333-333333333333'::uuid,
+    'a0000000-0000-0000-0000-000000000003'::uuid,
+    'agent',
+    'b0000000-0000-0000-0000-000000000002'::uuid, null,
+    'c0000000-0000-0000-0000-000000000001'::uuid,
+    'round_trip', 12.5, 'حي الفهد، شارع ٢',
+    'موعد العميلة غدًا', 'Appointment tomorrow', null,
+    '+966500000011', '+966500000002', null, null,
+    'd1000000-0000-0000-0000-000000000001'::uuid);
+  perform kiara_test.ok(
+    (select price = 25 from public.driver_orders where id = retyped),
+    'dispatching it as a round trip charges the whole fare'
   );
 
   perform kiara_test.raises(

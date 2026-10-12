@@ -81,6 +81,7 @@ import {
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
 import { fieldLegsOf } from "@/lib/field-timings";
 import {
+  districtFare,
   formatDuration,
   formatRelativeTime,
   locationLabel,
@@ -1171,7 +1172,7 @@ function OrderDetailsSheet({
                     {districts.map((item) => (
                       <SelectItem key={item.id} value={item.id}>
                         {canSeeTripCost && item.trip_price != null
-                          ? `${item.name} — ${item.trip_price} ر.س`
+                          ? `${item.name} — ${districtFare(item.trip_price, tripType)} ر.س`
                           : item.name}
                       </SelectItem>
                     ))}
@@ -1181,7 +1182,7 @@ function OrderDetailsSheet({
               <FieldDescription>
                 {canSeeTripCost
                   ? order.price == null
-                    ? "تكلفة المشوار تُحسب تلقائيًا من الحي. بدون حي لا تُسجل تكلفة."
+                    ? "تكلفة المشوار تُحسب تلقائيًا من الحي، والذهاب فقط بنصف السعر. بدون حي لا تُسجل تكلفة."
                     : `تكلفة المشوار الحالية: ${order.price} ر.س${
                         order.return_price != null ? ` · العودة: ${order.return_price} ر.س` : ""
                       }`

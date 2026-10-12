@@ -164,6 +164,14 @@ export const tripTypeLabel: Record<TripType, string> = {
   round_trip: "ذهاب وعودة",
 };
 
+/**
+ * What a trip in a district costs: the district's fare is for a round trip,
+ * and a one-way leg is half of it. Mirrors the pricing trigger in the database.
+ */
+export function districtFare(tripPrice: number, tripType: TripType): number {
+  return tripType === "round_trip" ? tripPrice : Math.round(tripPrice * 50) / 100;
+}
+
 export const csStatusLabel = {
   open: "جاري المحادثة",
   waiting: "استفسار",

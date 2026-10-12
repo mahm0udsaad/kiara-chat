@@ -28,6 +28,14 @@ export const TRIP_TYPE_LABEL: Record<TripType, string> = {
 };
 
 /**
+ * What a trip in a district costs: the district's fare is for a round trip,
+ * and a one-way leg is half of it. Mirrors the pricing trigger in the database.
+ */
+export function districtFare(tripPrice: number, tripType: TripType): number {
+  return tripType === "round_trip" ? tripPrice : Math.round(tripPrice * 50) / 100;
+}
+
+/**
  * Riyadh day key (YYYY-MM-DD). The salon's wall-clock decides what "same day"
  * means, not the reader's device.
  */

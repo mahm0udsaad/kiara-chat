@@ -3,9 +3,10 @@ import { Pressable, Text, TextInput, View } from "react-native";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
+import { districtFare } from "@/lib/format";
 import { tapFeedback } from "@/lib/haptics";
 import { useTheme } from "@/providers/theme-provider";
-import type { District } from "@/types/api";
+import type { District, TripType } from "@/types/api";
 
 const priceFormatter = new Intl.NumberFormat("ar-SA", {
   style: "currency",
@@ -18,11 +19,13 @@ const priceFormatter = new Intl.NumberFormat("ar-SA", {
  * first row is "بدون حي", and an order without one simply has no cost yet.
  *
  * Fares show only when the list carries them — the server sends them to
- * admins and strips them for everyone else.
+ * admins and strips them for everyone else. They are shown for the order's
+ * trip type: a one-way trip is half the district's round-trip fare.
  */
 export function DistrictPicker({
   label = "الحي (اختياري)",
   districts,
+  tripType,
   value,
   onChange,
   currentName,
@@ -31,6 +34,7 @@ export function DistrictPicker({
 }: {
   label?: string;
   districts: District[];
+  tripType: TripType;
   value: string | null;
   onChange: (id: string | null) => void;
   /** The order's own district when it has since been archived. */
@@ -109,14 +113,14 @@ export function DistrictPicker({
             const id = district?.id ?? null;
             const selected = id === value;
             const name = district?.name ?? "بدون حي";
+            const fare =
+              district?.trip_price != null ? districtFare(district.trip_price, tripType) : null;
             return (
               <Pressable
                 key={id ?? "none"}
                 accessibilityRole="radio"
                 accessibilityLabel={
-                  district?.trip_price != null
-                    ? `${name}، ${district.trip_price} ريال`
-                    : name
+                  fare != null ? `${name}، ${fare} ريال` : name
                 }
                 accessibilityState={{ selected, disabled }}
                 disabled={disabled}
@@ -155,9 +159,9 @@ export function DistrictPicker({
                 >
                   {name}
                 </Text>
-                {district?.trip_price != null ? (
+                {fare != null ? (
                   <Text style={{ ...type.footnote, ...numeric, color: colors.brand }}>
-                    {priceFormatter.format(district.trip_price)}
+                    {priceFormatter.format(fare)}
                   </Text>
                 ) : null}
                 {selected ? (

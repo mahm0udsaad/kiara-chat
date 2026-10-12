@@ -63,7 +63,7 @@ import {
   type VoiceNote,
 } from "@/components/voice-note-recorder";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
-import { formatDuration, isLocationUnset, TRIP_TYPE_LABEL } from "@/lib/format";
+import { districtFare, formatDuration, isLocationUnset, TRIP_TYPE_LABEL } from "@/lib/format";
 import { nationalityOf } from "@/lib/nationalities";
 import type { District, Driver, DriverOrderRow, Specialist, TripType } from "@/lib/types";
 
@@ -628,7 +628,7 @@ export function DispatchDialog({
                       {districts.map((district) => (
                         <SelectItem key={district.id} value={district.id}>
                           {district.trip_price != null
-                            ? `${district.name} — ${district.trip_price} ر.س`
+                            ? `${district.name} — ${districtFare(district.trip_price, tripType)} ر.س`
                             : district.name}
                         </SelectItem>
                       ))}
@@ -636,7 +636,8 @@ export function DispatchDialog({
                   </SelectContent>
                 </Select>
                 <FieldDescription>
-                  تكلفة المشوار تُحسب من الحي. يمكن تركه الآن واختياره لاحقًا من الطلب.
+                  تكلفة المشوار تُحسب من الحي، والذهاب فقط بنصف السعر. يمكن تركه الآن
+                  واختياره لاحقًا من الطلب.
                 </FieldDescription>
               </Field>
 

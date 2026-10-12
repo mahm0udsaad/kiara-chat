@@ -124,8 +124,8 @@ export function DistrictManager({ initialDistricts }: { initialDistricts: Distri
       <section className="rounded-2xl border bg-[var(--surface)] p-4 sm:p-5">
         <h2 className="font-semibold text-[var(--foreground)]">الأحياء وتكلفة المشاوير</h2>
         <p className="mb-3 text-sm text-muted-foreground">
-          عند اختيار الحي في الطلب تُحسب تكلفة المشوار تلقائيًا. تعديل السعر هنا يطبق على
-          الطلبات الجديدة فقط.
+          عند اختيار الحي في الطلب تُحسب تكلفة المشوار تلقائيًا. السعر هنا للذهاب والعودة،
+          والذهاب فقط بنصفه. تعديل السعر يطبق على الطلبات الجديدة فقط.
         </p>
 
         <div className="mb-4 flex flex-col gap-2 sm:flex-row">
@@ -141,8 +141,8 @@ export function DistrictManager({ initialDistricts }: { initialDistricts: Distri
             value={price}
             onChange={(event) => setPrice(event.target.value)}
             inputMode="decimal"
-            placeholder="تكلفة المشوار (ر.س)"
-            aria-label="تكلفة المشوار بالريال"
+            placeholder="سعر الذهاب والعودة (ر.س)"
+            aria-label="سعر الذهاب والعودة بالريال"
             className={cn(inputClass, "sm:max-w-44")}
           />
           <button
@@ -262,7 +262,7 @@ function DistrictRow({
           ) : null}
         </p>
         <p className="text-xs tabular-nums text-muted-foreground">
-          {district.trip_price != null ? `${district.trip_price} ر.س للمشوار` : "—"}
+          {district.trip_price != null ? `${district.trip_price} ر.س ذهاب وعودة` : "—"}
         </p>
       </div>
       <div className="flex shrink-0 gap-1">

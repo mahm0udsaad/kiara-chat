@@ -66,7 +66,7 @@ export default function DistrictsScreen() {
   const add = () => {
     setNotice(null);
     if (name.trim().length < 2) return setFormError("اكتبي اسم الحي.");
-    if (!price.trim()) return setFormError("اكتبي تكلفة المشوار.");
+    if (!price.trim()) return setFormError("اكتبي سعر الذهاب والعودة.");
     setFormError(null);
     create.mutate(
       { name: name.trim(), tripPrice: price.trim() },
@@ -101,7 +101,7 @@ export default function DistrictsScreen() {
       >
         <InlineAlert
           tone="info"
-          message="عند اختيار الحي في الطلب تُحسب تكلفة المشوار تلقائيًا. تعديل السعر هنا يطبق على الطلبات الجديدة فقط."
+          message="عند اختيار الحي في الطلب تُحسب تكلفة المشوار تلقائيًا. السعر هنا للذهاب والعودة، والذهاب فقط بنصفه. تعديل السعر يطبق على الطلبات الجديدة فقط."
         />
 
         <Card>
@@ -118,7 +118,7 @@ export default function DistrictsScreen() {
             placeholder="مثال: حي الفهد"
           />
           <Field
-            label="تكلفة المشوار (ر.س)"
+            label="سعر الذهاب والعودة (ر.س)"
             icon="banknote"
             value={price}
             onChangeText={(value) => {
@@ -265,7 +265,7 @@ function DistrictRow({
           maxLength={80}
         />
         <Field
-          label="تكلفة المشوار (ر.س)"
+          label="سعر الذهاب والعودة (ر.س)"
           value={price}
           onChangeText={setPrice}
           keyboardType="decimal-pad"
@@ -323,7 +323,9 @@ function DistrictRow({
             {district.name}
           </Text>
           <Text style={{ ...type.footnote, ...numeric, color: colors.brand, ...rtlText }}>
-            {district.trip_price != null ? priceFormatter.format(district.trip_price) : "—"}
+            {district.trip_price != null
+              ? `${priceFormatter.format(district.trip_price)} ذهاب وعودة`
+              : "—"}
           </Text>
         </View>
         {!district.is_active ? <Badge label="موقوف" tone="neutral" /> : null}
