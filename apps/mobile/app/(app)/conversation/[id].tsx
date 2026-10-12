@@ -188,6 +188,35 @@ function MessageDeliveryIndicator({ status }: { status: string | null | undefine
   );
 }
 
+/** WhatsApp's light blue, readable on the brand bubble an outbound message sits in. */
+const READ_TICK = "#7DD3FC";
+
+/**
+ * WhatsApp's own marks: one tick once sent, two once it reached her phone, and
+ * two in blue once she read it. Anything earlier or failed is the pill's job
+ * (MessageDeliveryIndicator), so this draws nothing for those.
+ */
+function DeliveryTicks({ status, color }: { status: string | null | undefined; color: string }) {
+  if (status !== "sent" && status !== "delivered" && status !== "read") return null;
+  const label =
+    status === "read" ? "قُرئت" : status === "delivered" ? "تم التسليم" : "تم الإرسال";
+  const tint = status === "read" ? READ_TICK : color;
+  return (
+    <View
+      accessibilityRole="image"
+      accessibilityLabel={label}
+      style={{ flexDirection: "row", alignItems: "center", opacity: status === "read" ? 1 : 0.75 }}
+    >
+      <IconSymbol name="checkmark" color={tint} size={12} />
+      {status !== "sent" ? (
+        <View style={{ marginStart: -7 }}>
+          <IconSymbol name="checkmark" color={tint} size={12} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function replyToOf(message: ConversationMessage): ReplyTo | null {
   const value = message.metadata?.reply_to;
   return value && typeof value === "object" ? (value as ReplyTo) : null;
@@ -396,18 +425,23 @@ const MessageBubble = memo(function MessageBubble({
             />
           ) : null}
         </Pressable>
-        <Text
-          style={{
-            ...type.caption,
-            fontWeight: "400",
-            opacity: 0.75,
-            color: outbound ? colors.onBrand : colors.textTertiary,
-            fontVariant: ["tabular-nums"],
-            textAlign: "left",
-          }}
-        >
-          {formatters.time.format(new Date(message.created_at))}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+          <Text
+            style={{
+              ...type.caption,
+              fontWeight: "400",
+              opacity: 0.75,
+              color: outbound ? colors.onBrand : colors.textTertiary,
+              fontVariant: ["tabular-nums"],
+              textAlign: "left",
+            }}
+          >
+            {formatters.time.format(new Date(message.created_at))}
+          </Text>
+          {outbound ? (
+            <DeliveryTicks status={message.delivery_status} color={colors.onBrand} />
+          ) : null}
+        </View>
         {outbound ? <MessageDeliveryIndicator status={message.delivery_status} /> : null}
       </View>
     );
@@ -476,9 +510,14 @@ const MessageBubble = memo(function MessageBubble({
         </View>
       ) : null}
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm }}>
-        <Text style={{ ...type.caption, fontWeight: "400", opacity: 0.75, color: outbound ? colors.onBrand : colors.textTertiary, fontVariant: ["tabular-nums"], textAlign: "left" }}>
-          {formatters.time.format(new Date(message.created_at))}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+          <Text style={{ ...type.caption, fontWeight: "400", opacity: 0.75, color: outbound ? colors.onBrand : colors.textTertiary, fontVariant: ["tabular-nums"], textAlign: "left" }}>
+            {formatters.time.format(new Date(message.created_at))}
+          </Text>
+          {outbound ? (
+            <DeliveryTicks status={message.delivery_status} color={colors.onBrand} />
+          ) : null}
+        </View>
         {message.content && message.message_type !== "reaction" ? (
           <Pressable accessibilityRole="button" accessibilityLabel="إعادة إرسال الرسالة" onPress={() => onResend(message.content)} hitSlop={spacing.sm} style={({ pressed }) => ({ minWidth: hitSize.min, minHeight: hitSize.min - 12, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: 3, opacity: pressed ? 0.55 : 0.78 })}>
             <IconSymbol name="paperplane.fill" color={outbound ? colors.onBrand : colors.textSecondary} size={12} />

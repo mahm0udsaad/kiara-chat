@@ -4,6 +4,7 @@
  * client and is always pinned to Kiara's tenant). Mirrors the parent app's
  * findOrCreate + saveMessage, keyed on the WhatsApp message id.
  */
+import { statusesReplaceableBy } from "@/lib/delivery-status";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { canonicalPhone } from "@/lib/phone";
@@ -339,17 +340,30 @@ export async function rememberConversationTransport(
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
 }
 
+/**
+ * Records a provider's delivery report, never moving a mark backwards (see
+ * lib/delivery-status). Returns how many rows changed: 0 when the report is
+ * stale, or when no message carries this provider id yet.
+ */
 export async function updateDeliveryStatus(
   externalMessageSid: string,
   status: string,
   /** Twilio's own wording, kept verbatim next to our normalised value. */
   rawProviderStatus?: string | null
-): Promise<void> {
-  await getAdminSupabaseClient()
+): Promise<number> {
+  const replaceable = statusesReplaceableBy(status);
+  let query = getAdminSupabaseClient()
     .from("messages")
     .update({
       delivery_status: status,
       ...(rawProviderStatus ? { twilio_status: rawProviderStatus } : {}),
     })
     .eq("external_message_sid", externalMessageSid);
+  if (replaceable) {
+    query = query.or(
+      `delivery_status.is.null,delivery_status.in.(${replaceable.join(",")})`,
+    );
+  }
+  const { data } = await query.select("id");
+  return data?.length ?? 0;
 }

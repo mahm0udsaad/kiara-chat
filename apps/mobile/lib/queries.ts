@@ -212,13 +212,31 @@ export function useConversations(
   });
 }
 
+/** A reply is watched for its ticks for this long after it was sent. */
+const TICKS_WATCH_MS = 10 * 60_000;
+
 export function useConversation(id: string) {
   return useQuery({
     queryKey: queryKeys.conversation(id),
     queryFn: () => apiRequest<ConversationDetail>(`/conversations/${id}`),
     enabled: Boolean(id),
-    // Realtime and push events invalidate the open conversation. Avoid a
-    // second unconditional polling loop while the thread sits unchanged.
+    // Realtime and push events invalidate the open conversation, but nothing
+    // announces a delivered or read receipt. So the open thread looks again
+    // only while a reply from the last few minutes is still waiting for its
+    // blue ticks, and stops as soon as it has them or the window passes — it
+    // is never an unconditional polling loop over a thread that sits unchanged.
+    refetchInterval: (query) => {
+      const now = Date.now();
+      return query.state.data?.messages.some(
+        (message) =>
+          message.role === "agent" &&
+          (message.delivery_status === "sent" || message.delivery_status === "delivered") &&
+          now - Date.parse(message.created_at) < TICKS_WATCH_MS,
+      )
+        ? 15_000
+        : false;
+    },
+    refetchIntervalInBackground: false,
   });
 }
 

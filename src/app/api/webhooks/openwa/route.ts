@@ -121,6 +121,8 @@ async function quoteReaction(
 
 /** How long after the app records a send its own echo can still arrive. */
 const ECHO_WINDOW_MS = 2 * 60_000;
+/** Long enough for a send to finish writing its provider id onto the row. */
+const ACK_RETRY_MS = 3_000;
 
 /**
  * The engine echoes every message the number sends, including the ones this
@@ -197,7 +199,23 @@ export async function POST(request: NextRequest) {
 
   // Delivery/read acks.
   if (event.type === "ack") {
-    await updateDeliveryStatus(event.waMessageId, event.status);
+    const { waMessageId, status } = event;
+    const updated = await updateDeliveryStatus(waMessageId, status);
+    // A receipt can outrun the send that caused it: the recipient's phone
+    // answers within a second, while the send path is still writing this id
+    // onto its row. That "delivered" then matched nothing and was lost, and a
+    // message nobody went on to read stayed at one tick. Look once more, after
+    // the reply, when the id is simply not there yet.
+    if (
+      !updated &&
+      (status === "delivered" || status === "read") &&
+      !(await hasMessageWithSid(waMessageId))
+    ) {
+      after(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ACK_RETRY_MS));
+        await updateDeliveryStatus(waMessageId, status).catch(() => 0);
+      });
+    }
     return NextResponse.json({ ok: true });
   }
 
