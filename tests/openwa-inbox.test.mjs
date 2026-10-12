@@ -266,6 +266,7 @@ test("replayed activity cannot move an existing chat backwards or inflate unread
   const { bumpConversationActivity } = load("src/lib/server-conversations.ts", {
     "@/lib/supabase/admin": { getAdminSupabaseClient: () => ({ from: () => query }) },
     "@/lib/tenant": { KIARA_RESTAURANT_ID: "tenant" },
+    "@/lib/delivery-status": { statusesReplaceableBy: () => null },
     "@/lib/phone": {},
   });
   await bumpConversationActivity("customer", { inbound: true, occurredAt: "2026-09-12T10:00:00.000Z", incrementUnread: false });
@@ -285,6 +286,7 @@ test("new chats imported from history start at the original time", async () => {
   const server = load("src/lib/server-conversations.ts", {
     "@/lib/supabase/admin": { getAdminSupabaseClient: () => ({ from: () => query }) },
     "@/lib/tenant": { KIARA_RESTAURANT_ID: "tenant" },
+    "@/lib/delivery-status": { statusesReplaceableBy: () => null },
     "@/lib/phone": { canonicalPhone: (phone) => phone },
   });
   const timestamp = "2026-09-01T10:00:00.000Z";
