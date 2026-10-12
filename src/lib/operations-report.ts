@@ -1,4 +1,12 @@
 import {
+  DEFAULT_GRACE_MINUTES,
+  driverTripSteps,
+  SPECIALIST_LEAD_MINUTES,
+  summarizeDriverSteps,
+  type DriverLateness,
+  type DriverTripSteps,
+} from "@/lib/driver-steps";
+import {
   averageFieldLegs,
   fieldLegsOf,
   type FieldLegAverage,
@@ -22,6 +30,8 @@ export type OperationsPerson = {
   completedCount: number;
   scheduledMinutes: number;
   completedMinutes: number;
+  /** A driver's two arrival steps over the range; null for specialists. */
+  lateness: DriverLateness | null;
 };
 
 export type OperationsEvent = {
@@ -45,6 +55,13 @@ export type OperationsEvent = {
   punctualityClassification: string | null;
   lateReasonCode: string | null;
   lateReasonNote: string | null;
+  /** Which leg of the visit a driver's event is; null for specialists. */
+  driverLeg: "outbound" | "return" | null;
+  /**
+   * «وصلت للأخصائية» and «وصلت للعميلة» against their due times. Only on a
+   * dispatched outbound leg: the return driver confirms neither step.
+   */
+  driverSteps: DriverTripSteps | null;
 };
 
 export type OperationsReport = {
@@ -81,11 +98,14 @@ export type OperationsReport = {
     uncertain: number;
     missingReason: number;
   };
+  /** What `driverSteps` was judged against, so the screens can say so. */
+  driverStepRules: { specialistLeadMinutes: number; graceMinutes: number };
 };
 
 type RosterRow = { id: string; full_name: string; is_active: boolean };
 type OrderRow = {
   id: string;
+  status: string;
   sent_at: string | null;
   specialist_id: string | null;
   driver_id: string | null;
@@ -215,6 +235,7 @@ function buildPeople(
       completedCount: 0,
       scheduledMinutes: 0,
       completedMinutes: 0,
+      lateness: null,
     };
   });
   for (const name of extraNames) {
@@ -231,6 +252,7 @@ function buildPeople(
       completedCount: 0,
       scheduledMinutes: 0,
       completedMinutes: 0,
+      lateness: null,
     });
   }
   return { people, idByName };
@@ -280,6 +302,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
     specialistsResult,
     driversResult,
     punctualityResult,
+    punctualitySettingsResult,
   ] =
     await Promise.all([
       admin
@@ -292,7 +315,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         .lte("arrival_at", rangeEnd),
       admin
         .from("driver_orders")
-        .select("id, sent_at, specialist_id, driver_id, return_driver_id, trip_type, arrival_at, duration_minutes, customer_phone, rekaz_source_id, price, return_price")
+        .select("id, status, sent_at, specialist_id, driver_id, return_driver_id, trip_type, arrival_at, duration_minutes, customer_phone, rekaz_source_id, price, return_price")
         .eq("restaurant_id", KIARA_RESTAURANT_ID)
         .gte("arrival_at", rangeStart)
         .lte("arrival_at", rangeEnd),
@@ -316,9 +339,14 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         .eq("restaurant_id", KIARA_RESTAURANT_ID),
       admin
         .from("order_punctuality")
-        .select("order_id, classification, late_reason_code, late_reason_note, driver_orders!inner(status)")
+        .select("order_id, classification, late_reason_code, late_reason_note, planned_specialist_arrival_at, driver_orders!inner(status)")
         .eq("restaurant_id", KIARA_RESTAURANT_ID)
         .neq("driver_orders.status", "cancelled"),
+      admin
+        .from("punctuality_settings")
+        .select("grace_minutes")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .maybeSingle(),
     ]);
 
   for (const result of [reservationsResult, ordersResult, progressResult, checkpointsResult, specialistsResult, driversResult]) {
@@ -333,6 +361,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
   const rangeOrderIds = new Set(orders.map((order) => order.id));
   const punctualityRows = ((punctualityResult.data ?? []) as unknown as {
     order_id: string; classification: string; late_reason_code: string | null; late_reason_note: string | null;
+    planned_specialist_arrival_at: string | null;
   }[]).filter((row) => rangeOrderIds.has(row.order_id));
   const punctualityByOrder = new Map(punctualityRows.map((row) => [row.order_id, row]));
   const punctualityFields = (orderId: string | null) => {
@@ -343,6 +372,11 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
       lateReasonNote: row?.late_reason_note ?? null,
     };
   };
+  const graceMinutes = Number(
+    (punctualitySettingsResult.data as { grace_minutes?: number } | null)?.grace_minutes ??
+      DEFAULT_GRACE_MINUTES,
+  );
+  const nowMs = Date.now();
   const startMinute = timeToMinutes(input.startTime);
   const endMinute = timeToMinutes(input.endTime);
 
@@ -463,6 +497,8 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         completedAt,
         tripCost: linkedOrder?.price == null ? null : Number(linkedOrder.price),
         ...punctualityFields(linkedOrder?.id ?? null),
+        driverLeg: null,
+        driverSteps: null,
       });
     }
   }
@@ -489,13 +525,18 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         completedAt,
         tripCost: order.price == null ? null : Number(order.price),
         ...punctualityFields(order.id),
+        driverLeg: null,
+        driverSteps: null,
       });
     }
   }
 
   const driverEvents: OperationsEvent[] = [];
   for (const order of orders) {
+    // A cancelled order is not a trip the driver has: listing it would read
+    // as one he never finished, with two steps he never confirmed.
     if (
+      order.status === "cancelled" ||
       (!order.driver_id && !order.return_driver_id) ||
       !overlapsWindow(order.arrival_at, order.duration_minutes, startMinute, endMinute)
     ) continue;
@@ -541,6 +582,20 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         completed: Boolean(outboundCompletedAt),
         completedAt: outboundCompletedAt,
         tripCost: order.price == null ? null : Number(order.price),
+        driverLeg: "outbound",
+        // Judged against the time the driver was sent, and only once he was
+        // sent: an order still waiting for dispatch owes nobody a step.
+        driverSteps: order.sent_at
+          ? driverTripSteps({
+              arrivalAt: order.arrival_at,
+              plannedSpecialistAt:
+                punctualityByOrder.get(order.id)?.planned_specialist_arrival_at ?? null,
+              driverArrivedAt: orderProgress?.driver_arrived_at ?? null,
+              driverClientArrivedAt: orderProgress?.driver_client_arrived_at ?? null,
+              graceMinutes,
+              nowMs,
+            })
+          : null,
       });
     }
     if (order.return_driver_id) {
@@ -553,12 +608,21 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         completed: Boolean(returnCompletedAt),
         completedAt: returnCompletedAt,
         tripCost: order.return_price == null ? null : Number(order.return_price),
+        driverLeg: "return",
+        driverSteps: null,
       });
     }
   }
 
   addMetrics(specialistPeople.people, specialistEvents);
   addMetrics(driverPeople.people, driverEvents);
+  for (const person of driverPeople.people) {
+    person.lateness = summarizeDriverSteps(
+      driverEvents.flatMap((event) =>
+        event.driverSteps && event.personIds.includes(person.id) ? [event.driverSteps] : [],
+      ),
+    );
+  }
   const byArrival = (a: OperationsEvent, b: OperationsEvent) => a.arrivalAt.localeCompare(b.arrivalAt);
 
   return {
@@ -584,5 +648,6 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
       uncertain: punctualityRows.filter((row) => row.classification === "uncertain").length,
       missingReason: punctualityRows.filter((row) => isLateClassification(row.classification) && !row.late_reason_code).length,
     },
+    driverStepRules: { specialistLeadMinutes: SPECIALIST_LEAD_MINUTES, graceMinutes },
   };
 }

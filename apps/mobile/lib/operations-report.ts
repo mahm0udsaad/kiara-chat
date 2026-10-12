@@ -1,5 +1,10 @@
 import { addDays, dayKeyFromToday, dayKeyOf } from "@/lib/calendar";
-import type { OperationsEvent, OperationsRole } from "@/types/api";
+import type {
+  DriverStep,
+  DriverTripSteps,
+  OperationsEvent,
+  OperationsRole,
+} from "@/types/api";
 
 export type ReportPeriod = "today" | "month" | "week";
 
@@ -34,6 +39,8 @@ export type OperationsVisit = {
   punctualityClassification: string | null;
   lateReasonCode: string | null;
   lateReasonNote: string | null;
+  driverLeg: "outbound" | "return" | null;
+  driverSteps: DriverTripSteps | null;
 };
 
 /** Current Saudi working week (Sunday–Saturday) or current calendar month. */
@@ -100,6 +107,8 @@ export function groupOperationsVisits(events: OperationsEvent[]): OperationsVisi
         punctualityClassification: rows.find((event) => event.punctualityClassification)?.punctualityClassification ?? null,
         lateReasonCode: rows.find((event) => event.lateReasonCode)?.lateReasonCode ?? null,
         lateReasonNote: rows.find((event) => event.lateReasonNote)?.lateReasonNote ?? null,
+        driverLeg: first.driverLeg ?? null,
+        driverSteps: rows.find((event) => event.driverSteps)?.driverSteps ?? null,
       };
     })
     .sort((a, b) => b.arrivalAt.localeCompare(a.arrivalAt));
@@ -114,6 +123,36 @@ export function visitsByDay(visits: OperationsVisit[]) {
     groups.set(day, bucket);
   }
   return [...groups.entries()].sort(([a], [b]) => b.localeCompare(a));
+}
+
+/** "24 د" up to two hours, then "2.5 س": a delay is read, not calculated. */
+export function delayLabel(minutes: number) {
+  return minutes >= 120
+    ? `${reportDecimal.format(minutes / 60)} س`
+    : `${reportInteger.format(minutes)} د`;
+}
+
+/** What one arrival step came to, in the words the report shows. */
+export function driverStepVerdict(step: DriverStep): {
+  label: string;
+  tone: "success" | "danger" | "warning" | "neutral";
+} {
+  if (step.status === "late") {
+    return { label: `متأخر ${delayLabel(step.lateMinutes ?? 0)}`, tone: "danger" };
+  }
+  if (step.status === "on_time") return { label: "في الموعد", tone: "success" };
+  if (step.status === "missing") return { label: "لم يُسجَّل", tone: "warning" };
+  return { label: "لم يحن موعده", tone: "neutral" };
+}
+
+export type DriverTripFilter = "all" | "open" | "done" | "late_specialist" | "late_client";
+
+export function matchesDriverTripFilter(visit: OperationsVisit, filter: DriverTripFilter) {
+  if (filter === "open") return !visit.completed;
+  if (filter === "done") return visit.completed;
+  if (filter === "late_specialist") return visit.driverSteps?.specialist.status === "late";
+  if (filter === "late_client") return visit.driverSteps?.client.status === "late";
+  return true;
 }
 
 export function completedWorkLabel(role: OperationsRole) {

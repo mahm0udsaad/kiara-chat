@@ -14,9 +14,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
+import type { DriverStep, DriverStepSummary } from "@/lib/driver-steps";
 import type {
   OperationsEvent,
   OperationsReport,
@@ -42,6 +51,12 @@ const timeFormatter = new Intl.DateTimeFormat(REPORT_LOCALE, {
   timeZone: "Asia/Riyadh",
   hour: "numeric",
   minute: "2-digit",
+});
+const shortDateFormatter = new Intl.DateTimeFormat(REPORT_LOCALE, {
+  timeZone: "Asia/Riyadh",
+  weekday: "short",
+  day: "numeric",
+  month: "short",
 });
 
 const toMinutes = (time: string) => {
@@ -134,6 +149,180 @@ function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; 
           <span className="block text-xs text-muted-foreground">{label}</span>
           <span className="block text-xl font-semibold tabular-nums">{value}</span>
         </span>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** "12 متأخر من 40 · المعتاد 24 د" for one arrival step over the range. */
+function LatenessCell({ summary }: { summary: DriverStepSummary | undefined }) {
+  if (!summary || !(summary.onTime + summary.late + summary.missing)) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="tabular-nums">
+      <span className={cn("font-medium", summary.late ? "text-destructive" : "text-emerald-700")}>
+        {numberFormatter.format(summary.late)}
+      </span>{" "}
+      من {numberFormatter.format(summary.onTime + summary.late)}
+      {summary.medianLateMinutes != null ? (
+        <span className="block text-xs text-muted-foreground">
+          المعتاد {minutesLabel(summary.medianLateMinutes)}
+        </span>
+      ) : null}
+      {summary.missing ? (
+        <span className="block text-xs text-muted-foreground">
+          {numberFormatter.format(summary.missing)} لم يُسجَّل
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** One arrival confirmation: when it was due, when he tapped it, the verdict. */
+function StepCell({ step }: { step: DriverStep | undefined }) {
+  if (!step) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className="tabular-nums">
+      {step.status === "late" ? (
+        <Badge variant="destructive">متأخر {minutesLabel(step.lateMinutes ?? 0)}</Badge>
+      ) : step.status === "on_time" ? (
+        <Badge variant="secondary">في الموعد</Badge>
+      ) : (
+        <Badge variant="outline">{step.status === "missing" ? "لم يُسجَّل" : "لم يحن موعده"}</Badge>
+      )}
+      <span className="mt-1 block text-xs text-muted-foreground">
+        المطلوب {timeFormatter.format(new Date(step.dueAt))}
+        {step.at ? ` · ضغط ${timeFormatter.format(new Date(step.at))}` : ""}
+      </span>
+    </span>
+  );
+}
+
+type DriverTripFilter = "all" | "open" | "late_specialist" | "late_client" | "done";
+
+function matchesTripFilter(event: OperationsEvent, filter: DriverTripFilter) {
+  if (filter === "open") return !event.completed;
+  if (filter === "done") return event.completed;
+  if (filter === "late_specialist") return event.driverSteps?.specialist.status === "late";
+  if (filter === "late_client") return event.driverSteps?.client.status === "late";
+  return true;
+}
+
+/**
+ * One driver's trips over the range as a plain log: which he had, which he
+ * finished, and how «وصلت للأخصائية» and «وصلت للعميلة» compared with their
+ * times.
+ */
+function DriverTrips({ report }: { report: OperationsReport }) {
+  const drivers = report.people.driver.filter((person) => person.assignedCount > 0);
+  const [selectedId, setSelectedId] = useState("");
+  const [filter, setFilter] = useState<DriverTripFilter>("all");
+  const driver = drivers.find((person) => person.id === selectedId) ?? drivers[0];
+  if (!driver) return null;
+
+  const trips = report.events.driver
+    .filter((event) => event.personIds.includes(driver.id))
+    .sort((a, b) => b.arrivalAt.localeCompare(a.arrivalAt));
+  const count = (value: DriverTripFilter) =>
+    trips.filter((event) => matchesTripFilter(event, value)).length;
+  const filters: [DriverTripFilter, string][] = [
+    ["all", "الكل"],
+    ["open", "لم تكتمل"],
+    ["late_specialist", "تأخر عند الأخصائية"],
+    ["late_client", "تأخر عند العميلة"],
+    ["done", "مكتملة"],
+  ];
+  const shown = trips.filter((event) => matchesTripFilter(event, filter));
+  const rules = report.driverStepRules;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>سجل مشاوير السائق</CardTitle>
+        <CardDescription>
+          يُحسب التأخير من ضغط السائق على الخطوة: عند الأخصائية قبل موعد العميلة بـ{" "}
+          {numberFormatter.format(rules.specialistLeadMinutes)} دقيقة، وعند العميلة في موعدها،
+          مع سماح {numberFormatter.format(rules.graceMinutes)} دقائق.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <Select value={driver.id} onValueChange={(value) => value && setSelectedId(value)}>
+            <SelectTrigger aria-label="السائق" className="min-h-11 w-full lg:w-64">
+              <SelectValue>{driver.name}</SelectValue>
+            </SelectTrigger>
+            <SelectContent position="popper">
+              <SelectGroup>
+                {drivers.map((person) => (
+                  <SelectItem key={person.id} value={person.id}>
+                    {person.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <ToggleGroup
+            type="single"
+            value={filter}
+            onValueChange={(value) => value && setFilter(value as DriverTripFilter)}
+            variant="outline"
+            spacing={0}
+            aria-label="تصفية المشاوير"
+            className="flex-wrap"
+          >
+            {filters.map(([value, label]) => (
+              <ToggleGroupItem key={value} value={value} aria-label={label}>
+                {label} <span className="tabular-nums opacity-70">{numberFormatter.format(count(value))}</span>
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </div>
+
+        {shown.length ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>موعد العميلة</TableHead>
+                <TableHead>العميلة</TableHead>
+                <TableHead className="text-center">الحالة</TableHead>
+                <TableHead>وصلت للأخصائية</TableHead>
+                <TableHead>وصلت للعميلة</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {shown.map((event) => (
+                <TableRow key={event.id}>
+                  <TableCell className="tabular-nums">
+                    {shortDateFormatter.format(new Date(event.arrivalAt))}
+                    <span className="block text-xs text-muted-foreground">
+                      {timeFormatter.format(new Date(event.arrivalAt))}
+                    </span>
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    {event.customerName || event.customerPhone}
+                    {event.driverLeg === "return" ? (
+                      <span className="block text-xs font-normal text-muted-foreground">مشوار عودة</span>
+                    ) : null}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {event.completed ? (
+                      <Badge variant="secondary">مكتمل</Badge>
+                    ) : (
+                      <Badge variant="outline">لم يكتمل</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell><StepCell step={event.driverSteps?.specialist} /></TableCell>
+                  <TableCell><StepCell step={event.driverSteps?.client} /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+            لا توجد مشاوير بهذا التصنيف خلال الفترة المختارة.
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -438,6 +627,12 @@ export function OperationsReportClient({ initialReport }: { initialReport: Opera
                 <TableHead className="text-center">مكتمل</TableHead>
                 <TableHead className="text-center">نسبة الإنجاز</TableHead>
                 <TableHead className="text-center">الساعات</TableHead>
+                {role === "driver" ? (
+                  <>
+                    <TableHead className="text-center">تأخر عند الأخصائية</TableHead>
+                    <TableHead className="text-center">تأخر عند العميلة</TableHead>
+                  </>
+                ) : null}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -454,12 +649,20 @@ export function OperationsReportClient({ initialReport }: { initialReport: Opera
                     {person.assignedCount ? numberFormatter.format(Math.round((person.completedCount / person.assignedCount) * 100)) : "0"}%
                   </TableCell>
                   <TableCell className="text-center tabular-nums">{hoursLabel(person.scheduledMinutes)} س</TableCell>
+                  {role === "driver" ? (
+                    <>
+                      <TableCell className="text-center"><LatenessCell summary={person.lateness?.specialist} /></TableCell>
+                      <TableCell className="text-center"><LatenessCell summary={person.lateness?.client} /></TableCell>
+                    </>
+                  ) : null}
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
+
+      {role === "driver" ? <DriverTrips report={report} /> : null}
 
       <Card>
         <CardHeader className="gap-3 sm:grid-cols-[1fr_auto]">

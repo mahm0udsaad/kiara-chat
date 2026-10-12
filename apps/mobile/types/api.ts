@@ -516,6 +516,39 @@ export type OperationsPerson = {
   completedCount: number;
   scheduledMinutes: number;
   completedMinutes: number;
+  /** A driver's two arrival steps over the range; absent from an older server. */
+  lateness?: DriverLateness | null;
+};
+
+export type DriverStepStatus = "on_time" | "late" | "missing" | "upcoming";
+
+/** One of the driver's arrival confirmations against the time he was due. */
+export type DriverStep = {
+  dueAt: string;
+  at: string | null;
+  /** "missing": never confirmed although due; "upcoming": not due yet. */
+  status: DriverStepStatus;
+  /** Minutes past `dueAt`, set only when late. */
+  lateMinutes: number | null;
+};
+
+export type DriverTripSteps = {
+  specialist: DriverStep;
+  client: DriverStep;
+  specialistDueBasis: "plan" | "lead";
+};
+
+export type DriverStepSummary = {
+  onTime: number;
+  late: number;
+  missing: number;
+  medianLateMinutes: number | null;
+};
+
+export type DriverLateness = {
+  trips: number;
+  specialist: DriverStepSummary;
+  client: DriverStepSummary;
 };
 
 export type OperationsEvent = {
@@ -538,6 +571,9 @@ export type OperationsEvent = {
   punctualityClassification: string | null;
   lateReasonCode: string | null;
   lateReasonNote: string | null;
+  driverLeg?: "outbound" | "return" | null;
+  /** «وصلت للأخصائية» and «وصلت للعميلة» on a dispatched outbound leg. */
+  driverSteps?: DriverTripSteps | null;
 };
 
 export type OperationsReport = {
@@ -557,6 +593,7 @@ export type OperationsReport = {
     uncertain: number;
     missingReason: number;
   };
+  driverStepRules?: { specialistLeadMinutes: number; graceMinutes: number };
 };
 
 export type OrdersReportDay = {

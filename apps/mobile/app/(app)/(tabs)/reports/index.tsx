@@ -240,7 +240,9 @@ export default function ReportsScreen() {
               }}
             >
               <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>الفريق</Text>
-              <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>اضغطي على الاسم لعرض الأداء والحجوزات مجمّعة حسب زيارة العميلة.</Text>
+              <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>{role === "driver"
+                  ? "اضغطي على الاسم لعرض مشاوير السائق، ما اكتمل منها وأين تأخر."
+                  : "اضغطي على الاسم لعرض الأداء والحجوزات مجمّعة حسب زيارة العميلة."}</Text>
             </View>
             {people.map((person: OperationsPerson, index) => {
               return (
@@ -292,6 +294,21 @@ export default function ReportsScreen() {
                           <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
                             {reportInteger.format(person.assignedCount)} مسند · {reportInteger.format(person.completedCount)} مكتمل · {reportDecimal.format(person.scheduledMinutes / 60)} ساعة
                           </Text>
+                          {person.lateness?.trips ? (
+                            <Text
+                              selectable
+                              style={{
+                                ...type.footnote,
+                                ...numeric,
+                                ...rtlText,
+                                color: person.lateness.specialist.late || person.lateness.client.late
+                                  ? colors.danger
+                                  : colors.success,
+                              }}
+                            >
+                              تأخر عند الأخصائية {reportInteger.format(person.lateness.specialist.late)} · عند العميلة {reportInteger.format(person.lateness.client.late)}
+                            </Text>
+                          ) : null}
                         </View>
                         <View
                           pointerEvents="none"

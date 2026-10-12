@@ -8,21 +8,26 @@ import {
   ReportDateRangeFilter,
   type ReportDateSelection,
 } from "@/components/reports/report-date-range-filter";
+import { DriverTripLog } from "@/components/reports/driver-trip-log";
 import { VisitCard } from "@/components/reports/visit-card";
 import { Card } from "@/components/ui/card";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
+import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { dayKeyFromToday } from "@/lib/calendar";
 import {
   completedWorkLabel,
+  delayLabel,
   groupOperationsVisits,
+  matchesDriverTripFilter,
   reportDecimal,
   reportInteger,
   visitsByDay,
+  type DriverTripFilter,
 } from "@/lib/operations-report";
 import { useBootstrap, useOperationsReport } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
-import type { OperationsRole } from "@/types/api";
+import type { DriverStepSummary, OperationsRole } from "@/types/api";
 
 const dayLabel = new Intl.DateTimeFormat("en-US-u-ca-gregory-nu-latn", {
   timeZone: "Asia/Riyadh",
@@ -52,6 +57,28 @@ function Metric({ icon, label, value }: { icon: IconName; label: string; value: 
       <IconSymbol name={icon} size={18} color={colors.brand} />
       <Text style={{ ...type.caption, ...rtlText, color: colors.textTertiary }}>{label}</Text>
       <Text selectable style={{ ...type.title3, ...numeric, ...rtlText, color: colors.text }}>{value}</Text>
+    </View>
+  );
+}
+
+/** One arrival step over the whole range: how often late, and by how much. */
+function LatenessRow({ title, summary }: { title: string; summary: DriverStepSummary }) {
+  const { colors } = useTheme();
+  const judged = summary.onTime + summary.late;
+  return (
+    <View style={{ gap: spacing.xs }}>
+      <View style={{ flexDirection: "row-reverse", alignItems: "baseline", justifyContent: "space-between", gap: spacing.md }}>
+        <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.text }}>{title}</Text>
+        <Text selectable style={{ ...type.subheadStrong, ...numeric, color: summary.late ? colors.danger : colors.success }}>
+          {reportInteger.format(summary.late)} متأخر من {reportInteger.format(judged)}
+        </Text>
+      </View>
+      <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textSecondary }}>
+        {summary.medianLateMinutes != null
+          ? `التأخير المعتاد ${delayLabel(summary.medianLateMinutes)}`
+          : "لا يوجد تأخير مسجل"}
+        {summary.missing ? ` · ${reportInteger.format(summary.missing)} لم يُسجَّل` : ""}
+      </Text>
     </View>
   );
 }
@@ -86,6 +113,7 @@ export default function EmployeeReportScreen() {
   const { colors } = useTheme();
   const bootstrap = useBootstrap();
   const [range, setRange] = useState(() => initialSelection(asOne(params.from), asOne(params.to)));
+  const [tripFilter, setTripFilter] = useState<DriverTripFilter>("all");
   const startTime = asOne(params.startTime) || "08:00";
   const endTime = asOne(params.endTime) || "22:00";
   const report = useOperationsReport(
@@ -105,6 +133,20 @@ export default function EmployeeReportScreen() {
   const name = person?.name || fallbackName || (role === "specialist" ? "الأخصائية" : "السائق");
   const events = (report.data?.events[role] ?? []).filter((event) => event.personIds.includes(personId));
   const visits = groupOperationsVisits(events);
+  const lateness = role === "driver" ? person?.lateness ?? null : null;
+  const rules = report.data?.driverStepRules;
+  const count = (filter: DriverTripFilter) =>
+    visits.filter((visit) => matchesDriverTripFilter(visit, filter)).length;
+  const tripFilters: SegmentOption<DriverTripFilter>[] = [
+    { value: "all", label: "الكل", count: visits.length },
+    { value: "open", label: "لم تكتمل", count: count("open") },
+    { value: "late_specialist", label: "تأخر عند الأخصائية", count: count("late_specialist") },
+    { value: "late_client", label: "تأخر عند العميلة", count: count("late_client") },
+    { value: "done", label: "مكتملة", count: count("done") },
+  ];
+  const tripLogDays = visitsByDay(
+    visits.filter((visit) => matchesDriverTripFilter(visit, tripFilter)),
+  );
   const groupedDays = visitsByDay(visits);
   const completedVisits = visits.filter((visit) => visit.completed).length;
   const completedServices = events.filter((event) => event.completed).length;
@@ -176,6 +218,54 @@ export default function EmployeeReportScreen() {
                 نسبة إكمال الزيارات خلال الفترة المختارة
               </Text>
             </Card>
+
+            {lateness ? (
+              <Card>
+                <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>الالتزام بالمواعيد</Text>
+                <LatenessRow title="وصلت للأخصائية" summary={lateness.specialist} />
+                <LatenessRow title="وصلت للعميلة" summary={lateness.client} />
+                {rules ? (
+                  <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
+                    يُحسب من ضغط السائق على الخطوة: عند الأخصائية قبل موعد العميلة بـ{" "}
+                    {reportInteger.format(rules.specialistLeadMinutes)} دقيقة، وعند العميلة في موعدها، مع سماح{" "}
+                    {reportInteger.format(rules.graceMinutes)} دقائق.
+                  </Text>
+                ) : null}
+              </Card>
+            ) : null}
+
+            {lateness ? (
+              <View style={{ gap: spacing.md }}>
+                <View style={{ gap: spacing.xs }}>
+                  <Text style={{ ...type.title3, ...rtlText, color: colors.text }}>سجل المشاوير</Text>
+                  <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
+                    كل مشوار للسائق: هل اكتمل، ومتى كان مطلوبًا ومتى ضغط على الخطوتين.
+                  </Text>
+                </View>
+                <Segmented
+                  options={tripFilters}
+                  value={tripFilter}
+                  onChange={setTripFilter}
+                  layout="scroll"
+                  accessibilityLabel="تصفية المشاوير"
+                  testIDPrefix="driver-trips-filter"
+                />
+                {tripLogDays.length ? tripLogDays.map(([day, dayVisits]) => (
+                  <View key={day} style={{ gap: spacing.sm }}>
+                    <Text selectable style={{ ...type.subheadStrong, ...rtlText, color: colors.textSecondary }}>
+                      {dayLabel.format(new Date(`${day}T12:00:00+03:00`))}
+                    </Text>
+                    <DriverTripLog visits={dayVisits} />
+                  </View>
+                )) : (
+                  <Card>
+                    <Text style={{ ...type.body, ...rtlText, color: colors.textSecondary }}>
+                      لا توجد مشاوير بهذا التصنيف خلال الفترة المختارة.
+                    </Text>
+                  </Card>
+                )}
+              </View>
+            ) : null}
 
             <View style={{ gap: spacing.lg }}>
               <View style={{ gap: spacing.xs }}>
