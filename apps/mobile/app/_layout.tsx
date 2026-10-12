@@ -1,4 +1,4 @@
-import type { ErrorBoundaryProps } from "expo-router";
+import { useSegments, type ErrorBoundaryProps } from "expo-router";
 import { Stack } from "expo-router/stack";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
@@ -7,11 +7,30 @@ import * as Updates from "expo-updates";
 
 // Defines the driver-trip background task at bundle load; see the module.
 import "@/lib/driver-trip-tracking";
+import {
+  recordDiagnostic,
+  setDiagnosticsRoute,
+  startDiagnostics,
+} from "@/lib/diagnostics";
+import { sendDiagnostics, startDiagnosticsUpload } from "@/lib/diagnostics-upload";
 import { AppProviders } from "@/providers/app-providers";
 import { fieldLocaleForSession } from "@/lib/field-i18n";
 import { useBootstrap } from "@/lib/queries";
 import { useAuth } from "@/providers/auth-provider";
 import { useTheme } from "@/providers/theme-provider";
+
+// At bundle load, so a failure during startup is on record too.
+startDiagnostics();
+startDiagnosticsUpload();
+
+/** Tells the diagnostics which screen is up, as a route pattern with no ids. */
+function DiagnosticsRoute() {
+  const route = useSegments().join("/");
+  useEffect(() => {
+    setDiagnosticsRoute(route);
+  }, [route]);
+  return null;
+}
 
 /**
  * Native navigation direction is process-wide, so change it only after the
@@ -88,6 +107,12 @@ function RootNavigator() {
  * the second crash. The few colours are inlined from `app.json` on purpose.
  */
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  // The employee sees a retry button; this is how anyone else finds out.
+  useEffect(() => {
+    recordDiagnostic({ kind: "render_error", message: error.message, stack: error.stack });
+    void sendDiagnostics();
+  }, [error]);
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: "#F4F6FB" }}
@@ -145,6 +170,7 @@ export default function RootLayout() {
   return (
     <AppProviders>
       <AppDirectionSync />
+      <DiagnosticsRoute />
       <RootNavigator />
     </AppProviders>
   );

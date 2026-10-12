@@ -1,6 +1,7 @@
 import { fetch } from "expo/fetch";
 import { File, UploadType } from "expo-file-system";
 
+import { recordRequestTiming } from "@/lib/diagnostics";
 import {
   rememberSession,
   rememberedAccessToken,
@@ -124,6 +125,26 @@ export type ApiRequestOptions = RequestInit & {
 export async function apiRequest<T>(
   path: string,
   init: ApiRequestOptions = {},
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    const result = await performApiRequest<T>(path, init);
+    recordRequestTiming(path, Date.now() - startedAt, "ok");
+    return result;
+  } catch (cause) {
+    const code = cause instanceof ApiError ? cause.code : undefined;
+    recordRequestTiming(
+      path,
+      Date.now() - startedAt,
+      code === "TIMEOUT" ? "timeout" : code === "NETWORK" ? "network" : "http_error",
+    );
+    throw cause;
+  }
+}
+
+async function performApiRequest<T>(
+  path: string,
+  init: ApiRequestOptions,
 ): Promise<T> {
   if (!apiUrl) {
     throw new ApiError("أضيفي EXPO_PUBLIC_API_URL في ملف .env", 0, "NO_API_URL");
