@@ -927,15 +927,29 @@ async function mirrorFieldProgressToConversation(
     .eq("restaurant_id", KIARA_RESTAURANT_ID);
 }
 
+/**
+ * The field app polls its order list and the open order every 20–30 s, and
+ * each poll used to rewrite this stamp — 77k row updates (and as many dead
+ * tuples and WAL records) for a value nothing reads at that resolution. The
+ * stamp now moves at most once per window: a poll inside it matches no row.
+ */
+export const FIELD_ACTIVITY_WRITE_WINDOW_MS = 5 * 60_000;
+
 export async function touchFieldStaffActivity(
   accountId: string,
   at = new Date().toISOString()
 ): Promise<void> {
+  const staleBefore = new Date(
+    Date.parse(at) - FIELD_ACTIVITY_WRITE_WINDOW_MS
+  ).toISOString();
   await getAdminSupabaseClient()
     .from("field_staff_accounts")
     .update({ last_app_activity_at: at })
     .eq("id", accountId)
-    .eq("restaurant_id", KIARA_RESTAURANT_ID);
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .or(
+      `last_app_activity_at.is.null,last_app_activity_at.lt."${staleBefore}"`
+    );
 }
 
 export async function ensureFieldOrderProgress(orderId: string): Promise<void> {
