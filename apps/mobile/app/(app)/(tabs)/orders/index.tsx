@@ -55,8 +55,8 @@ import {
 import { useTheme } from "@/providers/theme-provider";
 
 /** How far the day strip scrolls in each direction. */
-const STRIP_BACK = 7;
-const STRIP_AHEAD = 30;
+const STRIP_BACK = 60;
+const STRIP_AHEAD = 60;
 const DAY_CHIP_WIDTH = 62;
 
 const filters: SegmentOption<VisitFilter>[] = [
