@@ -9,15 +9,15 @@ import { listMetaTemplatesWithStatus } from "@/lib/transport/meta-content";
 /**
  * What the WhatsApp Cloud API cost, day by day, in Saudi riyals.
  *
- * Meta has charged per delivered template since July 2025. A reply inside the
- * customer's open 24-hour window is free, and so is a utility template sent
- * inside one; a marketing template is charged wherever it lands. So the bill
- * is the templates, not the conversation volume.
+ * Meta charges per delivered message. Its docs call replies inside the
+ * customer's 24-hour window free, but Kiara's own pricing_analytics (week of
+ * 11 Oct 2026) shows every one of 5,559 service replies charged at the
+ * regular service rate. So the bill is the reply volume, not the templates:
+ * about 30 SAR a day, nine-tenths of it replies.
  *
- * The figure comes from Meta's own `pricing_analytics` on the WABA when it can
- * be read — the cost Meta will invoice. When it cannot (a token without the
- * permission, Meta down), it is estimated from the templates this app sent and
- * saw delivered, priced with the published rate card below, and says so.
+ * The figure comes from Meta's own `pricing_analytics` for the days Meta has
+ * published — it publishes a day late — and from the messages Meta delivered
+ * for us, priced at the rate card below, for the days it has not.
  */
 
 /**
@@ -37,9 +37,7 @@ export const META_SAUDI_RATES_SAR = {
 /** The riyal is pegged; a USD-billed WABA converts at the peg. */
 const SAR_PER_USD = 3.75;
 const CACHE_TTL_MS = 15 * 60_000;
-const OPEN_WINDOW_MS = 24 * 3600_000;
 const PAGE_SIZE = 1_000;
-const ID_BATCH_SIZE = 200;
 
 export type MetaSpendCategory = "marketing" | "utility" | "authentication" | "service";
 
@@ -211,8 +209,7 @@ async function spendFromMeta(fromMs: number, toMs: number): Promise<MetaSpend> {
   return finish(spend, days);
 }
 
-type TemplateMessageRow = {
-  conversation_id: string;
+type DeliveredMessageRow = {
   created_at: string;
   metadata: { template?: { key?: string; contentSid?: string } } | null;
 };
@@ -244,69 +241,43 @@ async function templateCategories(): Promise<(name: string, sid: string) => Meta
   };
 }
 
-/** Priced here: every Meta template this app saw delivered, at the rate card. */
-async function estimateFromSends(fromMs: number, toMs: number, note: string): Promise<MetaSpend> {
+/**
+ * Priced here: every message Meta delivered for us (a `wamid.` id, delivered
+ * or read), at the rate card — templates by their category, everything else
+ * as a service reply. Meta's own figures for Kiara show every service reply
+ * charged at the regular rate, none inside a free window, so none is
+ * treated as free here either.
+ */
+async function estimateFromSends(fromMs: number, toMs: number): Promise<MetaSpend> {
   const admin = getAdminSupabaseClient();
-  const sent: TemplateMessageRow[] = [];
+  const sent: DeliveredMessageRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await admin
       .from("messages")
-      .select("conversation_id, created_at, metadata, conversations!inner(restaurant_id)")
+      .select("created_at, metadata, conversations!inner(restaurant_id)")
       .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
       .eq("role", "agent")
       .in("delivery_status", ["delivered", "read"])
-      .not("metadata->template", "is", null)
+      .like("external_message_sid", "wamid.%")
       .gte("created_at", new Date(fromMs).toISOString())
       .lt("created_at", new Date(toMs).toISOString())
       .order("created_at", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(error.message);
-    sent.push(...((data ?? []) as unknown as TemplateMessageRow[]));
+    sent.push(...((data ?? []) as unknown as DeliveredMessageRow[]));
     if ((data ?? []).length < PAGE_SIZE) break;
   }
-  const metaSends = sent.filter((row) =>
-    (row.metadata?.template?.contentSid ?? row.metadata?.template?.key ?? "").startsWith("meta:"),
-  );
 
-  // When each customer last wrote, to tell a free in-window utility template
-  // from a charged one. Reaches a day back so the first morning is judged too.
-  const inboundByConversation = new Map<string, number[]>();
-  const conversationIds = [...new Set(metaSends.map((row) => row.conversation_id))];
-  for (let index = 0; index < conversationIds.length; index += ID_BATCH_SIZE) {
-    const { data, error } = await admin
-      .from("messages")
-      .select("conversation_id, created_at")
-      .eq("role", "customer")
-      .in("conversation_id", conversationIds.slice(index, index + ID_BATCH_SIZE))
-      .gte("created_at", new Date(fromMs - OPEN_WINDOW_MS).toISOString())
-      .lt("created_at", new Date(toMs).toISOString());
-    if (error) throw new Error(error.message);
-    for (const row of (data ?? []) as { conversation_id: string; created_at: string }[]) {
-      const list = inboundByConversation.get(row.conversation_id) ?? [];
-      list.push(Date.parse(row.created_at));
-      inboundByConversation.set(row.conversation_id, list);
-    }
-  }
-  const windowOpen = (conversationId: string, atMs: number) =>
-    (inboundByConversation.get(conversationId) ?? []).some(
-      (inboundMs) => inboundMs <= atMs && atMs - inboundMs < OPEN_WINDOW_MS,
-    );
-
-  const categoryOf = await templateCategories();
-  const spend = emptySpend("estimate", note);
+  const categoryOf = sent.some((row) => row.metadata?.template) ? await templateCategories() : null;
+  const spend = emptySpend("estimate", null);
   const days = new Map<string, MetaSpendDay>();
-  for (const row of metaSends) {
+  for (const row of sent) {
     const sid = row.metadata?.template?.contentSid ?? row.metadata?.template?.key ?? "";
-    const name = sid.slice("meta:".length).split(":")[0] ?? "";
-    const category = categoryOf(name, sid);
-    const atMs = Date.parse(row.created_at);
-    const day = dayOf(days, utcDay(atMs));
-    if (category === "utility" && windowOpen(row.conversation_id, atMs)) {
-      day.free += 1;
-      spend.free += 1;
-      continue;
-    }
+    const category: MetaSpendCategory = sid && categoryOf
+      ? categoryOf(sid.slice("meta:".length).split(":")[0] ?? "", sid)
+      : "service";
     const rate = META_SAUDI_RATES_SAR[category];
+    const day = dayOf(days, utcDay(Date.parse(row.created_at)));
     day[category] += 1;
     day.costSar += rate;
     day.estimated = true;
@@ -338,9 +309,9 @@ function merge(meta: MetaSpend | null, estimate: MetaSpend | null): MetaSpend | 
         ? "estimate"
         : "mixed";
   const note = !meta
-    ? "تقدير من القوالب المرسلة بأسعار Meta المعلنة؛ تعذّرت قراءة أرقام Meta."
+    ? "تقدير من الرسائل التي سلّمتها Meta بأسعارها المعلنة؛ تعذّرت قراءة أرقام Meta."
     : estimatedDays
-      ? "الأيام المعلّمة «تقديري» لم تنشر Meta أرقامها بعد، فقُدّرت من القوالب المرسلة بأسعار Meta المعلنة."
+      ? "الأيام المعلّمة «تقديري» لم تنشر Meta أرقامها بعد (تنشرها متأخرة يوماً)، فحُسبت من الرسائل التي سلّمتها Meta بأسعارها المعلنة."
       : null;
   const spend = emptySpend(source, note);
   spend.billed = meta?.billed ?? null;
@@ -355,8 +326,6 @@ function merge(meta: MetaSpend | null, estimate: MetaSpend | null): MetaSpend | 
 }
 
 const cache = new Map<string, { at: number; spend: MetaSpend | null }>();
-/** One look at the past week per instance, logged, to see how late Meta publishes. */
-let lagProbed = false;
 
 /**
  * Spend over the Riyadh days `from`–`to`, as whole UTC days to match Meta's
@@ -370,20 +339,15 @@ export async function getMetaSpend(from: string, to: string): Promise<MetaSpend 
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.spend;
 
-  const probe = lagProbed
-    ? Promise.resolve(null)
-    : spendFromMeta(Date.now() - 7 * 86_400_000, Date.now()).catch(() => null);
-  lagProbed = true;
   const [meta, estimate] = await Promise.all([
     spendFromMeta(fromMs, toMs).catch((error) => {
       console.warn("[meta-spend] pricing_analytics unavailable", error instanceof Error ? error.message : error);
       return null;
     }),
-    estimateFromSends(fromMs, toMs, "").catch((error) => {
+    estimateFromSends(fromMs, toMs).catch((error) => {
       console.error("[meta-spend] estimate failed", error);
       return null;
     }),
-    probe,
   ]);
   const spend = merge(meta, estimate);
   cache.set(key, { at: Date.now(), spend });

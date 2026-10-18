@@ -40,7 +40,7 @@ export function MetaSpendCard({ spend }: { spend: MetaSpend }) {
       }
       footer={
         <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
-          سعر الرسالة لأرقام السعودية من {effectiveLabel.format(new Date(`${spend.rates.effectiveFrom}T00:00:00Z`))}: تسويقية {rate.format(spend.rates.marketing)} ر.س · خدمية {rate.format(spend.rates.utility)} ر.س · مصادقة {rate.format(spend.rates.authentication)} ر.س. الردود خلال ٢٤ ساعة من آخر رسالة للعميلة مجانية، وكذلك القوالب الخدمية داخلها.
+          سعر كل رسالة تسلّمها Meta لأرقام السعودية من {effectiveLabel.format(new Date(`${spend.rates.effectiveFrom}T00:00:00Z`))}: رد {rate.format(spend.rates.service ?? spend.rates.utility)} ر.س · قالب تسويقي {rate.format(spend.rates.marketing)} ر.س · قالب خدمي {rate.format(spend.rates.utility)} ر.س. تحتسب Meta كل رد يُسلَّم، لا القوالب فقط.
           {spend.billed
             ? `\nتُفوتر Meta هذا الحساب بعملة ${spend.billed.currency}: ${riyal.format(spend.billed.amount)} ${spend.billed.currency} للفترة، وحُوّلت هنا بأسعار Meta بالريال.`
             : ""}
@@ -58,17 +58,24 @@ export function MetaSpendCard({ spend }: { spend: MetaSpend }) {
       </View>
       <RowDivider />
       <ReportRow
+        icon="message"
+        label="ردود الفريق والبوت"
+        caption={`${reportInteger.format(service?.count ?? 0)} رسالة خدمة مُسلَّمة`}
+        value={sarLabel(service?.costSar ?? 0)}
+        tone={service?.costSar ? "brand" : "neutral"}
+      />
+      <RowDivider />
+      <ReportRow
         icon="sparkles"
         label="قوالب تسويقية"
         caption={`${reportInteger.format(marketing.count)} رسالة`}
         value={sarLabel(marketing.costSar)}
-        tone={marketing.costSar ? "danger" : "neutral"}
       />
       <RowDivider />
       <ReportRow
         icon="bell"
-        label="قوالب خدمية مدفوعة"
-        caption={`${reportInteger.format(utility.count)} رسالة خارج نافذة ٢٤ ساعة`}
+        label="قوالب خدمية"
+        caption={`${reportInteger.format(utility.count)} رسالة`}
         value={sarLabel(utility.costSar)}
       />
       {authentication.count ? (
@@ -82,26 +89,12 @@ export function MetaSpendCard({ spend }: { spend: MetaSpend }) {
           />
         </>
       ) : null}
-      {service?.count ? (
+      {spend.free ? (
         <>
           <RowDivider />
-          <ReportRow
-            icon="message"
-            label="ردود مدفوعة"
-            caption={`${reportInteger.format(service.count)} رسالة`}
-            value={sarLabel(service.costSar)}
-            tone="danger"
-          />
+          <ReportRow icon="checkmark.circle" label="رسائل لم تحتسبها Meta" value={spend.free} tone="success" />
         </>
       ) : null}
-      <RowDivider />
-      <ReportRow
-        icon="checkmark.circle"
-        label="رسائل مجانية"
-        caption={spend.source === "meta" ? "ردود وقوالب خدمية داخل نافذة ٢٤ ساعة" : "قوالب خدمية داخل نافذة ٢٤ ساعة"}
-        value={spend.free}
-        tone="success"
-      />
 
       {spend.days.length ? (
         <>
@@ -139,7 +132,7 @@ export function MetaSpendCard({ spend }: { spend: MetaSpend }) {
                 </Text>
               </View>
               <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
-                {reportInteger.format(day.marketing)} تسويقية · {reportInteger.format(day.utility + day.authentication + (day.service ?? 0))} مدفوعة أخرى · {reportInteger.format(day.free)} مجانية
+                {reportInteger.format(day.service ?? 0)} رد · {reportInteger.format(day.marketing)} تسويقية · {reportInteger.format(day.utility + day.authentication)} خدمية{day.free ? ` · ${reportInteger.format(day.free)} مجانية` : ""}
               </Text>
             </View>
           ))}
