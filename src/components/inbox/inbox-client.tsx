@@ -81,6 +81,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
+import { contactOutcomeOf, conversationStatusText } from "@/lib/contact-outcome";
 import type {
   Conversation,
   ConversationSection,
@@ -253,7 +254,9 @@ function replyDelayMinutes(
 }
 
 function conversationStateLabel(c: Conversation): string {
-  return c.assigned_to ? CS_STATUS_LABEL[csStatusOf(c)] : "غير مستلمة";
+  if (!c.assigned_to) return "غير مستلمة";
+  const status = csStatusOf(c);
+  return conversationStatusText(status, contactOutcomeOf(c), CS_STATUS_LABEL[status]);
 }
 function isGroupConversation(c: Conversation): boolean {
   return (c.metadata as { chat_kind?: unknown } | null)?.chat_kind === "group";

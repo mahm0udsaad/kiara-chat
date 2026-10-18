@@ -4,7 +4,12 @@ import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-nativ
 import { InlineAlert } from "@/components/screen-state";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
-import { bookingStageLabel, contactOutcomeLabel, csStatusLabel } from "@/lib/format";
+import {
+  bookingStageLabel,
+  contactOutcomeLabel,
+  conversationStatusText,
+  csStatusLabel,
+} from "@/lib/format";
 import { tapFeedback } from "@/lib/haptics";
 import { useCampaignAudience } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
@@ -390,7 +395,7 @@ export function CampaignAudience({
                   <Text style={{ ...type.caption, color: colors.textTertiary }}>سبق الإرسال</Text>
                 ) : member.csStatus ? (
                   <Text style={{ ...type.caption, color: colors.textTertiary }}>
-                    {csStatusLabel[member.csStatus]}
+                    {conversationStatusText(member.csStatus, member.contactOutcome)}
                   </Text>
                 ) : null}
               </Pressable>

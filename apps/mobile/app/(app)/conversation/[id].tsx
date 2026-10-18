@@ -41,6 +41,7 @@ import {
   bookingStageLabel,
   contactOutcomeLabel,
   contactOutcomeTone,
+  closedWithOutcome,
   csStatusLabel,
   csStatusTone,
   formatters,
@@ -822,7 +823,10 @@ export default function ConversationScreen() {
             An unclaimed thread has no lifecycle yet either: "جاري المحادثة"
             over the استلام المحادثة button contradicts the button itself. */}
         {isGroup ? null : current.assigned_to ? (
-          <Badge label={csStatusLabel[current.csStatus]} tone={csStatusTone[current.csStatus]} />
+          // The outcome badge below says how a closed chat ended.
+          closedWithOutcome(current.csStatus, current.contactOutcome) ? null : (
+            <Badge label={csStatusLabel[current.csStatus]} tone={csStatusTone[current.csStatus]} />
+          )
         ) : (
           <Badge tone="warning" icon="person.crop.circle" label="غير مستلمة" />
         )}

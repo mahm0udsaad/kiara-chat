@@ -12,6 +12,21 @@ export const CONTACT_OUTCOME_LABEL: Record<ContactOutcome, string> = {
   no_reply: "لم ترد العميلة",
 };
 
+/**
+ * The status text for a chat. Recording any outcome also closes the chat, and
+ * a closed chat reads «تم الطلب» — beside «لم ترد العميلة» that claims an
+ * order nobody placed. A closed chat with an outcome reads as its outcome.
+ */
+export function conversationStatusText(
+  csStatus: string,
+  contactOutcome: unknown,
+  statusLabel: string,
+): string {
+  return csStatus === "resolved" && isContactOutcome(contactOutcome)
+    ? CONTACT_OUTCOME_LABEL[contactOutcome]
+    : statusLabel;
+}
+
 export function isContactOutcome(value: unknown): value is ContactOutcome {
   return (
     typeof value === "string" &&

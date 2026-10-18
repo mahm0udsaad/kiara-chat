@@ -37,6 +37,7 @@ import {
   conversationListTimeLabel,
   contactOutcomeLabel,
   contactOutcomeTone,
+  closedWithOutcome,
   csStatusLabel,
   csStatusTone,
   isWhatsAppReplyWindowOpen,
@@ -440,7 +441,9 @@ const ConversationRow = memo(function ConversationRow({
                     employee has claimed says a conversation is underway when
                     nobody is having it — the "غير مستلمة" badge below is the
                     true state. Groups have no lifecycle at all. */}
-                {isGroup || !conversation.assigned_to ? null : (
+                {isGroup ||
+                !conversation.assigned_to ||
+                closedWithOutcome(conversation.csStatus, conversation.contactOutcome) ? null : (
                   <Badge
                     label={csStatusLabel[conversation.csStatus]}
                     tone={csStatusTone[conversation.csStatus]}

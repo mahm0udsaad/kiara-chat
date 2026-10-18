@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Search, Users, X } from "lucide-react";
 import { BOOKING_STAGE_LABEL, BOOKING_STAGE_ORDER } from "@/lib/booking-stage";
-import { CONTACT_OUTCOME_LABEL, CONTACT_OUTCOME_ORDER } from "@/lib/contact-outcome";
+import {
+  CONTACT_OUTCOME_LABEL,
+  CONTACT_OUTCOME_ORDER,
+  conversationStatusText,
+} from "@/lib/contact-outcome";
 
 type Member = {
   phone: string;
@@ -297,7 +301,16 @@ export function BroadcastAudience({
                               <span>آخر حجز {dayFormatter.format(new Date(member.lastBookingAt))}</span>
                             )}
                             {member.bookings > 1 && <span>· {member.bookings} حجوزات</span>}
-                            {member.csStatus && <span>· {CS_STATUS_LABEL[member.csStatus]}</span>}
+                            {member.csStatus && (
+                              <span>
+                                ·{" "}
+                                {conversationStatusText(
+                                  member.csStatus,
+                                  member.contactOutcome,
+                                  CS_STATUS_LABEL[member.csStatus],
+                                )}
+                              </span>
+                            )}
                             {member.bookingStage && (
                               <span>
                                 ·{" "}

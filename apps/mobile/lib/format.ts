@@ -1,4 +1,4 @@
-import type { BookingStage, ContactOutcome, OrderStatus, TripType } from "@/types/api";
+import type { BookingStage, ContactOutcome, CsStatus, OrderStatus, TripType } from "@/types/api";
 
 const locale = "ar-EG";
 /** Clocks stay easy to scan inside RTL copy: `10:00 PM`, never `٢٢:٠٠`. */
@@ -189,6 +189,28 @@ export const contactOutcomeLabel: Record<ContactOutcome, string> = {
   not_booked: "لم يتم الحجز",
   no_reply: "لم ترد العميلة",
 };
+
+/**
+ * Recording any contact outcome also closes the chat, and a closed chat reads
+ * «تم الطلب». Beside «لم ترد العميلة» that says an order was placed when none
+ * was, so a closed chat with an outcome shows the outcome alone.
+ */
+export function closedWithOutcome(
+  csStatus: CsStatus | null | undefined,
+  contactOutcome: ContactOutcome | null | undefined,
+): boolean {
+  return csStatus === "resolved" && Boolean(contactOutcome);
+}
+
+/** The one status text for a chat: its outcome once closed with one, else its CS status. */
+export function conversationStatusText(
+  csStatus: CsStatus,
+  contactOutcome: ContactOutcome | null | undefined,
+): string {
+  return closedWithOutcome(csStatus, contactOutcome) && contactOutcome
+    ? contactOutcomeLabel[contactOutcome]
+    : csStatusLabel[csStatus];
+}
 
 export const contactOutcomeTone = {
   booked: "success",
