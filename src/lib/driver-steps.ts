@@ -7,9 +7,11 @@
  * have neither. The two confirmations are on nearly every trip, so the report
  * measures those against times that always exist:
  *
- *   at the client      the appointment itself
+ *   at the client      the booking time itself, with no grace. This is the
+ *                      driver's lateness as the owner measures it.
  *   at the specialist  the plan's time when there is a plan, otherwise a fixed
- *                      lead before the appointment
+ *                      lead before the appointment. Kept for context; the
+ *                      mobile report no longer counts it as lateness.
  *
  * A confirmation is the driver's own tap, not a position. A step he taps long
  * after the fact reads as late by that long, which is why the summary reports
@@ -20,6 +22,11 @@
 /** With no routed plan, the driver is due at the specialist this long before the appointment. */
 export const SPECIALIST_LEAD_MINUTES = 30;
 export const DEFAULT_GRACE_MINUTES = 5;
+/**
+ * The client step has no grace: the owner's rule is that the driver is at the
+ * client at the booking time, and any full minute after it is lateness.
+ */
+export const CLIENT_GRACE_MINUTES = 0;
 
 export type DriverStepStatus = "on_time" | "late" | "missing" | "upcoming";
 
@@ -59,23 +66,26 @@ export type DriverLateness = {
   client: DriverStepSummary;
 };
 
-function judge(dueMs: number, at: string | null, graceMs: number, nowMs: number): DriverStep {
+function judge(dueMs: number, at: string | null, graceMinutes: number, nowMs: number): DriverStep {
   const dueAt = new Date(dueMs).toISOString();
   const atMs = at ? Date.parse(at) : NaN;
   if (!Number.isFinite(atMs)) {
     return {
       dueAt,
       at: null,
-      status: nowMs > dueMs + graceMs ? "missing" : "upcoming",
+      status: nowMs > dueMs + graceMinutes * 60_000 ? "missing" : "upcoming",
       lateMinutes: null,
     };
   }
-  const late = atMs > dueMs + graceMs;
+  // Whole minutes past the due time: a tap seconds after the booking minute
+  // is still that minute, and the steps are only ever read to the minute.
+  const minutesPast = Math.floor((atMs - dueMs) / 60_000);
+  const late = minutesPast > graceMinutes;
   return {
     dueAt,
     at,
     status: late ? "late" : "on_time",
-    lateMinutes: late ? Math.round((atMs - dueMs) / 60_000) : null,
+    lateMinutes: late ? minutesPast : null,
   };
 }
 
@@ -86,6 +96,7 @@ export function driverTripSteps(input: {
   plannedSpecialistAt: string | null;
   driverArrivedAt: string | null;
   driverClientArrivedAt: string | null;
+  /** Grace at the specialist step only; the client step has none. */
   graceMinutes: number;
   nowMs: number;
 }): DriverTripSteps | null {
@@ -93,15 +104,14 @@ export function driverTripSteps(input: {
   if (!Number.isFinite(clientDueMs)) return null;
   const plannedMs = input.plannedSpecialistAt ? Date.parse(input.plannedSpecialistAt) : NaN;
   const hasPlan = Number.isFinite(plannedMs);
-  const graceMs = input.graceMinutes * 60_000;
   return {
     specialist: judge(
       hasPlan ? plannedMs : clientDueMs - SPECIALIST_LEAD_MINUTES * 60_000,
       input.driverArrivedAt,
-      graceMs,
+      input.graceMinutes,
       input.nowMs,
     ),
-    client: judge(clientDueMs, input.driverClientArrivedAt, graceMs, input.nowMs),
+    client: judge(clientDueMs, input.driverClientArrivedAt, CLIENT_GRACE_MINUTES, input.nowMs),
     specialistDueBasis: hasPlan ? "plan" : "lead",
   };
 }

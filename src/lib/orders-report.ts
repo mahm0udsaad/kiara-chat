@@ -2,6 +2,7 @@ import "server-only";
 
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import { serviceTimingOf } from "@/lib/service-timing";
 import {
   OPERATIONS_TIME_ZONE,
   type OperationsReportInput,
@@ -381,19 +382,36 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
         });
       }
       const serviceStart = progress?.service_started_at ? Date.parse(progress.service_started_at) : NaN;
-      const serviceEnd = progress?.completed_at ? Date.parse(progress.completed_at) : NaN;
-      const actualMinutes = Number.isFinite(serviceStart) && Number.isFinite(serviceEnd) && serviceEnd >= serviceStart
-        ? Math.round((serviceEnd - serviceStart) / 60_000)
-        : null;
+      // Same rule as the specialist report: the visit should end at its
+      // booking time plus its booked services summed; the end tap is judged
+      // against that. "Actual" is booking time to end tap.
+      const liveReservations = order.reservations.filter(
+        (row) => row.status !== "Cancelled" && !row.removed_at && row.payload?.arrivalAt,
+      );
+      const timing = liveReservations.length
+        ? serviceTimingOf(
+            liveReservations
+              .map((row) => row.payload.arrivalAt)
+              .reduce((earliest, at) => (Date.parse(at) < Date.parse(earliest) ? at : earliest)),
+            liveReservations.reduce(
+              (sum, row) => sum + Math.max(Number(row.payload.durationMinutes) || 0, 0),
+              0,
+            ),
+            progress?.completed_at,
+          )
+        : serviceTimingOf(local.arrival_at, local.duration_minutes, progress?.completed_at);
+      const judgedTiming = timing && timing.verdict !== "unreliable" ? timing : null;
+      const bookedMinutes = timing?.bookedMinutes ?? local.duration_minutes;
+      const actualMinutes = judgedTiming ? judgedTiming.bookedMinutes + judgedTiming.varianceMinutes : null;
       const scheduledAt = Date.parse(local.arrival_at);
       const lateMinutes = Number.isFinite(serviceStart) && Number.isFinite(scheduledAt)
         ? Math.max(0, Math.round((serviceStart - scheduledAt) / 60_000))
         : !isCompleted && isDispatched && Number.isFinite(scheduledAt) && now > scheduledAt
           ? Math.round((now - scheduledAt) / 60_000)
           : 0;
-      const overrunMinutes = actualMinutes == null ? 0 : Math.max(0, actualMinutes - local.duration_minutes);
+      const overrunMinutes = judgedTiming ? Math.max(0, judgedTiming.varianceMinutes) : 0;
       const isLate = lateMinutes > 15;
-      const isOverrun = overrunMinutes > 15;
+      const isOverrun = judgedTiming?.verdict === "late";
       const missingOutboundCost = Boolean(local.driver_id && isDispatched && local.price == null);
       const missingReturnCost = Boolean(
         local.return_driver_id && isDispatched && local.return_price == null,
@@ -402,7 +420,7 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
 
       if (actualMinutes != null) {
         timedOrders += 1;
-        bookedServiceMinutes += local.duration_minutes;
+        bookedServiceMinutes += bookedMinutes;
         actualServiceMinutes += actualMinutes;
       }
       if (isLate) lateOrders += 1;
@@ -449,7 +467,7 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
             .filter((name): name is string => Boolean(name))
             .join("، ") || null,
           arrivalAt: local.arrival_at,
-          bookedServiceMinutes: local.duration_minutes,
+          bookedServiceMinutes: bookedMinutes,
           actualServiceMinutes: actualMinutes,
           lateMinutes,
           overrunMinutes,

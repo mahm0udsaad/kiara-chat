@@ -11,6 +11,7 @@ import { Card, Divider } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, rtlText, spacing, type } from "@/constants/theme";
+import { dayKeyFromToday } from "@/lib/calendar";
 import { durationLabel, formatters } from "@/lib/format";
 import { REPORT_LOCALE, reportInteger } from "@/lib/operations-report";
 import { useTheme } from "@/providers/theme-provider";
@@ -137,8 +138,27 @@ export function OrdersSummary({ report }: { report: OrdersReport }) {
     params: { metric, from: report.from, to: report.to },
   } as unknown as Href);
 
+  const isToday = report.from === report.to && report.to === dayKeyFromToday(0);
+
   return (
     <View style={{ gap: spacing.lg }}>
+      {/* The day's count comes first: how many orders, how many were carried
+          out and how many were cancelled. Problems follow underneath. */}
+      <View style={{ gap: spacing.md }}>
+        <ReportSectionHeader
+          title={isToday ? "طلبات اليوم" : "طلبات الفترة"}
+          description="كل طلب متعدد الخدمات يُحسب مرة واحدة."
+        />
+        <ReportMetricGrid>
+          <Metric icon="doc.text" label="إجمالي الطلبات" value={reportInteger.format(totals.total)} testID="orders-total" />
+          <Metric icon="checkmark.circle" label="تم التنفيذ" value={reportInteger.format(totals.completed)} tone="success" testID="orders-completed" />
+          <Metric icon="xmark" label="ملغاة" value={reportInteger.format(totals.cancelled)} tone={totals.cancelled ? "warning" : "default"} testID="orders-cancelled" />
+        </ReportMetricGrid>
+        <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
+          {reportInteger.format(totals.active)} جارية أو قادمة · {reportInteger.format(totals.notDone ?? 0)} لم يتم تنفيذها · نسبة الإكمال {reportInteger.format(totals.completionRate)}%
+        </Text>
+      </View>
+
       <Link
         href={metricHref("problems")}
         asChild
@@ -290,21 +310,6 @@ export function OrdersSummary({ report }: { report: OrdersReport }) {
           <Metric icon="sparkles" label="إيراد الخدمات" value={currency.format(totals.serviceRevenue)} />
           <Metric icon="car" label="تكلفة المشاوير" value={currency.format(totals.tripCosts ?? 0)} tone="warning" />
           <Metric icon="arrow.triangle.2.circlepath" label="المبالغ المستردة" value={currency.format(totals.refunded)} />
-        </ReportMetricGrid>
-      </Card>
-
-      <Card>
-        <View style={{ gap: spacing.xs }}>
-          <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>ملخص التنفيذ</Text>
-          <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>كل طلب متعدد الخدمات يُحسب مرة واحدة.</Text>
-        </View>
-        <ReportMetricGrid>
-          <Metric icon="doc.text" label="إجمالي الطلبات" value={reportInteger.format(totals.total)} />
-          <Metric icon="checkmark.circle" label="مكتملة" value={reportInteger.format(totals.completed)} />
-          <Metric icon="xmark.circle" label="لم يتم التنفيذ" value={reportInteger.format(totals.notDone ?? 0)} tone={(totals.notDone ?? 0) ? "danger" : "default"} />
-          <Metric icon="clock" label="جارية أو قادمة" value={reportInteger.format(totals.active)} />
-          <Metric icon="xmark" label="ملغاة" value={reportInteger.format(totals.cancelled)} />
-          <Metric icon="slider.horizontal.3" label="نسبة الإكمال" value={`${reportInteger.format(totals.completionRate)}%`} />
         </ReportMetricGrid>
       </Card>
 

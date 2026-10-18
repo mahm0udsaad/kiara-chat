@@ -518,6 +518,32 @@ export type OperationsPerson = {
   completedMinutes: number;
   /** A driver's two arrival steps over the range; absent from an older server. */
   lateness?: DriverLateness | null;
+  /** A specialist's timed services against their booked length; absent from an older server. */
+  serviceTiming?: SpecialistServiceTiming | null;
+};
+
+/**
+ * Did she finish when the booking said: expected end = booking time + the
+ * booked services' durations summed, against her «إنهاء الخدمة» tap.
+ */
+export type ServiceTiming = {
+  bookedAt: string;
+  bookedMinutes: number;
+  expectedEndAt: string;
+  completedAt: string;
+  /** Minutes from the expected end to her tap: positive after, negative before. */
+  varianceMinutes: number;
+  /** "unreliable": end tapped hours after the expected end. */
+  verdict: "on_time" | "late" | "early" | "unreliable";
+};
+
+export type SpecialistServiceTiming = {
+  timed: number;
+  onTime: number;
+  late: number;
+  early: number;
+  unreliable: number;
+  medianLateMinutes: number | null;
 };
 
 export type DriverStepStatus = "on_time" | "late" | "missing" | "upcoming";
@@ -574,6 +600,8 @@ export type OperationsEvent = {
   driverLeg?: "outbound" | "return" | null;
   /** «وصلت للأخصائية» and «وصلت للعميلة» on a dispatched outbound leg. */
   driverSteps?: DriverTripSteps | null;
+  /** The visit's service as the specialist timed it, on her events only. */
+  serviceTiming?: ServiceTiming | null;
 };
 
 export type OperationsReport = {
@@ -594,6 +622,7 @@ export type OperationsReport = {
     missingReason: number;
   };
   driverStepRules?: { specialistLeadMinutes: number; graceMinutes: number };
+  serviceToleranceMinutes?: number;
 };
 
 export type OrdersReportDay = {
@@ -814,16 +843,55 @@ export type CustomerServiceReport = {
     bookingsFromHerChats?: number;
     bookedRevenue?: number;
   };
-  last24Hours?: {
-    inboundMessages: number;
-    inboundConversations: number;
-    booked: number;
-    notBooked: number;
-    noReply: number;
-    awaitingOutcome: number;
-  };
+  last24Hours?: CustomerServiceInboundSummary;
   last24HourConversations?: CustomerServiceLast24Conversation[];
+  /** The same funnel over the selected days. Absent on older servers. */
+  period?: CustomerServiceInboundSummary;
+  periodConversations?: CustomerServiceLast24Conversation[];
+  /** Messages we sent customers in the period. Absent on older servers. */
+  outbound?: { total: number; team: number; automated: number };
+  /** The period's customers: new, or already Rekaz customers. Absent on older servers. */
+  customerTypes?: { new: number; returning: number; unknown: number };
+  /** Conversations closed in the period. Absent on older servers. */
+  closed?: { total: number; booked: number; notBooked: number };
+  closedConversations?: CustomerServiceLast24Conversation[];
+  /** WhatsApp Cloud API cost over the period in SAR. Absent on older servers; null when unknown. */
+  metaSpend?: MetaSpend | null;
   employees: CustomerServiceEmployee[];
+};
+
+export type MetaSpendCategory = "marketing" | "utility" | "authentication";
+
+export type MetaSpendDay = {
+  /** YYYY-MM-DD, a UTC day as Meta buckets it. */
+  day: string;
+  costSar: number;
+  marketing: number;
+  utility: number;
+  authentication: number;
+  /** Deliveries Meta did not charge for. */
+  free: number;
+};
+
+/** Mirrors `MetaSpend` in src/lib/meta-spend.ts. */
+export type MetaSpend = {
+  source: "meta" | "estimate";
+  currency: "SAR";
+  costSar: number;
+  byCategory: Record<MetaSpendCategory, { count: number; costSar: number }>;
+  free: number;
+  days: MetaSpendDay[];
+  rates: { effectiveFrom: string; marketing: number; utility: number; authentication: number };
+  note: string | null;
+};
+
+export type CustomerServiceInboundSummary = {
+  inboundMessages: number;
+  inboundConversations: number;
+  booked: number;
+  notBooked: number;
+  noReply: number;
+  awaitingOutcome: number;
 };
 
 export type CustomerServiceLast24Conversation = {
@@ -833,6 +901,10 @@ export type CustomerServiceLast24Conversation = {
   inboundMessages: number;
   lastInboundAt: string;
   outcome: "booked" | "not_booked" | "no_reply" | null;
+  /** Period rows: was she a Rekaz customer before writing in; null when Rekaz could not say. */
+  customerType?: "new" | "returning" | null;
+  /** Closed rows: when the conversation was closed. */
+  closedAt?: string;
 };
 
 /**

@@ -7,7 +7,10 @@ import {
   type OperationsReportInput,
   validateOperationsReportInput,
 } from "@/lib/operations-report";
-import { normalizePhone } from "@/lib/phone";
+import { getMetaSpend, type MetaSpend } from "@/lib/meta-spend";
+import { canonicalPhone, normalizePhone } from "@/lib/phone";
+import { fetchCustomerFirstBookingMs } from "@/lib/rekaz";
+import { RekazAuthError } from "@/lib/rekaz-auth";
 import {
   creditRekazBookings,
   EMPTY_REKAZ_CREDIT,
@@ -141,8 +144,26 @@ export type CustomerServiceReport = {
     awaitingOutcome: number;
   };
   last24HourConversations: CustomerServiceLast24Conversation[];
+  /** `last24Hours`, over the selected from–to days instead. */
+  period: CustomerServiceInboundSummary;
+  periodConversations: CustomerServiceLast24Conversation[];
+  /** Messages we sent customers in the period: by the team, or automatically. */
+  outbound: { total: number; team: number; automated: number };
+  /**
+   * The period's customers split by whether Rekaz already knew them: a
+   * reservation made before her first message in the period. `unknown` is a
+   * number Rekaz could not be asked about (it refused or timed out).
+   */
+  customerTypes: { new: number; returning: number; unknown: number };
+  /** Conversations closed in the period, and how they ended. */
+  closed: { total: number; booked: number; notBooked: number };
+  closedConversations: CustomerServiceLast24Conversation[];
+  /** What the WhatsApp Cloud API cost over the period, in SAR; null when unknown. */
+  metaSpend: MetaSpend | null;
   employees: CustomerServiceEmployee[];
 };
+
+export type CustomerServiceInboundSummary = CustomerServiceReport["last24Hours"];
 
 export type CustomerServiceLast24Conversation = {
   conversationId: string;
@@ -151,7 +172,13 @@ export type CustomerServiceLast24Conversation = {
   inboundMessages: number;
   lastInboundAt: string;
   outcome: "booked" | "not_booked" | "no_reply" | null;
+  /** Period rows only: was she a Rekaz customer before writing in. */
+  customerType?: CustomerType | null;
+  /** Closed rows only: when the conversation was closed. */
+  closedAt?: string;
 };
+
+export type CustomerType = "new" | "returning";
 
 export type CustomerServiceEmployeeActivitiesInput = OperationsReportInput & {
   personId: string;
@@ -415,10 +442,208 @@ async function memberEmails(rows: MemberRow[]): Promise<Map<string, string | nul
   return new Map(pairs);
 }
 
+type ContactOutcomeValue = CustomerServiceLast24Conversation["outcome"];
+
+const asOutcome = (value: unknown): ContactOutcomeValue =>
+  value === "booked" || value === "not_booked" || value === "no_reply" ? value : null;
+
+/**
+ * A conversation's outcome inside a window: booked when Rekaz holds a booking
+ * for her number made in it, otherwise the latest outcome recorded in it.
+ */
+function outcomeResolver(
+  outcomeEvents: EventRow[],
+  conversationById: ReadonlyMap<string, ConversationRow>,
+  rekazBookedPhones: ReadonlySet<string>,
+) {
+  const latestOutcome = new Map<string, unknown>();
+  for (const event of outcomeEvents) {
+    latestOutcome.set(event.aggregate_id, event.payload?.to ?? null);
+  }
+  return (conversationId: string): ContactOutcomeValue => {
+    const phone = normalizePhone(conversationById.get(conversationId)?.customer_phone ?? "");
+    if (phone && rekazBookedPhones.has(phone)) return "booked";
+    return asOutcome(latestOutcome.get(conversationId));
+  };
+}
+
+/** Lookups to Rekaz per report: enough for a busy week, bounded for a month. */
+const REKAZ_HISTORY_LOOKUP_LIMIT = 300;
+const REKAZ_HISTORY_CONCURRENCY = 6;
+/** A customer with no Rekaz booking is asked again after this; she may book. */
+const REKAZ_NO_HISTORY_TTL_MS = 30 * 60_000;
+
+/**
+ * First-booking answers kept for the life of the server instance. A found
+ * first booking never moves, so it is kept for good; "none yet" expires.
+ */
+const firstBookingCache = new Map<string, { firstMs: number | null; checkedAt: number }>();
+
+async function cachedFirstBookingMs(phone: string): Promise<number | null> {
+  const key = normalizePhone(phone);
+  const hit = firstBookingCache.get(key);
+  if (hit && (hit.firstMs !== null || Date.now() - hit.checkedAt < REKAZ_NO_HISTORY_TTL_MS)) {
+    return hit.firstMs;
+  }
+  const firstMs = await fetchCustomerFirstBookingMs(phone);
+  firstBookingCache.set(key, { firstMs, checkedAt: Date.now() });
+  return firstMs;
+}
+
+/**
+ * Was each customer already a Rekaz customer before her first message?
+ *
+ * The local mirror answers most of them in one query, but it only reaches
+ * back to when the sync began (August 2026). Whoever it cannot place as
+ * returning is asked of Rekaz directly, a few at a time; a number Rekaz cannot
+ * be asked about stays null rather than being guessed new.
+ */
+async function classifyCustomers(
+  admin: ReturnType<typeof getAdminSupabaseClient>,
+  customers: { conversationId: string; phone: string; firstInboundMs: number }[],
+): Promise<Map<string, CustomerType | null>> {
+  const result = new Map<string, CustomerType | null>();
+  const earliestLocal = new Map<string, number>();
+  const variants = [...new Set(customers.flatMap((customer) => {
+    const canonical = canonicalPhone(customer.phone);
+    return canonical && canonical !== customer.phone ? [customer.phone, canonical] : [customer.phone];
+  }).filter(Boolean))];
+  for (let index = 0; index < variants.length; index += ID_BATCH_SIZE) {
+    const { data, error } = await admin
+      .from("rekaz_reservations")
+      .select("customer_phone, first_seen_at, booked_at:payload->>bookedAt")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .in("customer_phone", variants.slice(index, index + ID_BATCH_SIZE));
+    if (error) throw new Error(error.message);
+    for (const row of (data ?? []) as { customer_phone: string; first_seen_at: string | null; booked_at: string | null }[]) {
+      const ms = Date.parse(row.booked_at ?? row.first_seen_at ?? "");
+      const phone = normalizePhone(row.customer_phone);
+      if (!Number.isFinite(ms) || !phone) continue;
+      const seen = earliestLocal.get(phone);
+      if (seen === undefined || ms < seen) earliestLocal.set(phone, ms);
+    }
+  }
+
+  const unresolved: typeof customers = [];
+  for (const customer of customers) {
+    const local = earliestLocal.get(normalizePhone(customer.phone));
+    if (local !== undefined && local < customer.firstInboundMs) result.set(customer.conversationId, "returning");
+    else unresolved.push(customer);
+  }
+
+  const queue = unresolved.slice(0, REKAZ_HISTORY_LOOKUP_LIMIT);
+  for (const customer of unresolved.slice(REKAZ_HISTORY_LOOKUP_LIMIT)) {
+    result.set(customer.conversationId, null);
+  }
+  let refused = false;
+  const lookUp = async (customer: (typeof customers)[number]) => {
+    if (refused) {
+      result.set(customer.conversationId, null);
+      return;
+    }
+    try {
+      const first = await cachedFirstBookingMs(customer.phone);
+      result.set(
+        customer.conversationId,
+        first !== null && first < customer.firstInboundMs ? "returning" : "new",
+      );
+    } catch (error) {
+      // A refused session refuses every lookup after it. Stop asking: each
+      // refusal costs a fresh login, and repeated logins can lock the salon out.
+      if (error instanceof RekazAuthError) refused = true;
+      result.set(customer.conversationId, null);
+    }
+  };
+  // One lookup alone first, so a refused session costs one login, not one per
+  // worker racing in parallel.
+  const probe = queue.shift();
+  if (probe) await lookUp(probe);
+  const worker = async () => {
+    for (let customer = queue.shift(); customer; customer = queue.shift()) await lookUp(customer);
+  };
+  await Promise.all(Array.from({ length: REKAZ_HISTORY_CONCURRENCY }, worker));
+  return result;
+}
+
+/** A conversation counts as closed by any of the three ways the app closes one. */
+function isClosingEvent(event: EventRow): boolean {
+  const to = event.payload?.to;
+  return (
+    (event.event_type === "conversation.status_changed" && to === "resolved") ||
+    (event.event_type === "conversation.outcome_changed" && Boolean(to)) ||
+    (event.event_type === "conversation.stage_changed" && to === "completed")
+  );
+}
+
+/**
+ * Customers who wrote in, and the outcome the team recorded for each.
+ *
+ * "Came in" is a trackable conversation with at least one customer message.
+ * She counts as booked when Rekaz holds a booking for her number made since
+ * the window opened — the team often books without tagging the chat — or when
+ * the chat was tagged «حجز». Otherwise her outcome is the latest «لم يتم
+ * الحجز / لم ترد» set since the window opened, so an outcome left over from an
+ * earlier visit does not count.
+ */
+function inboundFunnel(
+  customerMessages: MessageRow[],
+  outcomeEvents: EventRow[],
+  conversationById: ReadonlyMap<string, ConversationRow>,
+  rekazBookedPhones: ReadonlySet<string>,
+  windowStart: string,
+): {
+  summary: CustomerServiceReport["last24Hours"];
+  conversations: CustomerServiceLast24Conversation[];
+} {
+  const messagesByConversation = new Map<string, { inboundMessages: number; lastInboundAt: string }>();
+  for (const message of customerMessages) {
+    const current = messagesByConversation.get(message.conversation_id);
+    messagesByConversation.set(message.conversation_id, {
+      inboundMessages: (current?.inboundMessages ?? 0) + 1,
+      lastInboundAt: !current || Date.parse(message.created_at) > Date.parse(current.lastInboundAt)
+        ? message.created_at
+        : current.lastInboundAt,
+    });
+  }
+  const outcomeOf = outcomeResolver(outcomeEvents, conversationById, rekazBookedPhones);
+  let booked = 0;
+  let notBooked = 0;
+  let noReply = 0;
+  const conversations: CustomerServiceLast24Conversation[] = [];
+  for (const [conversationId, summary] of messagesByConversation) {
+    const conversation = conversationById.get(conversationId);
+    const outcome = outcomeOf(conversationId);
+    if (outcome === "booked") booked += 1;
+    else if (outcome === "not_booked") notBooked += 1;
+    else if (outcome === "no_reply") noReply += 1;
+    conversations.push({
+      conversationId,
+      customerName: conversation?.customer_name ?? null,
+      customerPhone: conversation?.customer_phone ?? "",
+      inboundMessages: summary.inboundMessages,
+      lastInboundAt: summary.lastInboundAt || windowStart,
+      outcome,
+    });
+  }
+  return {
+    summary: {
+      inboundMessages: customerMessages.length,
+      inboundConversations: messagesByConversation.size,
+      booked,
+      notBooked,
+      noReply,
+      awaitingOutcome: messagesByConversation.size - booked - notBooked - noReply,
+    },
+    conversations: conversations.sort((a, b) => b.lastInboundAt.localeCompare(a.lastInboundAt)),
+  };
+}
+
 export async function getCustomerServiceReport(
   raw: OperationsReportInput,
 ): Promise<CustomerServiceReport> {
   const input = validateOperationsReportInput(raw);
+  // Meta is slow and independent of everything below; start it first.
+  const metaSpendPromise = getMetaSpend(input.from, input.to);
   const rangeStart = boundary(input.from, "00:00");
   const rangeEnd = boundary(input.to, "23:59");
   const rangeStartMs = new Date(rangeStart).getTime();
@@ -427,6 +652,10 @@ export async function getCustomerServiceReport(
   const endMinute = timeToMinutes(input.endTime);
   const admin = getAdminSupabaseClient();
   const last24Start = new Date(Date.now() - 24 * 3600_000).toISOString();
+  const last24StartMs = Date.parse(last24Start);
+  // Outcomes are read up to now, not to the period's end: a customer who wrote
+  // on its last evening is often marked booked the next morning.
+  const outcomeSince = new Date(Math.min(rangeStartMs, last24StartMs)).toISOString();
 
   const membersResult = await admin
     .from("team_members")
@@ -449,7 +678,7 @@ export async function getCustomerServiceReport(
     notes,
     orders,
     last24Messages,
-    last24OutcomeEvents,
+    outcomeEvents,
     reservations,
     specialistsResult,
     driversResult,
@@ -553,7 +782,7 @@ export async function getCustomerServiceReport(
           .eq("restaurant_id", KIARA_RESTAURANT_ID)
           .eq("aggregate_type", "conversation")
           .eq("event_type", "conversation.outcome_changed")
-          .gte("occurred_at", last24Start)
+          .gte("occurred_at", outcomeSince)
           .order("occurred_at", { ascending: true })
           .range(from, to),
       ),
@@ -593,56 +822,110 @@ export async function getCustomerServiceReport(
       .filter((conversation) => isTrackableCustomerConversation(conversation, staffPhones))
       .map((conversation) => conversation.id),
   );
-  const customerLast24Messages = last24Messages.filter((message) => {
+  const isCustomerMessage = (message: MessageRow) => {
+    if (message.role !== "customer") return false;
     const conversation = conversationById.get(message.conversation_id);
     return conversation
       ? isTrackableCustomerConversation(conversation, staffPhones)
       : false;
-  });
-  const inboundConversationIds = new Set(
-    customerLast24Messages.map((message) => message.conversation_id),
+  };
+  // `reservations` reaches back to a day before the period with no upper
+  // bound, so it holds every booking made in either window.
+  const rekazPhonesBookedSince = (sinceMs: number) => {
+    const phones = new Set<string>();
+    for (const row of reservations) {
+      if (row.removed_at || row.payload?.status === "Cancelled") continue;
+      const bookedAt = Date.parse(row.payload?.bookedAt ?? row.first_seen_at ?? "");
+      if (!Number.isFinite(bookedAt) || bookedAt < sinceMs) continue;
+      const phone = normalizePhone(String(row.payload?.customerPhone ?? row.customer_phone ?? ""));
+      if (phone) phones.add(phone);
+    }
+    return phones;
+  };
+  const last24 = inboundFunnel(
+    last24Messages.filter(isCustomerMessage),
+    outcomeEvents.filter((event) => Date.parse(event.occurred_at) >= last24StartMs),
+    conversationById,
+    rekazPhonesBookedSince(last24StartMs),
+    last24Start,
   );
-  const latestOutcomeByConversation = new Map<string, unknown>();
-  for (const event of last24OutcomeEvents) {
-    latestOutcomeByConversation.set(event.aggregate_id, event.payload?.to ?? null);
+  // The same funnel over the period the owner picked: every customer who
+  // wrote in during it, and what the team recorded for her since. `messages`
+  // already holds the period's messages for the per-employee figures.
+  const period = inboundFunnel(
+    messages.filter(isCustomerMessage),
+    outcomeEvents.filter((event) => Date.parse(event.occurred_at) >= rangeStartMs),
+    conversationById,
+    rekazPhonesBookedSince(rangeStartMs),
+    rangeStart,
+  );
+
+  // What we sent: the team's own replies, and everything automatic — the bot,
+  // reminders, campaigns — which carries no sender.
+  const outbound = { total: 0, team: 0, automated: 0 };
+  for (const message of messages) {
+    if (message.role !== "agent" || !trackableConversationIds.has(message.conversation_id)) continue;
+    outbound.total += 1;
+    if (message.sender_team_member_id) outbound.team += 1;
+    else outbound.automated += 1;
   }
-  let booked = 0;
-  let notBooked = 0;
-  let noReply = 0;
-  for (const [conversationId, outcome] of latestOutcomeByConversation) {
-    if (!inboundConversationIds.has(conversationId)) continue;
-    if (outcome === "booked") booked += 1;
-    else if (outcome === "not_booked") notBooked += 1;
-    else if (outcome === "no_reply") noReply += 1;
+
+  const firstInboundMs = new Map<string, number>();
+  for (const message of messages) {
+    if (!isCustomerMessage(message)) continue;
+    const ms = Date.parse(message.created_at);
+    const seen = firstInboundMs.get(message.conversation_id);
+    if (seen === undefined || ms < seen) firstInboundMs.set(message.conversation_id, ms);
   }
-  const last24MessageSummary = new Map<string, { inboundMessages: number; lastInboundAt: string }>();
-  for (const message of customerLast24Messages) {
-    const current = last24MessageSummary.get(message.conversation_id);
-    last24MessageSummary.set(message.conversation_id, {
-      inboundMessages: (current?.inboundMessages ?? 0) + 1,
-      lastInboundAt: !current || message.created_at > current.lastInboundAt
-        ? message.created_at
-        : current.lastInboundAt,
-    });
+  const customerTypeById = await classifyCustomers(
+    admin,
+    [...firstInboundMs].map(([conversationId, ms]) => ({
+      conversationId,
+      phone: conversationById.get(conversationId)?.customer_phone ?? "",
+      firstInboundMs: ms,
+    })),
+  );
+  const customerTypes = { new: 0, returning: 0, unknown: 0 };
+  for (const row of period.conversations) {
+    const kind = customerTypeById.get(row.conversationId) ?? null;
+    row.customerType = kind;
+    if (kind === "new") customerTypes.new += 1;
+    else if (kind === "returning") customerTypes.returning += 1;
+    else customerTypes.unknown += 1;
   }
-  const last24HourConversations: CustomerServiceLast24Conversation[] = [...inboundConversationIds]
-    .map((conversationId) => {
+
+  // Closed in the period, by whichever path closed it, and how it ended. The
+  // outcome falls back to the one stored on the chat: a status-only close
+  // keeps the outcome that was recorded before it.
+  const closedAtById = new Map<string, string>();
+  for (const event of events) {
+    if (event.aggregate_type !== "conversation" || !trackableConversationIds.has(event.aggregate_id)) continue;
+    if (isClosingEvent(event)) closedAtById.set(event.aggregate_id, event.occurred_at);
+  }
+  const periodOutcomeOf = outcomeResolver(
+    outcomeEvents.filter((event) => Date.parse(event.occurred_at) >= rangeStartMs),
+    conversationById,
+    rekazPhonesBookedSince(rangeStartMs),
+  );
+  const periodInbound = new Map(period.conversations.map((row) => [row.conversationId, row]));
+  const closedConversations: CustomerServiceLast24Conversation[] = [...closedAtById]
+    .map(([conversationId, closedAt]) => {
       const conversation = conversationById.get(conversationId);
-      const summary = last24MessageSummary.get(conversationId);
-      const rawOutcome = latestOutcomeByConversation.get(conversationId);
-      const outcome: CustomerServiceLast24Conversation["outcome"] = rawOutcome === "booked" || rawOutcome === "not_booked" || rawOutcome === "no_reply"
-        ? rawOutcome
-        : null;
+      const inbound = periodInbound.get(conversationId);
       return {
         conversationId,
         customerName: conversation?.customer_name ?? null,
         customerPhone: conversation?.customer_phone ?? "",
-        inboundMessages: summary?.inboundMessages ?? 0,
-        lastInboundAt: summary?.lastInboundAt ?? last24Start,
-        outcome,
+        inboundMessages: inbound?.inboundMessages ?? 0,
+        lastInboundAt: inbound?.lastInboundAt ?? closedAt,
+        outcome:
+          periodOutcomeOf(conversationId) ??
+          asOutcome(conversation?.metadata?.contact_outcome),
+        closedAt,
       };
     })
-    .sort((a, b) => b.lastInboundAt.localeCompare(a.lastInboundAt));
+    .sort((a, b) => b.closedAt.localeCompare(a.closedAt));
+  const closedBooked = closedConversations.filter((row) => row.outcome === "booked").length;
 
   const presenceByMember = new Map(presence.map((row) => [row.team_member_id, row]));
   const memberByUser = new Map(members.map((row) => [row.user_id, row.id]));
@@ -984,18 +1267,19 @@ export async function getCustomerServiceReport(
       ),
       bookedRevenue: output.reduce((sum, employee) => sum + employee.bookedRevenue, 0),
     },
-    last24Hours: {
-      inboundMessages: customerLast24Messages.length,
-      inboundConversations: inboundConversationIds.size,
-      booked,
-      notBooked,
-      noReply,
-      awaitingOutcome: Math.max(
-        0,
-        inboundConversationIds.size - booked - notBooked - noReply,
-      ),
+    last24Hours: last24.summary,
+    last24HourConversations: last24.conversations,
+    period: period.summary,
+    periodConversations: period.conversations,
+    outbound,
+    customerTypes,
+    closed: {
+      total: closedConversations.length,
+      booked: closedBooked,
+      notBooked: closedConversations.length - closedBooked,
     },
-    last24HourConversations,
+    closedConversations,
+    metaSpend: await metaSpendPromise,
     employees: output,
   };
 }

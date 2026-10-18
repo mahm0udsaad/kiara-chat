@@ -241,9 +241,9 @@ function DriverTrips({ report }: { report: OperationsReport }) {
       <CardHeader>
         <CardTitle>سجل مشاوير السائق</CardTitle>
         <CardDescription>
-          يُحسب التأخير من ضغط السائق على الخطوة: عند الأخصائية قبل موعد العميلة بـ{" "}
-          {numberFormatter.format(rules.specialistLeadMinutes)} دقيقة، وعند العميلة في موعدها،
-          مع سماح {numberFormatter.format(rules.graceMinutes)} دقائق.
+          تأخير السائق: وصوله للعميلة بعد وقت الحجز ولو بدقيقة. وعند الأخصائية قبل موعد العميلة بـ{" "}
+          {numberFormatter.format(rules.specialistLeadMinutes)} دقيقة مع سماح{" "}
+          {numberFormatter.format(rules.graceMinutes)} دقائق، للاطلاع فقط.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

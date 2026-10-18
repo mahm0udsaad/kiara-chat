@@ -4,6 +4,7 @@ import type {
   DriverTripSteps,
   OperationsEvent,
   OperationsRole,
+  ServiceTiming,
 } from "@/types/api";
 
 export type ReportPeriod = "today" | "month" | "week";
@@ -41,6 +42,7 @@ export type OperationsVisit = {
   lateReasonNote: string | null;
   driverLeg: "outbound" | "return" | null;
   driverSteps: DriverTripSteps | null;
+  serviceTiming: ServiceTiming | null;
 };
 
 /** Current Saudi working week (Sunday–Saturday) or current calendar month. */
@@ -109,6 +111,7 @@ export function groupOperationsVisits(events: OperationsEvent[]): OperationsVisi
         lateReasonNote: rows.find((event) => event.lateReasonNote)?.lateReasonNote ?? null,
         driverLeg: first.driverLeg ?? null,
         driverSteps: rows.find((event) => event.driverSteps)?.driverSteps ?? null,
+        serviceTiming: rows.find((event) => event.serviceTiming)?.serviceTiming ?? null,
       };
     })
     .sort((a, b) => b.arrivalAt.localeCompare(a.arrivalAt));
@@ -145,14 +148,39 @@ export function driverStepVerdict(step: DriverStep): {
   return { label: "لم يحن موعده", tone: "neutral" };
 }
 
-export type DriverTripFilter = "all" | "open" | "done" | "late_specialist" | "late_client";
+export type DriverTripFilter = "all" | "open" | "done" | "late_client";
 
 export function matchesDriverTripFilter(visit: OperationsVisit, filter: DriverTripFilter) {
   if (filter === "open") return !visit.completed;
   if (filter === "done") return visit.completed;
-  if (filter === "late_specialist") return visit.driverSteps?.specialist.status === "late";
   if (filter === "late_client") return visit.driverSteps?.client.status === "late";
   return true;
+}
+
+const endTime = new Intl.DateTimeFormat(REPORT_LOCALE, {
+  timeZone: "Asia/Riyadh",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+/** "في الوقت المتوقع" / "أنهت متأخرة 20 د" / "أنهت مبكرة 25 د": her end tap against the expected end. */
+export function serviceTimingVerdict(timing: ServiceTiming): {
+  label: string;
+  tone: "success" | "danger" | "warning" | "neutral";
+} {
+  if (timing.verdict === "unreliable") return { label: "ضُغط الإنهاء بعد ساعات", tone: "neutral" };
+  if (timing.verdict === "late") {
+    return { label: `أنهت متأخرة ${delayLabel(timing.varianceMinutes)}`, tone: "danger" };
+  }
+  if (timing.verdict === "early") {
+    return { label: `أنهت مبكرة ${delayLabel(-timing.varianceMinutes)}`, tone: "warning" };
+  }
+  return { label: "في الوقت المتوقع", tone: "success" };
+}
+
+/** "المتوقع 1:30 PM · أنهت 1:52 PM" */
+export function serviceTimingTimes(timing: ServiceTiming): string {
+  return `الانتهاء المتوقع ${endTime.format(new Date(timing.expectedEndAt))} · أنهت ${endTime.format(new Date(timing.completedAt))}`;
 }
 
 export function completedWorkLabel(role: OperationsRole) {

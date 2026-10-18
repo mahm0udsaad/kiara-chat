@@ -134,14 +134,14 @@ export default function EmployeeReportScreen() {
   const events = (report.data?.events[role] ?? []).filter((event) => event.personIds.includes(personId));
   const visits = groupOperationsVisits(events);
   const lateness = role === "driver" ? person?.lateness ?? null : null;
-  const rules = report.data?.driverStepRules;
+  const serviceTiming = role === "specialist" ? person?.serviceTiming ?? null : null;
+  const toleranceMinutes = report.data?.serviceToleranceMinutes ?? 0;
   const count = (filter: DriverTripFilter) =>
     visits.filter((visit) => matchesDriverTripFilter(visit, filter)).length;
   const tripFilters: SegmentOption<DriverTripFilter>[] = [
     { value: "all", label: "الكل", count: visits.length },
     { value: "open", label: "لم تكتمل", count: count("open") },
-    { value: "late_specialist", label: "تأخر عند الأخصائية", count: count("late_specialist") },
-    { value: "late_client", label: "تأخر عند العميلة", count: count("late_client") },
+    { value: "late_client", label: "وصل متأخراً", count: count("late_client") },
     { value: "done", label: "مكتملة", count: count("done") },
   ];
   const tripLogDays = visitsByDay(
@@ -219,18 +219,44 @@ export default function EmployeeReportScreen() {
               </Text>
             </Card>
 
+            {serviceTiming ? (
+              <Card>
+                <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>إنهاء الخدمة في وقتها</Text>
+                {serviceTiming.timed ? (
+                  <>
+                    <View style={{ flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm }}>
+                      <Metric icon="checkmark.circle" label="في الوقت المتوقع" value={reportInteger.format(serviceTiming.onTime)} />
+                      <Metric icon="exclamationmark.circle" label="أنهت متأخرة" value={reportInteger.format(serviceTiming.late)} />
+                      <Metric icon="clock" label="أنهت مبكرة" value={reportInteger.format(serviceTiming.early)} />
+                      <Metric icon="info.circle" label="ضُغط الإنهاء بعد ساعات" value={reportInteger.format(serviceTiming.unreliable)} />
+                    </View>
+                    {serviceTiming.medianLateMinutes != null ? (
+                      <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
+                        التأخير المعتاد عند الإنهاء متأخرة {delayLabel(serviceTiming.medianLateMinutes)}
+                      </Text>
+                    ) : null}
+                  </>
+                ) : (
+                  <Text style={{ ...type.body, ...rtlText, color: colors.textSecondary }}>
+                    لم يُضغط «إنهاء الخدمة» في أي زيارة خلال الفترة المختارة.
+                  </Text>
+                )}
+                <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
+                  الانتهاء المتوقع = وقت الحجز + مجموع مدد الخدمات المحجوزة، ويُقارن بضغط «إنهاء الخدمة»
+                  {toleranceMinutes
+                    ? `، مع سماح ${reportInteger.format(toleranceMinutes)} دقيقة قبله أو بعده.`
+                    : " بالدقيقة: بعده ولو بدقيقة تأخير، وقبله بدقيقة إنهاء مبكر."}
+                </Text>
+              </Card>
+            ) : null}
+
             {lateness ? (
               <Card>
-                <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>الالتزام بالمواعيد</Text>
-                <LatenessRow title="وصلت للأخصائية" summary={lateness.specialist} />
-                <LatenessRow title="وصلت للعميلة" summary={lateness.client} />
-                {rules ? (
-                  <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
-                    يُحسب من ضغط السائق على الخطوة: عند الأخصائية قبل موعد العميلة بـ{" "}
-                    {reportInteger.format(rules.specialistLeadMinutes)} دقيقة، وعند العميلة في موعدها، مع سماح{" "}
-                    {reportInteger.format(rules.graceMinutes)} دقائق.
-                  </Text>
-                ) : null}
+                <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>الوصول للعميلة في وقت الحجز</Text>
+                <LatenessRow title="وصل للعميلة" summary={lateness.client} />
+                <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
+                  يُحسب من وقت الحجز تماماً: ضغط السائق «وصلت للعميلة» بعده ولو بدقيقة تأخير.
+                </Text>
               </Card>
             ) : null}
 

@@ -30,14 +30,18 @@ describe("driver arrival steps", () => {
     expect(steps.specialistDueBasis).toBe("lead");
   });
 
-  test("a confirmation within grace is still on time", () => {
-    expect(trip({ driverClientArrivedAt: at(5) }).client.status).toBe("on_time");
+  test("at the client there is no grace: a minute past the booking is late", () => {
+    expect(trip({ driverClientArrivedAt: at(1) }).client).toEqual({
+      dueAt: at(0), at: at(1), status: "late", lateMinutes: 1,
+    });
+    // Seconds into the booking minute are still the booking minute.
+    const withinMinute = new Date(Date.parse(at(0)) + 40_000).toISOString();
+    expect(trip({ driverClientArrivedAt: withinMinute }).client.status).toBe("on_time");
   });
 
-  test("lateness is counted from the due time, not from the end of grace", () => {
-    expect(trip({ driverClientArrivedAt: at(6) }).client).toEqual({
-      dueAt: at(0), at: at(6), status: "late", lateMinutes: 6,
-    });
+  test("at the specialist a confirmation within grace is still on time", () => {
+    expect(trip({ driverArrivedAt: at(-25) }).specialist.status).toBe("on_time");
+    expect(trip({ driverArrivedAt: at(-24) }).specialist).toMatchObject({ status: "late", lateMinutes: 6 });
   });
 
   test("late at the specialist is judged apart from the client", () => {

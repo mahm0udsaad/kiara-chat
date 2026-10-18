@@ -17,6 +17,13 @@ type TeamMetric =
   | "inbound-conversations"
   | "booked"
   | "not-booked"
+  | "not-booked-total"
+  | "new-customers"
+  | "returning-customers"
+  | "closed"
+  | "closed-booked"
+  | "closed-not-booked"
+  | "messages-sent"
   | "no-reply"
   | "awaiting-outcome"
   | "active-now"
@@ -26,11 +33,18 @@ type TeamMetric =
   | "revenue"
   | "assigned";
 
-const METRICS: Record<TeamMetric, { title: string; description: string; icon: IconName; last24?: boolean }> = {
+const METRICS: Record<TeamMetric, { title: string; description: string; icon: IconName; last24?: boolean; closed?: boolean }> = {
+  "new-customers": { title: "عميلات جديدات", description: "عميلات راسلن خلال الفترة المختارة وليس لهن أي حجز سابق في ركاز قبل أول رسالة.", icon: "sparkles", last24: true },
+  "returning-customers": { title: "عميلات سابقات", description: "عميلات راسلن خلال الفترة المختارة ولهن حجز في ركاز قبل أول رسالة منهن.", icon: "calendar", last24: true },
+  closed: { title: "المحادثات المنتهية", description: "المحادثات التي أُغلقت خلال الفترة: بتغيير الحالة إلى منتهية، أو بتسجيل نتيجة، أو بإكمال الحجز.", icon: "checkmark.circle", closed: true },
+  "closed-booked": { title: "انتهت بحجز", description: "محادثات أُغلقت خلال الفترة ولها حجز في ركاز برقم العميلة أو نتيجة «حجز».", icon: "calendar", closed: true },
+  "closed-not-booked": { title: "انتهت دون حجز", description: "محادثات أُغلقت خلال الفترة دون حجز، مع النتيجة المسجلة لكل منها.", icon: "xmark.circle", closed: true },
+  "messages-sent": { title: "رسائل أرسلها الفريق", description: "الرسائل التي أرسلتها كل موظفة للعميلات خلال الفترة المختارة. الرسائل الآلية لا تُنسب لموظفة.", icon: "paperplane.fill" },
   "inbound-messages": { title: "الرسائل الواردة", description: "الرسائل التي وصلت من العميلات خلال آخر ٢٤ ساعة، مجمعة حسب المحادثة.", icon: "message", last24: true },
   "inbound-conversations": { title: "المحادثات الواردة", description: "المحادثات التي وصلتها رسالة واحدة على الأقل خلال آخر ٢٤ ساعة.", icon: "person.2", last24: true },
-  booked: { title: "الحجوزات المؤكدة", description: "المحادثات الواردة التي سُجلت نتيجتها كحجز مؤكد خلال آخر ٢٤ ساعة.", icon: "checkmark.circle", last24: true },
+  booked: { title: "الحجوزات المؤكدة", description: "العميلات اللاتي راسلن خلال آخر ٢٤ ساعة ولهن حجز في ركاز برقمهن، أو سُجلت نتيجة محادثتهن «حجز».", icon: "checkmark.circle", last24: true },
   "not-booked": { title: "لم يتم الحجز", description: "المحادثات الواردة التي انتهت نتيجتها دون حجز خلال آخر ٢٤ ساعة.", icon: "exclamationmark.circle", last24: true },
+  "not-booked-total": { title: "لم يحجزن", description: "كل العميلات اللاتي راسلن خلال آخر ٢٤ ساعة دون حجز في ركاز أو نتيجة «حجز» في المحادثة، أياً كانت النتيجة المسجلة.", icon: "exclamationmark.circle", last24: true },
   "no-reply": { title: "العميلات اللاتي لم يرددن", description: "المحادثات الواردة التي سُجلت نتيجتها أن العميلة لم ترد.", icon: "phone", last24: true },
   "awaiting-outcome": { title: "بانتظار النتيجة", description: "المحادثات الواردة التي لم تُسجل لها نتيجة نهائية بعد.", icon: "clock", last24: true },
   "active-now": { title: "النشطات الآن", description: "موظفات خدمة العملاء الظاهرات كنشطات وقت تحديث التقرير.", icon: "checkmark.circle" },
@@ -59,6 +73,7 @@ function employeeValue(employee: CustomerServiceEmployee, metric: TeamMetric): s
   if (metric === "active-now") return employee.activeNow ? "نشطة الآن" : "غير نشطة";
   if (metric === "time") return employee.chatMinutes ? durationLabel(employee.chatMinutes) : "—";
   if (metric === "conversations") return reportInteger.format(employee.handledConversations);
+  if (metric === "messages-sent") return reportInteger.format(employee.messagesSent);
   if (metric === "bookings") return reportInteger.format(employee.rekazBookings ?? 0);
   if (metric === "revenue") return currency.format(employee.bookedRevenue ?? 0);
   if (metric === "assigned") return reportInteger.format(employee.currentAssigned);
@@ -83,13 +98,18 @@ export default function CustomerServiceTeamMetricScreen() {
     to?: string | string[];
     startTime?: string | string[];
     endTime?: string | string[];
+    scope?: string | string[];
   }>();
   const metric = asMetric(one(params.metric));
+  const wantsPeriod = one(params.scope) === "period";
   const from = one(params.from);
   const to = one(params.to);
   const startTime = one(params.startTime) || "00:00";
   const endTime = one(params.endTime) || "23:59";
-  const details = METRICS[metric];
+  const baseDetails = METRICS[metric];
+  const details = wantsPeriod && baseDetails.last24
+    ? { ...baseDetails, description: baseDetails.description.replace("آخر ٢٤ ساعة", "الفترة المختارة") }
+    : baseDetails;
   const bootstrap = useBootstrap();
   const canViewReports = bootstrap.data?.capabilities.canViewReports === true;
   const report = useCustomerServiceReport(from, to, startTime, endTime, canViewReports);
@@ -107,12 +127,22 @@ export default function CustomerServiceTeamMetricScreen() {
   }
 
   const data = report.data;
-  const outcomes = data?.last24Hours;
-  const allLast24 = data?.last24HourConversations ?? [];
-  const conversations = details.last24
+  const usesPeriod = wantsPeriod && Boolean(data?.period);
+  const outcomes = usesPeriod ? data?.period : data?.last24Hours;
+  const allLast24 = (usesPeriod ? data?.periodConversations : data?.last24HourConversations) ?? [];
+  const conversations = details.closed
+    ? (data?.closedConversations ?? []).filter((conversation) => {
+      if (metric === "closed-booked") return conversation.outcome === "booked";
+      if (metric === "closed-not-booked") return conversation.outcome !== "booked";
+      return true;
+    })
+    : details.last24
     ? allLast24.filter((conversation) => {
+      if (metric === "new-customers") return conversation.customerType === "new";
+      if (metric === "returning-customers") return conversation.customerType === "returning";
       if (metric === "booked") return conversation.outcome === "booked";
       if (metric === "not-booked") return conversation.outcome === "not_booked";
+      if (metric === "not-booked-total") return conversation.outcome !== "booked";
       if (metric === "no-reply") return conversation.outcome === "no_reply";
       if (metric === "awaiting-outcome") return conversation.outcome == null;
       return true;
@@ -121,7 +151,21 @@ export default function CustomerServiceTeamMetricScreen() {
   const employees = (data?.employees ?? []).filter((employee) => metric !== "active-now" || employee.activeNow);
   const value = !data
     ? "—"
-    : metric === "inbound-messages"
+    : metric === "new-customers"
+      ? reportInteger.format(data.customerTypes?.new ?? 0)
+      : metric === "returning-customers"
+      ? reportInteger.format(data.customerTypes?.returning ?? 0)
+      : metric === "closed"
+      ? reportInteger.format(data.closed?.total ?? 0)
+      : metric === "closed-booked"
+      ? reportInteger.format(data.closed?.booked ?? 0)
+      : metric === "closed-not-booked"
+      ? reportInteger.format(data.closed?.notBooked ?? 0)
+      : metric === "messages-sent"
+      ? reportInteger.format(data.outbound?.team ?? data.totals.messagesSent)
+      : metric === "not-booked-total"
+      ? reportInteger.format(Math.max(0, (outcomes?.inboundConversations ?? 0) - (outcomes?.booked ?? 0)))
+      : metric === "inbound-messages"
       ? reportInteger.format(outcomes?.inboundMessages ?? 0)
       : metric === "inbound-conversations"
         ? reportInteger.format(outcomes?.inboundConversations ?? 0)
@@ -172,7 +216,7 @@ export default function CustomerServiceTeamMetricScreen() {
 
         {report.isLoading ? <ActivityIndicator size="large" color={colors.brand} /> : null}
 
-        {data && details.last24 && conversations.length ? (
+        {data && (details.last24 || details.closed) && conversations.length ? (
           <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
             {conversations.map((conversation, index) => {
               const presentation = outcomePresentation(conversation.outcome);
@@ -193,7 +237,10 @@ export default function CustomerServiceTeamMetricScreen() {
                               {conversation.customerName || conversation.customerPhone || "محادثة"}
                             </Text>
                             <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textSecondary }}>
-                              {reportInteger.format(conversation.inboundMessages)} رسالة واردة · آخر رسالة {relativeTimeLabel(conversation.lastInboundAt)}
+                              {conversation.closedAt
+                                ? `أُغلقت ${relativeTimeLabel(conversation.closedAt)}`
+                                : `${reportInteger.format(conversation.inboundMessages)} رسالة واردة · آخر رسالة ${relativeTimeLabel(conversation.lastInboundAt)}`}
+                              {conversation.customerType === "returning" ? " · عميلة سابقة" : conversation.customerType === "new" ? " · عميلة جديدة" : ""}
                             </Text>
                           </View>
                           <IconSymbol name="chevron.left" size={18} color={colors.textTertiary} />
@@ -208,17 +255,17 @@ export default function CustomerServiceTeamMetricScreen() {
               );
             })}
           </Card>
-        ) : data && details.last24 ? (
+        ) : data && (details.last24 || details.closed) ? (
           <Card>
             <Text style={{ ...type.body, ...rtlText, color: colors.textSecondary }}>
-              {allLast24.length
+              {(details.closed ? data.closedConversations : allLast24)?.length
                 ? "لا توجد محادثات ضمن هذه النتيجة."
                 : "تفاصيل المحادثات غير متاحة من الخادم بعد؛ سيظل الإجمالي أعلاه صحيحاً."}
             </Text>
           </Card>
         ) : null}
 
-        {data && !details.last24 && employees.length ? (
+        {data && !details.last24 && !details.closed && employees.length ? (
           <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
             {employees.map((employee, index) => (
               <View key={employee.teamMemberId}>
@@ -261,7 +308,7 @@ export default function CustomerServiceTeamMetricScreen() {
               </View>
             ))}
           </Card>
-        ) : data && !details.last24 ? (
+        ) : data && !details.last24 && !details.closed ? (
           <Card>
             <Text style={{ ...type.body, ...rtlText, color: colors.textSecondary }}>لا توجد نتائج ضمن هذه الفئة الآن.</Text>
           </Card>

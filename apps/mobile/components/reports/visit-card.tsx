@@ -6,7 +6,13 @@ import { Card } from "@/components/ui/card";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { durationLabel } from "@/lib/format";
-import { REPORT_LOCALE, reportInteger, type OperationsVisit } from "@/lib/operations-report";
+import {
+  REPORT_LOCALE,
+  reportInteger,
+  serviceTimingTimes,
+  serviceTimingVerdict,
+  type OperationsVisit,
+} from "@/lib/operations-report";
 import { useTheme } from "@/providers/theme-provider";
 
 const visitTime = new Intl.DateTimeFormat(REPORT_LOCALE, {
@@ -69,6 +75,18 @@ function VisitContent({ visit }: { visit: OperationsVisit }) {
             />
           ) : null}
         </View>
+
+        {visit.serviceTiming ? (() => {
+          const verdict = serviceTimingVerdict(visit.serviceTiming);
+          return (
+            <View style={{ flexDirection: "row-reverse", alignItems: "center", flexWrap: "wrap", gap: spacing.sm }}>
+              <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
+                {serviceTimingTimes(visit.serviceTiming)}
+              </Text>
+              <Badge label={verdict.label} tone={verdict.tone} />
+            </View>
+          );
+        })() : null}
 
         {visit.lateReasonNote ? (
           <Text selectable style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>

@@ -11,6 +11,13 @@ import {
   fieldLegsOf,
   type FieldLegAverage,
 } from "@/lib/field-timings";
+import {
+  SERVICE_TOLERANCE_MINUTES,
+  serviceTimingOf,
+  summarizeServiceTimings,
+  type ServiceTiming,
+  type SpecialistServiceTiming,
+} from "@/lib/service-timing";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { isLateClassification } from "@/lib/punctuality-core";
@@ -32,6 +39,8 @@ export type OperationsPerson = {
   completedMinutes: number;
   /** A driver's two arrival steps over the range; null for specialists. */
   lateness: DriverLateness | null;
+  /** A specialist's timed services against their booked length; null for drivers. */
+  serviceTiming: SpecialistServiceTiming | null;
 };
 
 export type OperationsEvent = {
@@ -62,6 +71,11 @@ export type OperationsEvent = {
    * dispatched outbound leg: the return driver confirms neither step.
    */
   driverSteps: DriverTripSteps | null;
+  /**
+   * The visit's service as timed by the specialist, on her events only. One
+   * value per order: every service row of a multi-service visit carries it.
+   */
+  serviceTiming: ServiceTiming | null;
 };
 
 export type OperationsReport = {
@@ -100,6 +114,7 @@ export type OperationsReport = {
   };
   /** What `driverSteps` was judged against, so the screens can say so. */
   driverStepRules: { specialistLeadMinutes: number; graceMinutes: number };
+  serviceToleranceMinutes: number;
 };
 
 type RosterRow = { id: string; full_name: string; is_active: boolean };
@@ -236,6 +251,7 @@ function buildPeople(
       scheduledMinutes: 0,
       completedMinutes: 0,
       lateness: null,
+      serviceTiming: null,
     };
   });
   for (const name of extraNames) {
@@ -253,6 +269,7 @@ function buildPeople(
       scheduledMinutes: 0,
       completedMinutes: 0,
       lateness: null,
+      serviceTiming: null,
     });
   }
   return { people, idByName };
@@ -287,6 +304,17 @@ function addMetrics(people: OperationsPerson[], events: OperationsEvent[]) {
     if (a.assignedCount !== b.assignedCount) return b.assignedCount - a.assignedCount;
     return a.name.localeCompare(b.name, "ar");
   });
+}
+
+/** A specialist's end taps judged once per visit, however many services it held. */
+function specialistServiceTiming(events: OperationsEvent[], personId: string): SpecialistServiceTiming {
+  const byVisit = new Map<string, ServiceTiming>();
+  for (const event of events) {
+    if (event.serviceTiming && event.personIds.includes(personId)) {
+      byVisit.set(event.visitKey, event.serviceTiming);
+    }
+  }
+  return summarizeServiceTimings([...byVisit.values()]);
 }
 
 export async function getOperationsReport(raw: OperationsReportInput): Promise<OperationsReport> {
@@ -453,6 +481,16 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         ),
       ),
   );
+  // Expected end = the booking time plus every booked service's duration,
+  // added up; judged against the specialist's «إنهاء الخدمة» tap.
+  const timingOfOrder = (order: OrderRow | undefined, bookedAt?: string, bookedMinutes?: number) => {
+    if (!order) return null;
+    return serviceTimingOf(
+      bookedAt ?? order.arrival_at,
+      bookedMinutes ?? order.duration_minutes,
+      progressByOrder.get(order.id)?.completed_at,
+    );
+  };
   const claimedOrders = new Set<string>();
   const specialistEvents: OperationsEvent[] = [];
   const reservationsByVisit = new Map<string, ReservationRow[]>();
@@ -469,6 +507,16 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
     const linkedOrder = group.map((row) => orderBySource.get(row.source_id)).find(Boolean);
     if (linkedOrder) claimedOrders.add(linkedOrder.id);
     const completedAt = linkedOrder ? completedAtByOrder.get(linkedOrder.id) ?? null : null;
+    // A Rekaz visit's booking time is its first service; its length is the
+    // services' durations summed, as booked.
+    const visitStart = group
+      .map((row) => row.payload.arrivalAt)
+      .reduce((earliest, at) => (Date.parse(at) < Date.parse(earliest) ? at : earliest));
+    const visitMinutes = group.reduce(
+      (sum, row) => sum + Math.max(Number(row.payload.durationMinutes) || 0, 0),
+      0,
+    );
+    const serviceTiming = timingOfOrder(linkedOrder, visitStart, visitMinutes);
     for (const row of group) {
       const reservation = row.payload;
       const completed = linkedOrder ? Boolean(completedAt) : row.status === "Done" || reservation.status === "Done";
@@ -499,6 +547,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         ...punctualityFields(linkedOrder?.id ?? null),
         driverLeg: null,
         driverSteps: null,
+        serviceTiming,
       });
     }
   }
@@ -527,6 +576,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         ...punctualityFields(order.id),
         driverLeg: null,
         driverSteps: null,
+        serviceTiming: timingOfOrder(order),
       });
     }
   }
@@ -583,6 +633,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         completedAt: outboundCompletedAt,
         tripCost: order.price == null ? null : Number(order.price),
         driverLeg: "outbound",
+        serviceTiming: null,
         // Judged against the time the driver was sent, and only once he was
         // sent: an order still waiting for dispatch owes nobody a step.
         driverSteps: order.sent_at
@@ -610,6 +661,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         tripCost: order.return_price == null ? null : Number(order.return_price),
         driverLeg: "return",
         driverSteps: null,
+        serviceTiming: null,
       });
     }
   }
@@ -622,6 +674,9 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         event.driverSteps && event.personIds.includes(person.id) ? [event.driverSteps] : [],
       ),
     );
+  }
+  for (const person of specialistPeople.people) {
+    person.serviceTiming = specialistServiceTiming(specialistEvents, person.id);
   }
   const byArrival = (a: OperationsEvent, b: OperationsEvent) => a.arrivalAt.localeCompare(b.arrivalAt);
 
@@ -649,5 +704,6 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
       missingReason: punctualityRows.filter((row) => isLateClassification(row.classification) && !row.late_reason_code).length,
     },
     driverStepRules: { specialistLeadMinutes: SPECIALIST_LEAD_MINUTES, graceMinutes },
+    serviceToleranceMinutes: SERVICE_TOLERANCE_MINUTES,
   };
 }

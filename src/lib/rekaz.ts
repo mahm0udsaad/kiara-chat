@@ -350,3 +350,25 @@ export async function fetchCustomerReservations(
 }
 
 const emptyRevenue = (): CustomerRevenue => ({ net: 0, booked: 0, refunded: 0, orders: 0 });
+
+/**
+ * When this customer's first Rekaz reservation was made, as epoch ms, or null
+ * when Rekaz has none for her number.
+ *
+ * One page is enough to answer "was she ours before": a customer with more
+ * than a page of reservations is an old one whatever the page holds. Cancelled
+ * reservations count — a booking she cancelled still makes her known to us.
+ */
+export async function fetchCustomerFirstBookingMs(phone: string): Promise<number | null> {
+  const mobile = String(phone).replace(/\D/g, "");
+  if (mobile.length < 8) return null;
+  const items = await fetchPage(0, { CustomerMobile: mobile });
+  let earliest: number | null = null;
+  for (const item of items) {
+    for (const stamp of [item.creationTime, item.date]) {
+      const ms = stamp ? Date.parse(stamp) : NaN;
+      if (Number.isFinite(ms) && (earliest === null || ms < earliest)) earliest = ms;
+    }
+  }
+  return earliest;
+}

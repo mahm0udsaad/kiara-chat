@@ -1,14 +1,18 @@
 import { Link, type Href } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { MetaSpendCard, sarLabel } from "@/components/reports/meta-spend-card";
 import {
-  ReportMetricCard,
-  ReportMetricGrid,
-  ReportSectionHeader,
-} from "@/components/reports/report-metric-card";
+  FigureStrip,
+  ReportGroup,
+  ReportRow,
+  RowDivider,
+  ShareBar,
+} from "@/components/reports/report-rows";
 import { Card } from "@/components/ui/card";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
+import { dayKeyFromToday } from "@/lib/calendar";
 import { durationLabel, relativeTimeLabel } from "@/lib/format";
 import { reportInteger } from "@/lib/operations-report";
 import { useTheme } from "@/providers/theme-provider";
@@ -154,47 +158,124 @@ function EmployeeRow({
 
 export function CustomerServiceTeam({ report }: { report: CustomerServiceReport }) {
   const { colors } = useTheme();
-  const outcomes = report.last24Hours;
-  const metricHref = (metric: string) => ({
+  // An older server only has the rolling 24 hours; a current one counts the
+  // customers of whatever days the owner picked.
+  const usesPeriod = Boolean(report.period);
+  const outcomes = report.period ?? report.last24Hours;
+  const isToday = report.from === report.to && report.to === dayKeyFromToday(0);
+  const metricHref = (metric: string, scope?: "period") => ({
     pathname: "/reports/customer-service/team/[metric]",
     params: {
       metric,
+      ...(scope ? { scope } : {}),
       from: report.from,
       to: report.to,
       startTime: report.startTime,
       endTime: report.endTime,
     },
   } as unknown as Href);
+  const scope = usesPeriod ? "period" as const : undefined;
+  const notBookedTotal = outcomes ? Math.max(0, outcomes.inboundConversations - outcomes.booked) : 0;
   return (
     <View style={{ gap: spacing.lg }}>
       {outcomes ? (
-        <View style={{ gap: spacing.md }}>
-          <ReportSectionHeader
-            title="نتائج آخر ٢٤ ساعة"
-            description="اضغطي على أي نتيجة لعرض المحادثات المرتبطة بها."
+        <ReportGroup
+          title={usesPeriod ? (isToday ? "عملاء اليوم" : "عملاء الفترة") : "نتائج آخر ٢٤ ساعة"}
+          description="الحجز من ركاز برقم العميلة أو من نتيجة المحادثة."
+        >
+          <FigureStrip
+            figures={[
+              { label: "تواصلن", value: outcomes.inboundConversations, tone: "brand", href: metricHref("inbound-conversations", scope), testID: "customer-service-team-inbound-conversations" },
+              { label: "حجزن", value: outcomes.booked, tone: "success", href: metricHref("booked", scope), testID: "customer-service-team-booked" },
+              { label: "لم يحجزن", value: notBookedTotal, tone: notBookedTotal ? "danger" : "neutral", href: metricHref("not-booked-total", scope), testID: "customer-service-team-not-booked-total" },
+            ]}
           />
-          <ReportMetricGrid>
-            <ReportMetricCard tone="brand" icon="message" label="رسائل واردة" value={outcomes.inboundMessages} href={metricHref("inbound-messages")} testID="customer-service-team-inbound-messages" />
-            <ReportMetricCard tone="brand" icon="person.2" label="محادثات واردة" value={outcomes.inboundConversations} href={metricHref("inbound-conversations")} testID="customer-service-team-inbound-conversations" />
-            <ReportMetricCard tone="success" icon="checkmark.circle" label="حجوزات مؤكدة" value={outcomes.booked} href={metricHref("booked")} testID="customer-service-team-booked" />
-            <ReportMetricCard tone="danger" icon="exclamationmark.circle" label="لم يتم الحجز" value={outcomes.notBooked} href={metricHref("not-booked")} testID="customer-service-team-not-booked" />
-            <ReportMetricCard tone="warning" icon="phone" label="لم ترد" value={outcomes.noReply} href={metricHref("no-reply")} testID="customer-service-team-no-reply" />
-            <ReportMetricCard tone="info" icon="clock" label="بانتظار النتيجة" value={outcomes.awaitingOutcome} href={metricHref("awaiting-outcome")} testID="customer-service-team-awaiting-outcome" />
-          </ReportMetricGrid>
-        </View>
+          <ShareBar
+            segments={[
+              { value: outcomes.booked, tone: "success" },
+              { value: notBookedTotal, tone: "danger" },
+            ]}
+          />
+          {usesPeriod && report.customerTypes ? (
+            <>
+              <RowDivider />
+              <ReportRow icon="sparkles" label="عميلات جديدات" caption="لا حجز لهن في ركاز قبل أول رسالة" value={report.customerTypes.new} tone="brand" href={metricHref("new-customers", scope)} testID="customer-service-team-new-customers" />
+              <RowDivider />
+              <ReportRow
+                icon="calendar"
+                label="عميلات سابقات"
+                caption={report.customerTypes.unknown
+                  ? `لهن حجز سابق في ركاز · تعذّر سؤال ركاز عن ${reportInteger.format(report.customerTypes.unknown)}`
+                  : "لهن حجز سابق في ركاز"}
+                value={report.customerTypes.returning}
+                href={metricHref("returning-customers", scope)}
+                testID="customer-service-team-returning-customers"
+              />
+            </>
+          ) : null}
+          <RowDivider />
+          <ReportRow icon="clock" label="بلا نتيجة مسجلة" value={outcomes.awaitingOutcome} tone={outcomes.awaitingOutcome ? "info" : "neutral"} href={metricHref("awaiting-outcome", scope)} testID="customer-service-team-awaiting-outcome" />
+          <RowDivider />
+          <ReportRow icon="phone" label="لم ترد" value={outcomes.noReply} href={metricHref("no-reply", scope)} testID="customer-service-team-no-reply" />
+          <RowDivider />
+          <ReportRow icon="xmark.circle" label="سُجلت «لم يتم الحجز»" value={outcomes.notBooked} href={metricHref("not-booked", scope)} testID="customer-service-team-not-booked" />
+        </ReportGroup>
       ) : null}
 
-      <View style={{ gap: spacing.md }}>
-        <ReportSectionHeader title="أداء الفترة" description="ملخص الفريق خلال الفترة المختارة." />
-        <ReportMetricGrid>
-          <ReportMetricCard icon="checkmark.circle" label="نشطات الآن" value={report.totals.activeNow} href={metricHref("active-now")} testID="customer-service-team-active-now" />
-          <ReportMetricCard icon="clock" label="وقت الفريق في المحادثات" value={report.totals.chatMinutes ? durationLabel(report.totals.chatMinutes) : "—"} href={metricHref("time")} testID="customer-service-team-time" />
-          <ReportMetricCard icon="message" label="محادثات" value={report.totals.handledConversations} href={metricHref("conversations")} testID="customer-service-team-conversations" />
-          <ReportMetricCard icon="calendar" label="حجوزات ركاز" value={report.totals.rekazBookings ?? 0} href={metricHref("bookings")} testID="customer-service-team-bookings" />
-          <ReportMetricCard icon="banknote" label="قيمة الحجوزات" value={report.totals.bookedRevenue ? reportInteger.format(report.totals.bookedRevenue) : "—"} href={metricHref("revenue")} testID="customer-service-team-revenue" />
-          <ReportMetricCard icon="tray" label="مسند الآن" value={report.totals.currentAssigned} href={metricHref("assigned")} testID="customer-service-team-assigned" />
-        </ReportMetricGrid>
-      </View>
+      {report.closed ? (
+        <ReportGroup title="المحادثات المنتهية" description="ما أُغلق خلال الفترة، وهل انتهى بحجز.">
+          <FigureStrip
+            figures={[
+              { label: "انتهت", value: report.closed.total, tone: "brand", href: metricHref("closed", "period"), testID: "customer-service-team-closed" },
+              { label: "بحجز", value: report.closed.booked, tone: "success", href: metricHref("closed-booked", "period"), testID: "customer-service-team-closed-booked" },
+              { label: "دون حجز", value: report.closed.notBooked, tone: report.closed.notBooked ? "danger" : "neutral", href: metricHref("closed-not-booked", "period"), testID: "customer-service-team-closed-not-booked" },
+            ]}
+          />
+          <ShareBar
+            segments={[
+              { value: report.closed.booked, tone: "success" },
+              { value: report.closed.notBooked, tone: "danger" },
+            ]}
+          />
+        </ReportGroup>
+      ) : null}
+
+      {outcomes ? (
+        <ReportGroup title="الرسائل">
+          {report.outbound ? (
+            <>
+              <FigureStrip
+                figures={[
+                  { label: "أُرسلت من التطبيق", value: report.outbound.total, tone: "brand", href: metricHref("messages-sent"), testID: "customer-service-team-messages-sent" },
+                  { label: "واردة", value: outcomes.inboundMessages, href: metricHref("inbound-messages", scope), testID: "customer-service-team-inbound-messages" },
+                ]}
+              />
+              <RowDivider />
+              <ReportRow icon="person.2" label="من الفريق" value={report.outbound.team} href={metricHref("messages-sent")} testID="customer-service-team-messages-team" />
+              <RowDivider />
+              <ReportRow icon="sparkles" label="آلية" caption="البوت والتذكيرات والحملات" value={report.outbound.automated} />
+            </>
+          ) : (
+            <ReportRow icon="message" label="رسائل واردة" value={outcomes.inboundMessages} href={metricHref("inbound-messages", scope)} testID="customer-service-team-inbound-messages" />
+          )}
+        </ReportGroup>
+      ) : null}
+
+      {report.metaSpend ? <MetaSpendCard spend={report.metaSpend} /> : null}
+
+      <ReportGroup title="أداء الفريق" description="ضمن الفترة المختارة.">
+        <ReportRow icon="checkmark.circle" label="نشطات الآن" value={report.totals.activeNow} tone={report.totals.activeNow ? "success" : "neutral"} href={metricHref("active-now")} testID="customer-service-team-active-now" />
+        <RowDivider />
+        <ReportRow icon="clock" label="وقت الفريق في المحادثات" value={report.totals.chatMinutes ? durationLabel(report.totals.chatMinutes) : "—"} href={metricHref("time")} testID="customer-service-team-time" />
+        <RowDivider />
+        <ReportRow icon="message" label="محادثات تعامل معها الفريق" value={report.totals.handledConversations} href={metricHref("conversations")} testID="customer-service-team-conversations" />
+        <RowDivider />
+        <ReportRow icon="calendar" label="حجوزات أدخلها الفريق في ركاز" value={report.totals.rekazBookings ?? 0} href={metricHref("bookings")} testID="customer-service-team-bookings" />
+        <RowDivider />
+        <ReportRow icon="banknote" label="قيمة الحجوزات" value={report.totals.bookedRevenue ? sarLabel(report.totals.bookedRevenue) : "—"} href={metricHref("revenue")} testID="customer-service-team-revenue" />
+        <RowDivider />
+        <ReportRow icon="tray" label="مسندة الآن" value={report.totals.currentAssigned} href={metricHref("assigned")} testID="customer-service-team-assigned" />
+      </ReportGroup>
 
       <Card padded={false}>
         <View style={{ padding: spacing.lg, gap: spacing.xs }}>

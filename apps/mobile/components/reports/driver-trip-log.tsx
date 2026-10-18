@@ -19,8 +19,8 @@ const tripTime = new Intl.DateTimeFormat(REPORT_LOCALE, {
 });
 
 /**
- * One of the driver's two arrival confirmations: when he was due, when he
- * tapped it, and what that came to.
+ * The driver's arrival at the client against the booking time: when it was,
+ * when he tapped it, and what that came to.
  */
 function StepLine({ title, dueLabel, step }: { title: string; dueLabel: string; step: DriverStep }) {
   const { colors } = useTheme();
@@ -63,8 +63,7 @@ function TripRow({ visit }: { visit: OperationsVisit }) {
       </View>
       {steps ? (
         <>
-          <StepLine title="وصلت للأخصائية" dueLabel="المطلوب" step={steps.specialist} />
-          <StepLine title="وصلت للعميلة" dueLabel="الموعد" step={steps.client} />
+          <StepLine title="وصل للعميلة" dueLabel="وقت الحجز" step={steps.client} />
         </>
       ) : null}
     </View>
@@ -86,7 +85,7 @@ function TripRow({ visit }: { visit: OperationsVisit }) {
 
 /**
  * A driver's trips for one day as a plain log: which he had, which he
- * finished, and how each of his two arrival steps compared with its time.
+ * finished, and whether he reached the client at the booking time.
  */
 export function DriverTripLog({ visits }: { visits: OperationsVisit[] }) {
   const { colors } = useTheme();

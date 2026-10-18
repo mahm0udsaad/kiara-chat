@@ -22,6 +22,7 @@ import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
 import { addDays, dayKeyFromToday } from "@/lib/calendar";
 import {
+  delayLabel,
   REPORT_LOCALE,
   reportDecimal,
   reportInteger,
@@ -130,9 +131,23 @@ export default function ReportsScreen() {
         assigned: value.assigned + person.assignedCount,
         completed: value.completed + person.completedCount,
         minutes: value.minutes + person.scheduledMinutes,
+        timed: value.timed + (person.serviceTiming?.timed ?? 0),
+        onTime: value.onTime + (person.serviceTiming?.onTime ?? 0),
+        lateEnd: value.lateEnd + (person.serviceTiming?.late ?? 0),
+        early: value.early + (person.serviceTiming?.early ?? 0),
+        unreliable: value.unreliable + (person.serviceTiming?.unreliable ?? 0),
+        trips: value.trips + (person.lateness?.trips ?? 0),
+        lateTrips: value.lateTrips + (person.lateness?.client.late ?? 0),
+        onTimeTrips: value.onTimeTrips + (person.lateness?.client.onTime ?? 0),
+        missingTrips: value.missingTrips + (person.lateness?.client.missing ?? 0),
       }),
-      { assigned: 0, completed: 0, minutes: 0 },
+      {
+        assigned: 0, completed: 0, minutes: 0,
+        timed: 0, onTime: 0, lateEnd: 0, early: 0, unreliable: 0,
+        trips: 0, lateTrips: 0, onTimeTrips: 0, missingTrips: 0,
+      },
   );
+  const toleranceMinutes = operationsReport.data?.serviceToleranceMinutes ?? 0;
 
   const values: Record<PickerField, string> = draft;
   function onPickerChange(event: DateTimePickerEvent, value?: Date) {
@@ -166,12 +181,12 @@ export default function ReportsScreen() {
         <Card>
           <View style={{ gap: spacing.xs }}>
             <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>
-              {role === "orders" ? "صحة الطلبات والمشاكل" : "المحادثات التي تم التعامل معها"}
+              {role === "orders" ? "صحة الطلبات والمشاكل" : "تقرير خدمة العملاء"}
             </Text>
             <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
               {role === "orders"
                 ? "ابدئي بالطلبات المتأخرة، تجاوز وقت الخدمة، وتكاليف المشاوير الناقصة."
-                : "يعتمد التقرير على الرد أو الاستلام أو أي إجراء داخل المحادثة، بغض النظر عمّن استلمها أولاً."}
+                : "العميلات والحجز، المحادثات المنتهية، الرسائل وتكلفة واتساب للفترة المختارة."}
             </Text>
           </View>
           <ReportDateRangeFilter
@@ -230,6 +245,40 @@ export default function ReportsScreen() {
               <ReportMetricCard icon="clock" label="ساعات" value={reportDecimal.format(totals.minutes / 60)} />
             </ReportMetricGrid>
           </View>
+
+          {role === "specialist" && operationsReport.data.serviceToleranceMinutes != null ? (
+            <View style={{ gap: spacing.md }}>
+              <ReportSectionHeader
+                title="إنهاء الخدمة في وقتها"
+                description={`الانتهاء المتوقع = وقت الحجز + مجموع مدد الخدمات المحجوزة، ويُقارن بضغط الأخصائية «إنهاء الخدمة». ${toleranceMinutes ? `يُعد في الوقت ما كان ضمن ${reportInteger.format(toleranceMinutes)} دقيقة قبله أو بعده.` : "بالدقيقة: الإنهاء بعده ولو بدقيقة تأخير، وقبله بدقيقة إنهاء مبكر."}`}
+              />
+              <ReportMetricGrid>
+                <ReportMetricCard tone="success" icon="checkmark.circle" label="في الوقت المتوقع" value={totals.onTime} />
+                <ReportMetricCard tone={totals.lateEnd ? "danger" : "neutral"} icon="exclamationmark.circle" label="أنهت متأخرة" value={totals.lateEnd} />
+                <ReportMetricCard tone={totals.early ? "warning" : "neutral"} icon="clock" label="أنهت مبكرة" value={totals.early} />
+                <ReportMetricCard icon="info.circle" label="ضُغط الإنهاء بعد ساعات" value={totals.unreliable} />
+              </ReportMetricGrid>
+              <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
+                {totals.timed
+                  ? `${reportInteger.format(totals.timed)} زيارة ضُغط فيها «إنهاء الخدمة» من ${reportInteger.format(totals.assigned)}.`
+                  : "لم يُضغط «إنهاء الخدمة» في أي زيارة خلال الفترة المختارة."}
+              </Text>
+            </View>
+          ) : null}
+
+          {role === "driver" ? (
+            <View style={{ gap: spacing.md }}>
+              <ReportSectionHeader
+                title="الوصول للعميلة في وقت الحجز"
+                description="يُحسب التأخير من وقت الحجز تماماً: وصول السائق للعميلة بعده ولو بدقيقة تأخير."
+              />
+              <ReportMetricGrid>
+                <ReportMetricCard tone="success" icon="checkmark.circle" label="وصل في الوقت" value={totals.onTimeTrips} />
+                <ReportMetricCard tone={totals.lateTrips ? "danger" : "neutral"} icon="exclamationmark.circle" label="وصل متأخراً" value={totals.lateTrips} />
+                <ReportMetricCard tone={totals.missingTrips ? "warning" : "neutral"} icon="info.circle" label="لم يضغط الوصول" value={totals.missingTrips} />
+              </ReportMetricGrid>
+            </View>
+          ) : null}
 
           <Card padded={false}>
             <View
@@ -301,12 +350,29 @@ export default function ReportsScreen() {
                                 ...type.footnote,
                                 ...numeric,
                                 ...rtlText,
-                                color: person.lateness.specialist.late || person.lateness.client.late
-                                  ? colors.danger
-                                  : colors.success,
+                                color: person.lateness.client.late ? colors.danger : colors.success,
                               }}
                             >
-                              تأخر عند الأخصائية {reportInteger.format(person.lateness.specialist.late)} · عند العميلة {reportInteger.format(person.lateness.client.late)}
+                              وصل متأخراً للعميلة {reportInteger.format(person.lateness.client.late)} من {reportInteger.format(person.lateness.client.late + person.lateness.client.onTime)}
+                              {person.lateness.client.medianLateMinutes != null ? ` · التأخير المعتاد ${delayLabel(person.lateness.client.medianLateMinutes)}` : ""}
+                            </Text>
+                          ) : null}
+                          {person.serviceTiming?.timed ? (
+                            <Text
+                              selectable
+                              style={{
+                                ...type.footnote,
+                                ...numeric,
+                                ...rtlText,
+                                color: person.serviceTiming.late
+                                  ? colors.danger
+                                  : person.serviceTiming.early
+                                    ? colors.warning
+                                    : colors.success,
+                              }}
+                            >
+                              إنهاء الخدمة: {reportInteger.format(person.serviceTiming.onTime)} في الوقت · {reportInteger.format(person.serviceTiming.late)} متأخرة · {reportInteger.format(person.serviceTiming.early)} مبكرة
+                              {person.serviceTiming.unreliable ? ` · ${reportInteger.format(person.serviceTiming.unreliable)} ضُغط بعد ساعات` : ""}
                             </Text>
                           ) : null}
                         </View>
