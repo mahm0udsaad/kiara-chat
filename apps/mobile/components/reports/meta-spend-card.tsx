@@ -28,7 +28,7 @@ export function MetaSpendCard({ spend }: { spend: MetaSpend }) {
   const { colors } = useTheme();
   const maxDay = Math.max(...spend.days.map((day) => day.costSar), 0);
   const average = spend.days.length ? spend.costSar / spend.days.length : 0;
-  const { marketing, utility, authentication } = spend.byCategory;
+  const { marketing, utility, authentication, service } = spend.byCategory;
   return (
     <ReportGroup
       title="تكلفة واتساب (Meta)"
@@ -82,8 +82,26 @@ export function MetaSpendCard({ spend }: { spend: MetaSpend }) {
           />
         </>
       ) : null}
+      {service?.count ? (
+        <>
+          <RowDivider />
+          <ReportRow
+            icon="message"
+            label="ردود مدفوعة"
+            caption={`${reportInteger.format(service.count)} رسالة`}
+            value={sarLabel(service.costSar)}
+            tone="danger"
+          />
+        </>
+      ) : null}
       <RowDivider />
-      <ReportRow icon="checkmark.circle" label="قوالب مجانية" caption="داخل نافذة ٢٤ ساعة" value={spend.free} tone="success" />
+      <ReportRow
+        icon="checkmark.circle"
+        label="رسائل مجانية"
+        caption={spend.source === "meta" ? "ردود وقوالب خدمية داخل نافذة ٢٤ ساعة" : "قوالب خدمية داخل نافذة ٢٤ ساعة"}
+        value={spend.free}
+        tone="success"
+      />
 
       {spend.days.length ? (
         <>
@@ -116,7 +134,7 @@ export function MetaSpendCard({ spend }: { spend: MetaSpend }) {
                 </Text>
               </View>
               <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
-                {reportInteger.format(day.marketing)} تسويقية · {reportInteger.format(day.utility + day.authentication)} خدمية مدفوعة · {reportInteger.format(day.free)} مجانية
+                {reportInteger.format(day.marketing)} تسويقية · {reportInteger.format(day.utility + day.authentication + (day.service ?? 0))} مدفوعة أخرى · {reportInteger.format(day.free)} مجانية
               </Text>
             </View>
           ))}

@@ -31,6 +31,7 @@ export const META_SAUDI_RATES_SAR = {
   marketing: 0.2159,
   utility: 0.0401,
   authentication: 0.0401,
+  service: 0.0401,
 } as const;
 
 /** The riyal is pegged; a USD-billed WABA converts at the peg. */
@@ -40,7 +41,7 @@ const OPEN_WINDOW_MS = 24 * 3600_000;
 const PAGE_SIZE = 1_000;
 const ID_BATCH_SIZE = 200;
 
-export type MetaSpendCategory = "marketing" | "utility" | "authentication";
+export type MetaSpendCategory = "marketing" | "utility" | "authentication" | "service";
 
 export type MetaSpendDay = {
   /** YYYY-MM-DD. Meta's daily buckets are UTC days. */
@@ -50,7 +51,9 @@ export type MetaSpendDay = {
   marketing: number;
   utility: number;
   authentication: number;
-  /** Deliveries Meta did not charge for (inside an open window, ads entry). */
+  /** Free-form replies Meta charged for; Meta's docs say these are free. */
+  service: number;
+  /** Deliveries Meta did not charge for: replies and utility templates inside an open window. */
   free: number;
 };
 
@@ -86,6 +89,7 @@ function emptySpend(source: MetaSpend["source"], note: string | null): MetaSpend
       marketing: { count: 0, costSar: 0 },
       utility: { count: 0, costSar: 0 },
       authentication: { count: 0, costSar: 0 },
+      service: { count: 0, costSar: 0 },
     },
     free: 0,
     days: [],
@@ -102,6 +106,7 @@ function dayOf(days: Map<string, MetaSpendDay>, day: string): MetaSpendDay {
     marketing: 0,
     utility: 0,
     authentication: 0,
+    service: 0,
     free: 0,
   };
   days.set(day, current);
@@ -167,7 +172,9 @@ async function spendFromMeta(fromMs: number, toMs: number): Promise<MetaSpend> {
           ? "utility"
           : point.pricing_category?.startsWith("AUTHENTICATION")
             ? "authentication"
-            : null;
+            : point.pricing_category === "SERVICE"
+              ? "service"
+              : null;
     if (!category) continue;
     const costSar = toSar === null ? volume * META_SAUDI_RATES_SAR[category] : billed * toSar;
     day.costSar += costSar;
@@ -178,6 +185,18 @@ async function spendFromMeta(fromMs: number, toMs: number): Promise<MetaSpend> {
   if (toSar === null && currency) {
     spend.billed = { currency, amount: Math.round(billedAmount * 100) / 100 };
   }
+  // One line per read, so what Meta actually reported can be checked against
+  // the screen from the production logs.
+  const points = response.pricing_analytics?.data?.flatMap((row) => row.data_points ?? []) ?? [];
+  const summary: Record<string, number> = {};
+  for (const point of points) {
+    const key = `${point.pricing_category ?? "?"}/${point.pricing_type ?? "?"}`;
+    summary[key] = (summary[key] ?? 0) + (Number(point.volume) || 0);
+  }
+  console.info(
+    "[meta-spend] meta",
+    JSON.stringify({ start, end, currency, points: points.length, volumes: summary, billed: billedAmount }),
+  );
   return finish(spend, days);
 }
 

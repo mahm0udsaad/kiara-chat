@@ -860,7 +860,7 @@ export type CustomerServiceReport = {
   employees: CustomerServiceEmployee[];
 };
 
-export type MetaSpendCategory = "marketing" | "utility" | "authentication";
+export type MetaSpendCategory = "marketing" | "utility" | "authentication" | "service";
 
 export type MetaSpendDay = {
   /** YYYY-MM-DD, a UTC day as Meta buckets it. */
@@ -869,6 +869,8 @@ export type MetaSpendDay = {
   marketing: number;
   utility: number;
   authentication: number;
+  /** Charged free-form replies; absent on older servers. */
+  service?: number;
   /** Deliveries Meta did not charge for. */
   free: number;
 };
@@ -878,10 +880,12 @@ export type MetaSpend = {
   source: "meta" | "estimate";
   currency: "SAR";
   costSar: number;
-  byCategory: Record<MetaSpendCategory, { count: number; costSar: number }>;
+  byCategory: Record<Exclude<MetaSpendCategory, "service">, { count: number; costSar: number }> & {
+    service?: { count: number; costSar: number };
+  };
   free: number;
   days: MetaSpendDay[];
-  rates: { effectiveFrom: string; marketing: number; utility: number; authentication: number };
+  rates: { effectiveFrom: string; marketing: number; utility: number; authentication: number; service?: number };
   /** Meta's bill in the WABA's own currency when it is not SAR (Kiara's is ARS). */
   billed?: { currency: string; amount: number } | null;
   note: string | null;
