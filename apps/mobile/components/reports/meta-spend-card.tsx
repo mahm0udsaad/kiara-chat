@@ -34,13 +34,16 @@ export function MetaSpendCard({ spend }: { spend: MetaSpend }) {
       title="تكلفة واتساب (Meta)"
       accessory={
         <SourceBadge
-          label={spend.source === "meta" ? "من فاتورة Meta" : "تقديري"}
+          label={spend.source === "meta" ? "من بيانات Meta" : "تقديري"}
           tone={spend.source === "meta" ? "success" : "warning"}
         />
       }
       footer={
         <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
           سعر الرسالة لأرقام السعودية من {effectiveLabel.format(new Date(`${spend.rates.effectiveFrom}T00:00:00Z`))}: تسويقية {rate.format(spend.rates.marketing)} ر.س · خدمية {rate.format(spend.rates.utility)} ر.س · مصادقة {rate.format(spend.rates.authentication)} ر.س. الردود خلال ٢٤ ساعة من آخر رسالة للعميلة مجانية، وكذلك القوالب الخدمية داخلها.
+          {spend.billed
+            ? `\nتُفوتر Meta هذا الحساب بعملة ${spend.billed.currency}: ${riyal.format(spend.billed.amount)} ${spend.billed.currency} للفترة، وحُوّلت هنا بأسعار Meta بالريال.`
+            : ""}
           {spend.note ? `\n${spend.note}` : ""}
         </Text>
       }

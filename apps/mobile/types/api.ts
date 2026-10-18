@@ -882,6 +882,8 @@ export type MetaSpend = {
   free: number;
   days: MetaSpendDay[];
   rates: { effectiveFrom: string; marketing: number; utility: number; authentication: number };
+  /** Meta's bill in the WABA's own currency when it is not SAR (Kiara's is ARS). */
+  billed?: { currency: string; amount: number } | null;
   note: string | null;
 };
 

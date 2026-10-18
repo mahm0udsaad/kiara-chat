@@ -63,6 +63,12 @@ export type MetaSpend = {
   free: number;
   days: MetaSpendDay[];
   rates: typeof META_SAUDI_RATES_SAR;
+  /**
+   * What Meta bills, in the WABA's own currency, when that is not SAR. Kiara's
+   * WABA bills in ARS, so `costSar` is Meta's delivered volumes priced at the
+   * SAR rate card — the same list price, converted at Meta's own ratio.
+   */
+  billed: { currency: string; amount: number } | null;
   /** Why the figure is an estimate, when it is. */
   note: string | null;
 };
@@ -84,6 +90,7 @@ function emptySpend(source: MetaSpend["source"], note: string | null): MetaSpend
     free: 0,
     days: [],
     rates: META_SAUDI_RATES_SAR,
+    billed: null,
     note,
   };
 }
@@ -133,18 +140,21 @@ async function spendFromMeta(fromMs: number, toMs: number): Promise<MetaSpend> {
     pricing_analytics?: { data?: { data_points?: PricingPoint[] }[] };
   }>(`/${wabaId}?fields=currency,${encodeURIComponent(field)}`);
 
-  const currency = response.currency?.toUpperCase();
+  const currency = response.currency?.toUpperCase() ?? "";
+  // SAR is read as billed and USD at the peg. Any other billing currency is
+  // priced from Meta's volumes at the SAR rate card: Meta's cards for every
+  // currency are the same list price, so this is the bill in riyals.
   const toSar = currency === "SAR" ? 1 : currency === "USD" ? SAR_PER_USD : null;
-  if (toSar === null) throw new Error(`Unsupported WABA currency ${currency ?? "unknown"}`);
 
   const spend = emptySpend("meta", null);
+  let billedAmount = 0;
   const days = new Map<string, MetaSpendDay>();
   for (const point of response.pricing_analytics?.data?.flatMap((row) => row.data_points ?? []) ?? []) {
     const volume = Number(point.volume) || 0;
-    const costSar = (Number(point.cost) || 0) * toSar;
-    if (!volume && !costSar) continue;
+    const billed = Number(point.cost) || 0;
+    if (!volume && !billed) continue;
+    billedAmount += billed;
     const day = dayOf(days, utcDay(point.start * 1000));
-    day.costSar += costSar;
     if (point.pricing_type && point.pricing_type !== "REGULAR") {
       day.free += volume;
       spend.free += volume;
@@ -159,9 +169,14 @@ async function spendFromMeta(fromMs: number, toMs: number): Promise<MetaSpend> {
             ? "authentication"
             : null;
     if (!category) continue;
+    const costSar = toSar === null ? volume * META_SAUDI_RATES_SAR[category] : billed * toSar;
+    day.costSar += costSar;
     day[category] += volume;
     spend.byCategory[category].count += volume;
     spend.byCategory[category].costSar += costSar;
+  }
+  if (toSar === null && currency) {
+    spend.billed = { currency, amount: Math.round(billedAmount * 100) / 100 };
   }
   return finish(spend, days);
 }
