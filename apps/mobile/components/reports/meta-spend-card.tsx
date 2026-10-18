@@ -41,7 +41,7 @@ export function MetaSpendCard({ spend }: { spend: MetaSpend }) {
       footer={
         <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textTertiary }}>
           سعر كل رسالة تسلّمها Meta لأرقام السعودية من {effectiveLabel.format(new Date(`${spend.rates.effectiveFrom}T00:00:00Z`))}: رد {rate.format(spend.rates.service ?? spend.rates.utility)} ر.س · قالب تسويقي {rate.format(spend.rates.marketing)} ر.س · قالب خدمي {rate.format(spend.rates.utility)} ر.س. تحتسب Meta كل رد يُسلَّم، لا القوالب فقط.
-          {spend.billed
+          {spend.billed?.amount
             ? `\nتُفوتر Meta هذا الحساب بعملة ${spend.billed.currency}: ${riyal.format(spend.billed.amount)} ${spend.billed.currency} للفترة، وحُوّلت هنا بأسعار Meta بالريال.`
             : ""}
           {spend.note ? `\n${spend.note}` : ""}
