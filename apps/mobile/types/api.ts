@@ -873,11 +873,14 @@ export type MetaSpendDay = {
   service?: number;
   /** Deliveries Meta did not charge for. */
   free: number;
+  /** Meta had not published this day yet; priced from our sends. */
+  estimated?: boolean;
 };
 
 /** Mirrors `MetaSpend` in src/lib/meta-spend.ts. */
 export type MetaSpend = {
-  source: "meta" | "estimate";
+  /** "mixed": Meta for the days it has published, an estimate for the rest. */
+  source: "meta" | "estimate" | "mixed";
   currency: "SAR";
   costSar: number;
   byCategory: Record<Exclude<MetaSpendCategory, "service">, { count: number; costSar: number }> & {

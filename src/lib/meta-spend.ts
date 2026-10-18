@@ -55,11 +55,19 @@ export type MetaSpendDay = {
   service: number;
   /** Deliveries Meta did not charge for: replies and utility templates inside an open window. */
   free: number;
+  /** SAR per charged category on this day. */
+  categoryCostSar: Partial<Record<MetaSpendCategory, number>>;
+  /** True when Meta had not published this day yet and it was priced from our sends. */
+  estimated: boolean;
 };
 
 export type MetaSpend = {
-  /** "meta": Meta's own figures; "estimate": priced here from our sends. */
-  source: "meta" | "estimate";
+  /**
+   * "meta": every day from Meta's own figures; "estimate": none were, all
+   * priced from our sends; "mixed": Meta for the days it has published, our
+   * sends for the rest (Meta publishes a day's figures late).
+   */
+  source: "meta" | "estimate" | "mixed";
   currency: "SAR";
   costSar: number;
   byCategory: Record<MetaSpendCategory, { count: number; costSar: number }>;
@@ -108,6 +116,8 @@ function dayOf(days: Map<string, MetaSpendDay>, day: string): MetaSpendDay {
     authentication: 0,
     service: 0,
     free: 0,
+    categoryCostSar: {},
+    estimated: false,
   };
   days.set(day, current);
   return current;
@@ -178,6 +188,7 @@ async function spendFromMeta(fromMs: number, toMs: number): Promise<MetaSpend> {
     if (!category) continue;
     const costSar = toSar === null ? volume * META_SAUDI_RATES_SAR[category] : billed * toSar;
     day.costSar += costSar;
+    day.categoryCostSar[category] = (day.categoryCostSar[category] ?? 0) + costSar;
     day[category] += volume;
     spend.byCategory[category].count += volume;
     spend.byCategory[category].costSar += costSar;
@@ -298,13 +309,54 @@ async function estimateFromSends(fromMs: number, toMs: number, note: string): Pr
     const rate = META_SAUDI_RATES_SAR[category];
     day[category] += 1;
     day.costSar += rate;
+    day.estimated = true;
+    day.categoryCostSar[category] = (day.categoryCostSar[category] ?? 0) + rate;
     spend.byCategory[category].count += 1;
     spend.byCategory[category].costSar += rate;
   }
   return finish(spend, days);
 }
 
-const cache = new Map<string, { at: number; spend: MetaSpend }>();
+/**
+ * Meta's figures for the days it has published, our priced sends for the
+ * days it has not. Meta publishes a day late, so without this the current day
+ * always read as free.
+ */
+function merge(meta: MetaSpend | null, estimate: MetaSpend | null): MetaSpend | null {
+  if (!meta && !estimate) return null;
+  const metaDays = new Map((meta?.days ?? []).map((day) => [day.day, day]));
+  const chosen = new Map<string, MetaSpendDay>(metaDays);
+  for (const day of estimate?.days ?? []) {
+    if (!metaDays.has(day.day)) chosen.set(day.day, { ...day, estimated: true });
+  }
+  const estimatedDays = [...chosen.values()].filter((day) => day.estimated).length;
+  const source: MetaSpend["source"] = !meta
+    ? "estimate"
+    : estimatedDays === 0
+      ? "meta"
+      : estimatedDays === chosen.size
+        ? "estimate"
+        : "mixed";
+  const note = !meta
+    ? "تقدير من القوالب المرسلة بأسعار Meta المعلنة؛ تعذّرت قراءة أرقام Meta."
+    : estimatedDays
+      ? "الأيام المعلّمة «تقديري» لم تنشر Meta أرقامها بعد، فقُدّرت من القوالب المرسلة بأسعار Meta المعلنة."
+      : null;
+  const spend = emptySpend(source, note);
+  spend.billed = meta?.billed ?? null;
+  for (const day of chosen.values()) {
+    spend.free += day.free;
+    for (const category of ["marketing", "utility", "authentication", "service"] as const) {
+      spend.byCategory[category].count += day[category];
+      spend.byCategory[category].costSar += day.categoryCostSar[category] ?? 0;
+    }
+  }
+  return finish(spend, chosen);
+}
+
+const cache = new Map<string, { at: number; spend: MetaSpend | null }>();
+/** One look at the past week per instance, logged, to see how late Meta publishes. */
+let lagProbed = false;
 
 /**
  * Spend over the Riyadh days `from`–`to`, as whole UTC days to match Meta's
@@ -318,23 +370,22 @@ export async function getMetaSpend(from: string, to: string): Promise<MetaSpend 
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.spend;
 
-  let spend: MetaSpend | null = null;
-  try {
-    spend = await spendFromMeta(fromMs, toMs);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    console.warn("[meta-spend] pricing_analytics unavailable, estimating", reason);
-    try {
-      spend = await estimateFromSends(
-        fromMs,
-        toMs,
-        "تقدير من القوالب المرسلة بأسعار Meta المعلنة؛ تعذّرت قراءة الفاتورة من Meta.",
-      );
-    } catch (estimateError) {
-      console.error("[meta-spend] estimate failed", estimateError);
+  const probe = lagProbed
+    ? Promise.resolve(null)
+    : spendFromMeta(Date.now() - 7 * 86_400_000, Date.now()).catch(() => null);
+  lagProbed = true;
+  const [meta, estimate] = await Promise.all([
+    spendFromMeta(fromMs, toMs).catch((error) => {
+      console.warn("[meta-spend] pricing_analytics unavailable", error instanceof Error ? error.message : error);
       return null;
-    }
-  }
+    }),
+    estimateFromSends(fromMs, toMs, "").catch((error) => {
+      console.error("[meta-spend] estimate failed", error);
+      return null;
+    }),
+    probe,
+  ]);
+  const spend = merge(meta, estimate);
   cache.set(key, { at: Date.now(), spend });
   return spend;
 }

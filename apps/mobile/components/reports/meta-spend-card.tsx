@@ -34,7 +34,7 @@ export function MetaSpendCard({ spend }: { spend: MetaSpend }) {
       title="تكلفة واتساب (Meta)"
       accessory={
         <SourceBadge
-          label={spend.source === "meta" ? "من بيانات Meta" : "تقديري"}
+          label={spend.source === "meta" ? "من بيانات Meta" : spend.source === "mixed" ? "Meta + تقدير" : "تقديري"}
           tone={spend.source === "meta" ? "success" : "warning"}
         />
       }
@@ -117,9 +117,14 @@ export function MetaSpendCard({ spend }: { spend: MetaSpend }) {
               style={{ paddingHorizontal: spacing.lg, paddingVertical: spacing.xs, gap: 3 }}
             >
               <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
-                <Text style={{ ...type.footnote, ...numeric, ...rtlText, width: 92, color: colors.text }}>
-                  {dayLabel.format(new Date(`${day.day}T00:00:00Z`))}
-                </Text>
+                <View style={{ width: 92, gap: 1 }}>
+                  <Text style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.text }}>
+                    {dayLabel.format(new Date(`${day.day}T00:00:00Z`))}
+                  </Text>
+                  {day.estimated && spend.source !== "estimate" ? (
+                    <Text style={{ ...type.caption, ...rtlText, color: colors.warning }}>تقديري</Text>
+                  ) : null}
+                </View>
                 <View style={{ flex: 1, height: 6, borderRadius: radius.full, backgroundColor: colors.surfaceSunken, flexDirection: "row-reverse" }}>
                   <View
                     style={{
