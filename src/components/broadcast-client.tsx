@@ -49,11 +49,6 @@ const TEMPLATE_OPTIONS = [
     desc: "تنبيه لحفظ رقم الواتساب الخاص بكيارا سبا",
   },
   {
-    key: "conversation_opener",
-    label: "بدء محادثة (conversation_opener)",
-    desc: "افتتاحية المحادثة والترحيب بالاسم",
-  },
-  {
     key: "number_notice",
     label: "تنويه الرقم (number_notice)",
     desc: "رسالة توجيهية لحفظ رقم كيارا الجديد",

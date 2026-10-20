@@ -22,8 +22,7 @@ import { customerProvider } from "@/lib/transport";
 import { META_TEMPLATE_PREFIX } from "@/lib/transport/meta-content";
 
 export type TemplateKey =
-  | "booking_followup"
-  | "conversation_opener"
+  | "booking_update"
   | "number_notice"
   | "open_conversation"
   | "specialist_en_route_reminder"
@@ -69,33 +68,22 @@ export interface SendableTemplate {
 const TWILIO_LIVE_TEMPLATE_PREFIX = "twilio:";
 
 const TEMPLATES: Record<TemplateKey, TemplateSpec> = {
-  booking_followup: {
-    env: "TWILIO_CONTENT_SID_BOOKING_FOLLOWUP",
-    metaEnv: "META_TEMPLATE_NAME_BOOKING_FOLLOWUP",
-    metaName: "kiara_booking_followup_hxbb5e5dbfc42600f2678e55b38445cdac",
-    label: "متابعة حجز",
+  // Utility on purpose: Meta drops marketing openers once a customer has had
+  // her share of promotions (131049), and a booking message must still land.
+  booking_update: {
+    env: "TWILIO_CONTENT_SID_BOOKING_UPDATE",
+    metaEnv: "META_TEMPLATE_NAME_BOOKING_UPDATE",
+    metaName: "kiara_booking_update",
+    label: "متابعة حجز العميلة",
     description:
-      "لبدء محادثة مع عميلة لم تراسلنا خلال ٢٤ ساعة. الأزرار تفتح المحادثة فور ضغطها.",
+      "لفتح المحادثة مع عميلة لديها حجز أو طلب حجز ولم تراسلنا خلال ٢٤ ساعة. للحجوزات فقط، لا للعروض.",
     category: "utility",
-    body: "مرحبًا {{1}} 🌸 معكِ فريق كيّارا سبا. نودّ متابعة حجزكِ وتحديد الموعد المناسب لكِ.",
-    buttons: ["تأكيد الحجز", "تغيير الموعد"],
-    variables: [
-      { key: "1", label: "اسم العميلة", prefill: "customer_name", maxLength: 60 },
-    ],
-  },
-  conversation_opener: {
-    env: "TWILIO_CONTENT_SID_CONVERSATION_OPENER",
-    metaEnv: "META_TEMPLATE_NAME_CONVERSATION_OPENER",
-    metaName: "kiara_conversation_opener_hx21822b343fb1d89bed64aa0ef27fcd6c",
-    label: "بدء محادثة",
-    description:
-      "الافتتاحية العامة: شعار كيّارا ثم تحية باسم العميلة. لأي عميلة خارج نافذة الـ٢٤ ساعة بدون سبب محدد.",
-    category: "marketing",
-    body: "السلام عليكم {{1}} 🌸\nمعكِ خدمة عملاء كيارا سبا 🍃",
-    buttons: ["أرغب بالاستفسار"],
-    variables: [
-      { key: "1", label: "اسم العميلة", prefill: "customer_name", maxLength: 60 },
-    ],
+    body:
+      "مرحبًا 🍃 معكِ خدمة عملاء كيارا سبا.\n\n" +
+      "نتواصل معكِ بخصوص حجزكِ لدينا، ونحتاج منكِ تأكيد بعض التفاصيل لإتمام موعدكِ.\n\n" +
+      "نرجو الرد على هذه الرسالة لنكمل معكِ.",
+    buttons: ["متابعة الحجز"],
+    variables: [],
   },
   number_notice: {
     env: "TWILIO_CONTENT_SID_NUMBER_NOTICE",

@@ -21,7 +21,6 @@ import type { MessageTransport, SendResult } from "@/lib/transport/types";
 import { getServiceWindow, isWindowClosedError } from "@/lib/transport/window";
 import { inboxTransportFor, staffKindForConversation } from "@/lib/staff-threads";
 import {
-  contentSidFor,
   greetingName,
   renderTemplateBody,
   resolveComposerTemplate,
@@ -476,14 +475,12 @@ export async function setConversationRouting(
 /**
  * Deliver a text reply, honouring the 24-hour service window.
  *
- * Inside the window this is an ordinary send. Outside it — which on the Twilio
- * number is every conversation the customer has not just written to — Meta will
- * deliver nothing but an approved template, so the agent's own words cannot go
- * out at all. Rather than failing silently, we send the follow-up template so
- * the customer has a one-tap way to reply (which reopens the window), and mark
- * the agent's message undelivered with the reason attached. The inbox already
- * renders `undelivered` distinctly, so the agent can see their text did not
- * land instead of assuming it did.
+ * Inside the window this is an ordinary send. Outside it Meta will deliver
+ * nothing but an approved template, so the agent's own words cannot go out at
+ * all. Nothing is sent in her place: the message is marked undelivered with
+ * the reason attached, and she reopens the window by choosing a template
+ * herself. The inbox already renders `undelivered` distinctly, so the agent
+ * can see their text did not land instead of assuming it did.
  */
 function deliverTextReply(params: {
   messageId: string;
@@ -523,33 +520,12 @@ function deliverTextReply(params: {
     let failureCode: string | null = null;
     const extra: Record<string, unknown> = {};
 
-    const sendTemplateFallback = async (): Promise<boolean> => {
-      const contentSid = contentSidFor("booking_followup");
-      if (!contentSid) {
-        extra.window_closed = true;
-        extra.reengagement_sent = false;
-        extra.reason = "TEMPLATE_NOT_CONFIGURED";
-        return false;
-      }
-      try {
-        const r = await transport.sendTemplate(
-          params.toE164,
-          contentSid,
-          { "1": greetingName(params.customerName) },
-          sendOptions,
-        );
-        extra.window_closed = true;
-        extra.reengagement_sent = true;
-        extra.reengagement_sid = r.providerMessageId;
-        return true;
-      } catch (error) {
-        extra.window_closed = true;
-        extra.reengagement_sent = false;
-        extra.reason = "TEMPLATE_SEND_FAILED";
-        failureMessage = error instanceof Error ? error.message : String(error);
-        failureCode = transportErrorCode(error);
-        return false;
-      }
+    const markWindowClosed = () => {
+      status = "undelivered";
+      extra.window_closed = true;
+      extra.reason = "WINDOW_CLOSED";
+      failureMessage =
+        "نافذة الـ٢٤ ساعة مغلقة — لم تصل الرسالة. أرسلي قالبًا معتمدًا لفتح المحادثة.";
     };
 
     if (configured) {
@@ -559,8 +535,7 @@ function deliverTextReply(params: {
         (await getServiceWindow(params.conversationId)).open;
 
       if (!windowOpen) {
-        await sendTemplateFallback();
-        status = "undelivered";
+        markWindowClosed();
       } else {
         try {
           const r = await transport.sendText(
@@ -573,8 +548,8 @@ function deliverTextReply(params: {
         } catch (error) {
           // The window can shut between the check and the send.
           if (isWindowClosedError(error)) {
-            await sendTemplateFallback();
-            status = "undelivered";
+            markWindowClosed();
+            failureCode = transportErrorCode(error);
           } else {
             status = "failed";
             failureMessage =

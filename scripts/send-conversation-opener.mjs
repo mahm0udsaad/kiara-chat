@@ -1,5 +1,5 @@
 /**
- * Send approved WhatsApp template (such as `open_conversation` / `number_notice` / `conversation_opener`)
+ * Send approved WhatsApp template (such as `open_conversation` / `number_notice`)
  * to all eligible Kiara customers or a specific test number.
  *
  * Safe & Idempotent:
@@ -21,7 +21,7 @@
  *   node --env-file=.env.local scripts/send-conversation-opener.mjs --apply
  *
  *   # Optional flags:
- *   #   --template=open_conversation | conversation_opener | number_notice (default: open_conversation)
+ *   #   --template=open_conversation | number_notice (default: open_conversation)
  *   #   --sync                       Sync recent reservations first
  *   #   --delay-ms=500               Delay between WhatsApp sends in milliseconds
  *   #   --limit=N                    Maximum sends in this run
@@ -58,13 +58,6 @@ const TEMPLATES = {
     contentSid: process.env.TWILIO_CONTENT_SID_NUMBER_NOTICE || "HX9ed2953b5f75cadc488e2cd0add1292b",
     metaName: process.env.META_TEMPLATE_NAME_NUMBER_NOTICE || "open_conversation",
     hasNameVar: false,
-  },
-  conversation_opener: {
-    label: "بدء محادثة (conversation_opener)",
-    body: "السلام عليكم {{1}} 🌸\nمعكِ خدمة عملاء كيارا سبا 🍃",
-    contentSid: process.env.TWILIO_CONTENT_SID_CONVERSATION_OPENER || "HX21822b343fb1d89bed64aa0ef27fcd6c",
-    metaName: process.env.META_TEMPLATE_NAME_CONVERSATION_OPENER || "kiara_conversation_opener_hx21822b343fb1d89bed64aa0ef27fcd6c",
-    hasNameVar: true,
   },
 };
 

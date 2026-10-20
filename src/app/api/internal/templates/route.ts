@@ -13,8 +13,10 @@
  * GET ?action=repeat_idle&minBookings=2&idleDays=5 → repeat bookers who have
  *        gone quiet: reads `rekaz_reservations` directly, so it's live and
  *        needs no prior sync.
- * POST { action: "create_template", name, body, imagePath, category? }
- *        imagePath is an object already in the whatsapp-media bucket.
+ * POST { action: "create_template", name, body, imagePath?, buttons?, category? }
+ *        imagePath is an object already in the whatsapp-media bucket; without
+ *        one the template is plain text, or quick-reply when `buttons` (up to
+ *        three captions) is given.
  * POST { action: "sync_audience" }
  *        folds `rekaz_reservations` into `customers.metadata.last_booking_at`
  *        / `next_booking_at`, same as the broadcast screen's "sync" button.
@@ -98,21 +100,30 @@ export async function POST(request: Request) {
     const category = (typeof b.category === "string" ? b.category : "MARKETING") as TemplateCategory;
     if (!NAME_RE.test(name)) return fail(400, "bad name");
     if (!body) return fail(400, "body required");
-    if (!imagePath) return fail(400, "imagePath required");
+    const buttons = Array.isArray(b.buttons)
+      ? b.buttons.filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+      : [];
+    if (buttons.length > 3) return fail(400, "at most three buttons");
+    if (imagePath && buttons.length) return fail(400, "imagePath and buttons cannot be combined");
 
-    const { data, error } = await getAdminSupabaseClient()
-      .storage.from(WHATSAPP_MEDIA_BUCKET)
-      .createSignedUrl(imagePath, 7 * 24 * 60 * 60);
-    if (error || !data?.signedUrl) return fail(400, "image not found in bucket");
+    let mediaUrl: string | undefined;
+    if (imagePath) {
+      const { data, error } = await getAdminSupabaseClient()
+        .storage.from(WHATSAPP_MEDIA_BUCKET)
+        .createSignedUrl(imagePath, 7 * 24 * 60 * 60);
+      if (error || !data?.signedUrl) return fail(400, "image not found in bucket");
+      mediaUrl = data.signedUrl;
+    }
 
     try {
       const created = await createTemplate({
         name,
         language: "ar",
         category,
-        contentType: "media",
+        contentType: mediaUrl ? "media" : buttons.length ? "quick_reply" : "text",
         body,
-        mediaUrl: data.signedUrl,
+        mediaUrl,
+        quickReplies: buttons.map((title, index) => ({ title: title.trim(), id: `button_${index + 1}` })),
       });
       return Response.json({ sid: created.sid, name: created.name, status: "pending" });
     } catch (e) {
