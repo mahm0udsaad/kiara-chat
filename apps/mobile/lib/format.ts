@@ -202,6 +202,21 @@ export function closedWithOutcome(
   return csStatus === "resolved" && Boolean(contactOutcome);
 }
 
+/**
+ * The closed status reads «تم الطلب», which is only true of a chat that booked
+ * (or closed without saying). Closed as «لم يتم الحجز» or «لم ترد العميلة», the
+ * same status is just a finished conversation, and the edit sheet must not
+ * show «تم الطلب» ticked beside it.
+ */
+export function csStatusChoiceLabel(
+  csStatus: CsStatus,
+  contactOutcome: ContactOutcome | null | undefined,
+): string {
+  return csStatus === "resolved" && (contactOutcome === "not_booked" || contactOutcome === "no_reply")
+    ? "انتهت المحادثة"
+    : csStatusLabel[csStatus];
+}
+
 /** The one status text for a chat: its outcome once closed with one, else its CS status. */
 export function conversationStatusText(
   csStatus: CsStatus,

@@ -22,7 +22,7 @@ import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   bookingStageLabel,
   contactOutcomeLabel,
-  csStatusLabel,
+  csStatusChoiceLabel,
   formatters,
 } from "@/lib/format";
 import { MAX_UPLOAD_BYTES, formatMegabytes } from "@/lib/api";
@@ -547,7 +547,7 @@ export function ConversationActionsButton({
                   <ChoiceChip
                     key={status}
                     testID={`conversation-actions-status-${status}`}
-                    label={csStatusLabel[status]}
+                    label={csStatusChoiceLabel(status, draftContactOutcome)}
                     selected={draftCsStatus === status}
                     disabled={!canEdit || saving}
                     onPress={() => {
@@ -1026,7 +1026,7 @@ export function ConversationActionsButton({
               <Text style={{ ...type.caption, color: colors.textTertiary, ...rtlText }}>
                 القيم التي سيتم حفظها
               </Text>
-              <ReviewRow label="حالة التواصل" value={csStatusLabel[draftCsStatus]} />
+              <ReviewRow label="حالة التواصل" value={csStatusChoiceLabel(draftCsStatus, draftContactOutcome)} />
               <ReviewRow
                 label="نتيجة التواصل"
                 value={
