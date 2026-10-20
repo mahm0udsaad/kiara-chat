@@ -1,5 +1,5 @@
 import { bookingStageOf } from "@/lib/booking-stage";
-import { contactOutcomeOf } from "@/lib/contact-outcome";
+import { contactOutcomeOf, matchesStatusFilter } from "@/lib/contact-outcome";
 import { isGroupConversation, sectionOf } from "@/lib/conversation-meta";
 import {
   getConversationLabelIds,
@@ -440,7 +440,10 @@ export async function listMobileConversations(options: {
   const searched = conversations
     .filter((conversation) => matchesSearch(conversation, options.search))
     .filter((conversation) => {
-      if (filters.status && conversationCsStatus(conversation) !== filters.status) {
+      if (
+        filters.status &&
+        !matchesStatusFilter(conversationCsStatus(conversation), contactOutcomeOf(conversation), filters.status)
+      ) {
         return false;
       }
       if (

@@ -81,7 +81,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { WhatsAppIcon } from "@/components/icons/whatsapp";
 import { cn } from "@/lib/utils";
-import { contactOutcomeOf, conversationStatusText } from "@/lib/contact-outcome";
+import { contactOutcomeOf, conversationStatusText, matchesStatusFilter } from "@/lib/contact-outcome";
 import type {
   Conversation,
   ConversationSection,
@@ -657,7 +657,7 @@ export function InboxClient({
       ) {
         return false;
       }
-      if (statusFilter !== "all" && csStatusOf(c) !== statusFilter) return false;
+      if (statusFilter !== "all" && !matchesStatusFilter(csStatusOf(c), contactOutcomeOf(c), statusFilter)) return false;
       if (sectionFilter !== "all" && sectionOf(c) !== sectionFilter) return false;
       if (dateFilter && dayKey(c.last_message_at) !== dateFilter) return false;
       if (labelFilter !== "all" && !(assignments[c.id] ?? []).includes(labelFilter))

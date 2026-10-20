@@ -32,7 +32,7 @@ import {
 } from "@/lib/templates";
 import { findOrCreateConversation, saveMessage } from "@/lib/server-conversations";
 import { bookingStageOf } from "@/lib/booking-stage";
-import { contactOutcomeOf } from "@/lib/contact-outcome";
+import { contactOutcomeOf, matchesStatusFilter } from "@/lib/contact-outcome";
 import { conversationCsStatus } from "@/lib/mobile/conversations";
 import type { BookingStage, ContactOutcome, CsStatus } from "@/lib/types";
 
@@ -656,7 +656,7 @@ export async function listAudience(
     if (mark?.status === "sent" && !filters.includeSent) continue;
 
     const conversation = conversations.get(phoneKey(phone)) ?? null;
-    if (filters.status && conversation?.csStatus !== filters.status) continue;
+    if (filters.status && !matchesStatusFilter(conversation?.csStatus, conversation?.contactOutcome, filters.status)) continue;
     if (filters.bookingStage && conversation?.bookingStage !== filters.bookingStage) continue;
     if (filters.contactOutcome && conversation?.contactOutcome !== filters.contactOutcome) continue;
     if (filters.labelId && !conversation?.labelIds.includes(filters.labelId)) continue;
