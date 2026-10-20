@@ -53,6 +53,11 @@ export interface RekazBookingRow {
     bookedAt?: string | null;
     amount?: number | string | null;
     status?: string | null;
+    order?: {
+      id?: string | null;
+      total?: number | string | null;
+      refunded?: number | string | null;
+    } | null;
   } | null;
   customer_phone?: string | null;
   first_seen_at?: string | null;
@@ -64,7 +69,10 @@ export interface RekazBookingCredit {
   bookings: number;
   /** Of those, the ones for a customer she had replied to herself. */
   bookingsFromHerChats: number;
-  /** Booked value, cancelled and removed reservations excluded. */
+  /**
+   * What her bookings sold for: each order's total less refunds, the figure
+   * Rekaz's sales report shows. Cancelled and removed reservations excluded.
+   */
   bookedRevenue: number;
   /** Typical gap between her first reply and the booking, in hours. */
   medianHoursToBooking: number | null;
@@ -84,6 +92,55 @@ function median(values: number[]): number | null {
   return sorted.length % 2
     ? sorted[middle]
     : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+const isLive = (row: RekazBookingRow) =>
+  !row.removed_at && row.payload?.status !== "Cancelled";
+
+const lineAmount = (row: RekazBookingRow) => Number(row.payload?.amount ?? 0) || 0;
+
+/**
+ * The value each live reservation brought in, as its share of its order.
+ *
+ * A reservation's own `amount` is the service line before VAT and fees, so
+ * summing lines left every employee short of Rekaz's sales report — 24k of
+ * 144k SAR over September. The order total (less refunds) is what the customer
+ * actually paid; it is split over the order's live reservations by line
+ * amount, evenly when every line is zero, so an order is never counted twice
+ * and an order two employees shared still divides between them.
+ *
+ * Rows without order data (older payloads, or a zero-total order carrying
+ * priced lines) keep their line amount rather than dropping to nothing.
+ */
+function reservationValues(rows: RekazBookingRow[]): Map<RekazBookingRow, number> {
+  const orders = new Map<string, RekazBookingRow[]>();
+  const values = new Map<RekazBookingRow, number>();
+  for (const row of rows) {
+    if (!isLive(row)) continue;
+    const orderId = row.payload?.order?.id;
+    if (!orderId) {
+      values.set(row, lineAmount(row));
+      continue;
+    }
+    const list = orders.get(orderId) ?? [];
+    list.push(row);
+    orders.set(orderId, list);
+  }
+
+  for (const list of orders.values()) {
+    const order = list[0].payload?.order;
+    const total = Number(order?.total ?? 0) || 0;
+    const lines = list.reduce((sum, row) => sum + lineAmount(row), 0);
+    if (total <= 0 && lines > 0) {
+      for (const row of list) values.set(row, lineAmount(row));
+      continue;
+    }
+    const net = Math.max(0, total - (Number(order?.refunded ?? 0) || 0));
+    for (const row of list) {
+      values.set(row, lines > 0 ? (net * lineAmount(row)) / lines : net / list.length);
+    }
+  }
+  return values;
 }
 
 export function creditRekazBookings(input: {
@@ -113,6 +170,7 @@ export function creditRekazBookings(input: {
 
   const credits = new Map<string, RekazBookingCredit>();
   const lags = new Map<string, number[]>();
+  const values = reservationValues(input.reservations);
 
   for (const row of input.reservations) {
     const payload = row.payload;
@@ -131,9 +189,7 @@ export function creditRekazBookings(input: {
 
     // A cancelled or withdrawn reservation still shows the work she did, so it
     // keeps its place in the count — but it never became money.
-    if (!row.removed_at && payload?.status !== "Cancelled") {
-      credit.bookedRevenue += Number(payload?.amount ?? 0) || 0;
-    }
+    credit.bookedRevenue += values.get(row) ?? 0;
 
     const phone = normalizePhone(
       String(payload?.customerPhone ?? row.customer_phone ?? ""),

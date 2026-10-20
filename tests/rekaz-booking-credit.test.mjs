@@ -68,3 +68,53 @@ test("a website booking (no createdBy) is nobody's", () => {
   });
   assert.equal(credits.size, 0);
 });
+
+const line = (createdBy, amount, order, extra = {}) => ({
+  payload: {
+    createdBy,
+    bookedAt: "2026-10-05T10:00:00+03:00",
+    amount,
+    status: "Done",
+    customerPhone: "+966500000000",
+    order,
+    ...extra,
+  },
+});
+const credit = (reservations, names = [["nesma", "نسمة"], ["suad", "سعاد"]]) =>
+  creditRekazBookings({ reservations, namesByMemberId: new Map(names), firstReplyAt: new Map(), ...window });
+
+test("revenue is the order total, not the pre-VAT service line", () => {
+  // نسمة's pedicure on 2026-10-19: a 145 line on a 165 order.
+  const credits = credit([line("نسمه", 145, { id: "o1", total: 165, refunded: 0 })]);
+  assert.equal(credits.get("nesma")?.bookedRevenue, 165);
+});
+
+test("an order with several services is counted once, split by line", () => {
+  const order = { id: "o2", total: 249, refunded: 0 };
+  const credits = credit([
+    line("نسمه", 95.54, order),
+    line("نسمه", 81.2, order),
+    line("سعاد", 37.26, order),
+  ]);
+  assert.equal(credits.get("nesma")?.bookings, 2);
+  assert.equal(credits.get("nesma")?.bookedRevenue, 206);
+  assert.equal(credits.get("suad")?.bookedRevenue, 43);
+});
+
+test("refunds come off, and a cancelled service takes no share", () => {
+  const order = { id: "o3", total: 300, refunded: 100 };
+  const credits = credit([
+    line("نسمه", 150, order),
+    line("نسمه", 150, order, { status: "Cancelled" }),
+  ]);
+  assert.equal(credits.get("nesma")?.bookings, 2);
+  assert.equal(credits.get("nesma")?.bookedRevenue, 200);
+});
+
+test("rows without order data keep their line amount", () => {
+  const credits = credit([
+    line("نسمه", 120, null),
+    line("نسمه", 80, { id: "o4", total: 0, refunded: 0 }),
+  ]);
+  assert.equal(credits.get("nesma")?.bookedRevenue, 200);
+});
