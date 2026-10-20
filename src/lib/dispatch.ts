@@ -25,6 +25,7 @@ import {
   specialistFallbackLabel,
 } from "@/lib/specialist-dispatch-fallback";
 import { normalizePhone } from "@/lib/phone";
+import { claimRelease } from "@/lib/rekaz-claim";
 import {
   claimOutboxEvent,
   finishOrderDispatchCommand,
@@ -919,16 +920,20 @@ async function servicesForDispatchOrder(order: DriverOrder): Promise<VisitServic
  * describe work that is no longer happening. Live orders are never touched, so
  * a genuine double-raise still fails.
  *
+ * A sent order on an earlier day is released too, more gently: see
+ * `claimRelease` in `@/lib/rekaz-claim`. Its trip already happened, so it keeps
+ * its service list as history and only stops pointing at the reservation.
+ *
  * Returns true when something was released, so the caller can retry its insert.
  */
-async function releaseCancelledRekazClaim(
+async function releaseStaleRekazClaim(
   admin: ReturnType<typeof getAdminSupabaseClient>,
   sourceId: string,
 ): Promise<boolean> {
   const [linked, captured] = await Promise.all([
     admin
       .from("driver_orders")
-      .select("id, status, dispatch_state")
+      .select("id")
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .eq("rekaz_source_id", sourceId),
     admin
@@ -949,35 +954,56 @@ async function releaseCancelledRekazClaim(
 
   const { data: orders, error: ordersError } = await admin
     .from("driver_orders")
-    .select("id, status, dispatch_state")
+    .select("id, status, dispatch_state, arrival_at")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .in("id", [...candidateIds]);
   if (ordersError) {
     console.error("[dispatch] Could not read the blocking orders", ordersError.message);
     return false;
   }
-  const cancelledIds = (orders ?? [])
-    .filter((row) => row.status === "cancelled" || row.dispatch_state === "cancelled")
-    .map((row) => String(row.id));
-  if (!cancelledIds.length) return false;
+  const now = new Date();
+  const releases = (orders ?? []).map((row) => ({
+    id: String(row.id),
+    release: claimRelease(row as Parameters<typeof claimRelease>[0], now),
+  }));
+  const cancelledIds = releases.filter((r) => r.release === "cancelled").map((r) => r.id);
+  const pastIds = releases.filter((r) => r.release === "past").map((r) => r.id);
+  if (!cancelledIds.length && !pastIds.length) return false;
 
-  const [unlink, drop] = await Promise.all([
+  const stamp = new Date().toISOString();
+  const writes: PromiseLike<{ error: { message: string } | null }>[] = [
     admin
       .from("driver_orders")
-      .update({ rekaz_source_id: null, updated_at: new Date().toISOString() })
+      .update({ rekaz_source_id: null, updated_at: stamp })
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .in("id", cancelledIds),
-    admin
-      .from("order_visit_services")
-      .delete()
-      .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .in("order_id", cancelledIds),
-  ]);
-  if (unlink.error || drop.error) {
-    console.error(
-      "[dispatch] Could not release a cancelled Rekaz claim",
-      unlink.error?.message ?? drop.error?.message,
+      .in("id", [...cancelledIds, ...pastIds])
+      .eq("rekaz_source_id", sourceId),
+  ];
+  if (cancelledIds.length) {
+    writes.push(
+      admin
+        .from("order_visit_services")
+        .delete()
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .in("order_id", cancelledIds),
     );
+  }
+  if (pastIds.length) {
+    // Keep the services the visit actually had; only this reservation's row
+    // stops claiming the id, so the new order can capture it afresh.
+    writes.push(
+      admin
+        .from("order_visit_services")
+        .update({ source_id: null })
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .in("order_id", pastIds)
+        .eq("source_id", sourceId),
+    );
+  }
+  const results = await Promise.all(writes);
+  const failed = results.find((result) => result.error);
+  if (failed?.error) {
+    console.error("[dispatch] Could not release a stale Rekaz claim", failed.error.message);
     return false;
   }
   return true;
@@ -1227,7 +1253,7 @@ export async function createBookingFromReservation(
   // link fails as 23505; the capture trigger raises RESERVATION_ALREADY_LINKED.
   const blockedByStaleClaim =
     insErr?.code === "23505" || /RESERVATION_ALREADY_LINKED/.test(insErr?.message ?? "");
-  if (blockedByStaleClaim && (await releaseCancelledRekazClaim(admin, sourceId))) {
+  if (blockedByStaleClaim && (await releaseStaleRekazClaim(admin, sourceId))) {
     ({ data: created, error: insErr } = await insertOrder());
   }
 
