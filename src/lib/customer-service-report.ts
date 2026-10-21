@@ -456,51 +456,61 @@ const asOutcome = (value: unknown): ContactOutcomeValue =>
 const BOOKED_STAGES = new Set(["booking_confirmed", "invoice_required", "in_progress", "completed"]);
 
 /**
- * Did a specialist start or finish a visit for this chat at or after `sinceMs`?
- *
- * The field app moves the chat to «تم التنفيذ» itself when the specialist ends
- * the service, and records no stage event for it — only the stamps under
- * `metadata.field_sessions[orderId].specialist`. A customer who booked days
- * earlier and was served today is a booked chat, not one «بلا نتيجة».
+ * The latest moment a driver or specialist tapped a step of a visit for this
+ * chat, or NaN. The field app moves the chat to «قيد التنفيذ / تم التنفيذ»
+ * itself and records no stage event — only these stamps under
+ * `metadata.field_sessions[orderId]`.
  */
-function servedSince(metadata: Record<string, unknown> | null | undefined, sinceMs: number): boolean {
+function lastVisitStamp(metadata: Record<string, unknown> | null | undefined): number {
   const sessions = metadata?.field_sessions;
-  if (!sessions || typeof sessions !== "object" || Array.isArray(sessions)) return false;
-  return Object.values(sessions as Record<string, unknown>).some((session) => {
-    const specialist = (session as { specialist?: Record<string, unknown> } | null)?.specialist;
-    return [specialist?.started_at, specialist?.completed_at].some((stamp) => {
-      const ms = typeof stamp === "string" ? Date.parse(stamp) : NaN;
-      return Number.isFinite(ms) && ms >= sinceMs;
-    });
-  });
+  if (!sessions || typeof sessions !== "object" || Array.isArray(sessions)) return NaN;
+  let latest = NaN;
+  for (const session of Object.values(sessions as Record<string, unknown>)) {
+    if (!session || typeof session !== "object") continue;
+    for (const side of [(session as Record<string, unknown>).driver, (session as Record<string, unknown>).specialist]) {
+      if (!side || typeof side !== "object") continue;
+      for (const stamp of Object.values(side as Record<string, unknown>)) {
+        const ms = typeof stamp === "string" ? Date.parse(stamp) : NaN;
+        if (Number.isFinite(ms) && !(ms <= latest)) latest = ms;
+      }
+    }
+  }
+  return latest;
 }
 
 /**
- * A conversation's outcome inside a window: booked when Rekaz holds a booking
- * for her number made in it; otherwise the latest outcome recorded in it;
- * otherwise booked if the chat was moved to a booked stage, or a specialist
- * served her, in it.
+ * Booked stage set while the outcome says «لم يتم الحجز / لم ترد»: the two
+ * controls of the actions sheet disagree, and the report has to pick one.
  */
-function outcomeResolver(
-  outcomeEvents: EventRow[],
-  conversationById: ReadonlyMap<string, ConversationRow>,
-  rekazBookedPhones: ReadonlySet<string>,
-  sinceMs: number,
-) {
-  const latestOutcome = new Map<string, unknown>();
-  const latestStage = new Map<string, unknown>();
-  for (const event of outcomeEvents) {
-    const target = event.event_type === "conversation.stage_changed" ? latestStage : latestOutcome;
-    target.set(event.aggregate_id, event.payload?.to ?? null);
-  }
-  return (conversationId: string): ContactOutcomeValue => {
-    const phone = normalizePhone(conversationById.get(conversationId)?.customer_phone ?? "");
-    if (phone && rekazBookedPhones.has(phone)) return "booked";
-    const recorded = asOutcome(latestOutcome.get(conversationId));
-    if (recorded) return recorded;
-    if (BOOKED_STAGES.has(String(latestStage.get(conversationId)))) return "booked";
-    return servedSince(conversationById.get(conversationId)?.metadata, sinceMs) ? "booked" : null;
-  };
+function sheetConflicts(conversation: ConversationRow): boolean {
+  const metadata = conversation.metadata;
+  const outcome = asOutcome(metadata?.contact_outcome);
+  return BOOKED_STAGES.has(String(metadata?.booking_stage)) && (outcome === "not_booked" || outcome === "no_reply");
+}
+
+/**
+ * A chat's outcome as the team set it in the actions sheet — «نتيجة التواصل»
+ * and «مرحلة متابعة الحجز» — which is what the team works from, so the report
+ * reads nothing else (no Rekaz matching, no event history of its own).
+ *
+ * A booked stage means booked. When the outcome says otherwise, whichever the
+ * team set last wins: a customer served in September who asked again in
+ * October and did not book is «لم يتم الحجز»; one marked «لم ترد» and then
+ * booked and served is booked. `stageSetAt` is when the stage last moved to
+ * its current value; a visit step counts as setting it. With no time to
+ * compare, the stage wins — «تم التنفيذ» is not reached without a booking.
+ */
+function sheetOutcome(conversation: ConversationRow | undefined, stageSetAt = NaN): ContactOutcomeValue {
+  const metadata = conversation?.metadata;
+  const outcome = asOutcome(metadata?.contact_outcome);
+  if (!BOOKED_STAGES.has(String(metadata?.booking_stage))) return outcome;
+  if (outcome !== "not_booked" && outcome !== "no_reply") return "booked";
+  const outcomeAt = Date.parse(String(metadata?.contact_outcome_at ?? ""));
+  const stageAt = Math.max(
+    Number.isFinite(stageSetAt) ? stageSetAt : -Infinity,
+    Number.isFinite(lastVisitStamp(metadata)) ? lastVisitStamp(metadata) : -Infinity,
+  );
+  return Number.isFinite(outcomeAt) && stageAt > -Infinity && outcomeAt > stageAt ? outcome : "booked";
 }
 
 /** Lookups to Rekaz per report: enough for a busy week, bounded for a month. */
@@ -615,17 +625,12 @@ function isClosingEvent(event: EventRow): boolean {
  * Customers who wrote in, and the outcome the team recorded for each.
  *
  * "Came in" is a trackable conversation with at least one customer message.
- * She counts as booked when Rekaz holds a booking for her number made since
- * the window opened — the team often books without tagging the chat — or when
- * the chat was tagged «حجز». Otherwise her outcome is the latest «لم يتم
- * الحجز / لم ترد» set since the window opened, so an outcome left over from an
- * earlier visit does not count.
+ * Her outcome is what the actions sheet holds for the chat now (`outcomeOf`).
  */
 function inboundFunnel(
   customerMessages: MessageRow[],
-  outcomeEvents: EventRow[],
   conversationById: ReadonlyMap<string, ConversationRow>,
-  rekazBookedPhones: ReadonlySet<string>,
+  outcomeOf: (conversationId: string) => ContactOutcomeValue,
   windowStart: string,
 ): {
   summary: CustomerServiceReport["last24Hours"];
@@ -641,7 +646,6 @@ function inboundFunnel(
         : current.lastInboundAt,
     });
   }
-  const outcomeOf = outcomeResolver(outcomeEvents, conversationById, rekazBookedPhones, Date.parse(windowStart));
   let booked = 0;
   let notBooked = 0;
   let noReply = 0;
@@ -688,10 +692,6 @@ export async function getCustomerServiceReport(
   const endMinute = timeToMinutes(input.endTime);
   const admin = getAdminSupabaseClient();
   const last24Start = new Date(Date.now() - 24 * 3600_000).toISOString();
-  const last24StartMs = Date.parse(last24Start);
-  // Outcomes are read up to now, not to the period's end: a customer who wrote
-  // on its last evening is often marked booked the next morning.
-  const outcomeSince = new Date(Math.min(rangeStartMs, last24StartMs)).toISOString();
 
   const membersResult = await admin
     .from("team_members")
@@ -714,7 +714,6 @@ export async function getCustomerServiceReport(
     notes,
     orders,
     last24Messages,
-    outcomeEvents,
     reservations,
     specialistsResult,
     driversResult,
@@ -811,18 +810,6 @@ export async function getCustomerServiceReport(
           .order("created_at", { ascending: true })
           .range(from, to),
       ),
-      pageRows<EventRow>((from, to) =>
-        admin
-          .from("operation_events")
-          .select("id, aggregate_type, aggregate_id, event_type, occurred_at, actor_team_member_id, actor_user_id, payload")
-          .eq("restaurant_id", KIARA_RESTAURANT_ID)
-          .eq("aggregate_type", "conversation")
-          // Stage moves count too: «تم التنفيذ» is a booking nobody marked.
-          .in("event_type", ["conversation.outcome_changed", "conversation.stage_changed"])
-          .gte("occurred_at", outcomeSince)
-          .order("occurred_at", { ascending: true })
-          .range(from, to),
-      ),
       // Rekaz bookings for the period. `bookedAt` lives inside the payload and
       // is not indexed, so the window is applied on `first_seen_at` — when the
       // sync first saw the row, minutes after it was made — and the exact
@@ -866,36 +853,39 @@ export async function getCustomerServiceReport(
       ? isTrackableCustomerConversation(conversation, staffPhones)
       : false;
   };
-  // `reservations` reaches back to a day before the period with no upper
-  // bound, so it holds every booking made in either window.
-  const rekazPhonesBookedSince = (sinceMs: number) => {
-    const phones = new Set<string>();
-    for (const row of reservations) {
-      if (row.removed_at || row.payload?.status === "Cancelled") continue;
-      const bookedAt = Date.parse(row.payload?.bookedAt ?? row.first_seen_at ?? "");
-      if (!Number.isFinite(bookedAt) || bookedAt < sinceMs) continue;
-      const phone = normalizePhone(String(row.payload?.customerPhone ?? row.customer_phone ?? ""));
-      if (phone) phones.add(phone);
+  // Outcomes come from the actions sheet as it stands now, not as it stood at
+  // the period's end: a customer who wrote on its last evening is often
+  // marked the next morning. Only chats whose two controls disagree need to
+  // know when the stage was set, so only their stage moves are read.
+  const conflicting = conversations.filter(sheetConflicts).map((row) => row.id);
+  const stageSetAt = new Map<string, number>();
+  for (let index = 0; index < conflicting.length; index += 100) {
+    const { data, error } = await admin
+      .from("operation_events")
+      .select("aggregate_id, occurred_at, payload")
+      .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      .eq("aggregate_type", "conversation")
+      .eq("event_type", "conversation.stage_changed")
+      .in("aggregate_id", conflicting.slice(index, index + 100))
+      .order("occurred_at", { ascending: true });
+    if (error) throw new Error(error.message);
+    for (const event of (data ?? []) as Pick<EventRow, "aggregate_id" | "occurred_at" | "payload">[]) {
+      const stage = conversationById.get(event.aggregate_id)?.metadata?.booking_stage;
+      if (event.payload?.to === stage) stageSetAt.set(event.aggregate_id, Date.parse(event.occurred_at));
     }
-    return phones;
-  };
+  }
+  const outcomeOf = (conversationId: string) =>
+    sheetOutcome(conversationById.get(conversationId), stageSetAt.get(conversationId));
   const last24 = inboundFunnel(
     last24Messages.filter(isCustomerMessage),
-    outcomeEvents.filter((event) => Date.parse(event.occurred_at) >= last24StartMs),
     conversationById,
-    rekazPhonesBookedSince(last24StartMs),
+    outcomeOf,
     last24Start,
   );
   // The same funnel over the period the owner picked: every customer who
-  // wrote in during it, and what the team recorded for her since. `messages`
-  // already holds the period's messages for the per-employee figures.
-  const period = inboundFunnel(
-    messages.filter(isCustomerMessage),
-    outcomeEvents.filter((event) => Date.parse(event.occurred_at) >= rangeStartMs),
-    conversationById,
-    rekazPhonesBookedSince(rangeStartMs),
-    rangeStart,
-  );
+  // wrote in during it. `messages` already holds the period's messages for
+  // the per-employee figures.
+  const period = inboundFunnel(messages.filter(isCustomerMessage), conversationById, outcomeOf, rangeStart);
 
   // What we sent: the team's own replies, and everything automatic — the bot,
   // reminders, campaigns — which carries no sender.
@@ -931,20 +921,13 @@ export async function getCustomerServiceReport(
     else customerTypes.unknown += 1;
   }
 
-  // Closed in the period, by whichever path closed it, and how it ended. The
-  // outcome falls back to the one stored on the chat: a status-only close
-  // keeps the outcome that was recorded before it.
+  // Closed in the period, by whichever path closed it, and how the actions
+  // sheet says it ended.
   const closedAtById = new Map<string, string>();
   for (const event of events) {
     if (event.aggregate_type !== "conversation" || !trackableConversationIds.has(event.aggregate_id)) continue;
     if (isClosingEvent(event)) closedAtById.set(event.aggregate_id, event.occurred_at);
   }
-  const periodOutcomeOf = outcomeResolver(
-    outcomeEvents.filter((event) => Date.parse(event.occurred_at) >= rangeStartMs),
-    conversationById,
-    rekazPhonesBookedSince(rangeStartMs),
-    rangeStartMs,
-  );
   const periodInbound = new Map(period.conversations.map((row) => [row.conversationId, row]));
   const closedConversations: CustomerServiceLast24Conversation[] = [...closedAtById]
     .map(([conversationId, closedAt]) => {
@@ -956,9 +939,7 @@ export async function getCustomerServiceReport(
         customerPhone: conversation?.customer_phone ?? "",
         inboundMessages: inbound?.inboundMessages ?? 0,
         lastInboundAt: inbound?.lastInboundAt ?? closedAt,
-        outcome:
-          periodOutcomeOf(conversationId) ??
-          asOutcome(conversation?.metadata?.contact_outcome),
+        outcome: outcomeOf(conversationId),
         closedAt,
       };
     })
