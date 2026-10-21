@@ -65,7 +65,12 @@ export interface RekazBookingRow {
 }
 
 export interface RekazBookingCredit {
-  /** Bookings she entered into Rekaz in the period. */
+  /**
+   * Bookings she entered into Rekaz in the period — one per Rekaz order, not
+   * per service on it. Rekaz keeps a reservation row for every service, so a
+   * customer booking four services read as four bookings: وفاء's 11 bookings
+   * on 2026-10-20 showed as 22, against the team's own count of 11.
+   */
   bookings: number;
   /** Of those, the ones for a customer she had replied to herself. */
   bookingsFromHerChats: number;
@@ -171,6 +176,10 @@ export function creditRekazBookings(input: {
   const credits = new Map<string, RekazBookingCredit>();
   const lags = new Map<string, number[]>();
   const values = reservationValues(input.reservations);
+  // Orders already counted for each employee, and which of those came from
+  // her chats. A row with no order id stands as its own booking.
+  const countedOrders = new Map<string, Set<string | RekazBookingRow>>();
+  const fromHerChats = new Map<string, Set<string | RekazBookingRow>>();
 
   for (const row of input.reservations) {
     const payload = row.payload;
@@ -185,7 +194,14 @@ export function creditRekazBookings(input: {
     }
 
     const credit = credits.get(memberId) ?? { ...EMPTY_REKAZ_CREDIT };
-    credit.bookings += 1;
+    credits.set(memberId, credit);
+    const orderKey = payload?.order?.id ?? row;
+    const counted = countedOrders.get(memberId) ?? new Set();
+    countedOrders.set(memberId, counted);
+    if (!counted.has(orderKey)) {
+      counted.add(orderKey);
+      credit.bookings += 1;
+    }
 
     // A cancelled or withdrawn reservation still shows the work she did, so it
     // keeps its place in the count — but it never became money.
@@ -197,7 +213,10 @@ export function creditRekazBookings(input: {
     const repliedAt = phone
       ? Date.parse(input.firstReplyAt.get(`${memberId}:${phone}`) ?? "")
       : NaN;
-    if (Number.isFinite(repliedAt)) {
+    const herChats = fromHerChats.get(memberId) ?? new Set();
+    fromHerChats.set(memberId, herChats);
+    if (Number.isFinite(repliedAt) && !herChats.has(orderKey)) {
+      herChats.add(orderKey);
       credit.bookingsFromHerChats += 1;
       // Only forward gaps describe a chat that led to a booking. A booking
       // entered before she ever wrote is a walk-in or a phone call she is
@@ -208,8 +227,6 @@ export function creditRekazBookings(input: {
         lags.set(memberId, list);
       }
     }
-
-    credits.set(memberId, credit);
   }
 
   for (const [memberId, values] of lags) {

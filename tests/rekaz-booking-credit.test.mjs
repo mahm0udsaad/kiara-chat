@@ -96,7 +96,8 @@ test("an order with several services is counted once, split by line", () => {
     line("نسمه", 81.2, order),
     line("سعاد", 37.26, order),
   ]);
-  assert.equal(credits.get("nesma")?.bookings, 2);
+  assert.equal(credits.get("nesma")?.bookings, 1);
+  assert.equal(credits.get("suad")?.bookings, 1);
   assert.equal(credits.get("nesma")?.bookedRevenue, 206);
   assert.equal(credits.get("suad")?.bookedRevenue, 43);
 });
@@ -107,7 +108,7 @@ test("refunds come off, and a cancelled service takes no share", () => {
     line("نسمه", 150, order),
     line("نسمه", 150, order, { status: "Cancelled" }),
   ]);
-  assert.equal(credits.get("nesma")?.bookings, 2);
+  assert.equal(credits.get("nesma")?.bookings, 1);
   assert.equal(credits.get("nesma")?.bookedRevenue, 200);
 });
 
@@ -117,4 +118,18 @@ test("rows without order data keep their line amount", () => {
     line("نسمه", 80, { id: "o4", total: 0, refunded: 0 }),
   ]);
   assert.equal(credits.get("nesma")?.bookedRevenue, 200);
+});
+
+test("one booking per order, however many services (وفاء, 2026-10-20)", () => {
+  const order = { id: "8bc25c", total: 449, refunded: 0 };
+  const credits = creditRekazBookings({
+    reservations: [150, 80, 145, 39].map((amount) => line("وفاء💞", amount, order))
+      .concat([line("وفاء💞", 200, { id: "c3db1c", total: 200, refunded: 0 }), line("وفاء💞", 50, null), line("وفاء💞", 60, null)]),
+    namesByMemberId: new Map([["wafa", "وفاء"]]),
+    firstReplyAt: new Map([["wafa:500000000", "2026-10-05T06:00:00Z"]]),
+    ...window,
+  });
+  assert.equal(credits.get("wafa")?.bookings, 4);
+  assert.equal(credits.get("wafa")?.bookingsFromHerChats, 4);
+  assert.equal(credits.get("wafa")?.bookedRevenue, 759);
 });
