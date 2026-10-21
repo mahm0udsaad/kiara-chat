@@ -2,7 +2,7 @@ import { useSegments, type ErrorBoundaryProps } from "expo-router";
 import { Stack } from "expo-router/stack";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
-import { I18nManager, Platform, Pressable, ScrollView, Text } from "react-native";
+import { AppState, I18nManager, Platform, Pressable, ScrollView, Text } from "react-native";
 import * as Updates from "expo-updates";
 
 // Defines the driver-trip background task at bundle load; see the module.
@@ -55,7 +55,19 @@ function AppDirectionSync() {
     I18nManager.allowRTL(true);
     I18nManager.swapLeftAndRightInRTL(shouldUseRtl);
     I18nManager.forceRTL(shouldUseRtl);
-    if (!__DEV__) void Updates.reloadAsync().catch(() => {});
+    if (__DEV__) return;
+
+    // Never reload while the screen is still rendering: on React Native 0.86 the
+    // old instance's JS thread touches a scheduler the new instance is replacing
+    // (EXC_BAD_ACCESS ~11 s after launch, seen in TestFlight build 34). The
+    // direction is already saved, so a cold start picks it up either way; reloading
+    // once the app is in the background just applies it sooner.
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "background") return;
+      subscription.remove();
+      void Updates.reloadAsync().catch(() => {});
+    });
+    return () => subscription.remove();
   }, [bootstrap.data]);
 
   return null;
