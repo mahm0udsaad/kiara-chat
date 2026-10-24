@@ -297,6 +297,20 @@ export function mergeVisits(
   return visits.sort((a, b) => a.arrivalAt.localeCompare(b.arrivalAt));
 }
 
+/**
+ * Whether a visit with no app order can be opened from its card.
+ *
+ * Opening raises the visit's pending order and sends nothing, so it is allowed
+ * whatever Rekaz says about the visit. That is how a coordinator sets the
+ * district of a visit Rekaz already marks completed (the 6 Oct 2026 change
+ * left these cards with no tap at all). Only a cancelled booking stays shut.
+ */
+export function canOpenUnlinkedVisit(
+  visit: Pick<CalendarVisit, "order" | "reservation" | "rekazState">,
+): boolean {
+  return !visit.order && Boolean(visit.reservation) && visit.rekazState !== "cancelled";
+}
+
 export type VisitFilter =
   | "all"
   | "today"

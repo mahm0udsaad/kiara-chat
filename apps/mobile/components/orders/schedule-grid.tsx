@@ -92,9 +92,10 @@ const SlotCard = memo(function SlotCard({
   );
   /**
    * Tapping is the same journey the agenda offers, in the same order: an
-   * existing order opens, and a booking with none is raised and handed to the
-   * dispatch screen — where the driver and the messages are still reviewed
-   * before anything is sent.
+   * existing order opens, and a confirmed booking with none is raised and
+   * handed to the dispatch screen — where the driver and the messages are
+   * still reviewed before anything is sent. A booking Rekaz holds as a
+   * request or already completed opens on the order screen instead.
    */
   const open = () => {
     tapFeedback();
@@ -111,18 +112,21 @@ const SlotCard = memo(function SlotCard({
       router.push({ pathname: "/orders/[id]", params: { id: order.id } });
       return;
     }
-    if (slot.rekazState === "request") {
-      Alert.alert(
-        "الحجز ما زال طلبًا",
-        "الحجز يحتاج أن يصبح «مؤكد» في ركاز قبل طلب السائق.",
+    if (createOrder.isPending) return;
+    // Rekaz is not ready for a driver (still a request, or already done), but
+    // the visit still opens: its order is raised with nothing sent, so the
+    // district can be set. Preview and send keep refusing these visits.
+    if (slot.rekazState === "request" || slot.rekazState === "completed") {
+      createOrder.mutate(
+        { reservationId: reservation.id, intent: "open" },
+        {
+          onSuccess: (result) =>
+            router.push({ pathname: "/orders/[id]", params: { id: result.order.id } }),
+          onError: (error) => Alert.alert("تعذّر فتح الحجز", error.message),
+        },
       );
       return;
     }
-    if (slot.rekazState === "completed") {
-      Alert.alert("الزيارة مكتملة", "سجل ركاز أن الخدمة انتهت وتم الدفع.");
-      return;
-    }
-    if (createOrder.isPending) return;
     createOrder.mutate(reservation.id, {
       onSuccess: (result) =>
         router.push({

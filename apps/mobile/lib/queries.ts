@@ -834,10 +834,17 @@ const isRekazAuthError = (error: unknown) =>
 export function useCreateOrderFromReservation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (reservationId: string) =>
+    // `intent: "open"` raises the order only to open the visit (to set its
+    // district, say), so the server lets a completed or unconfirmed Rekaz
+    // visit through. A bare id is «طلب سائق» and keeps the dispatch check.
+    mutationFn: (
+      input: string | { reservationId: string; intent: "dispatch" | "open" },
+    ) =>
       apiRequest<{ order: OrderSummary }>("/orders/from-reservation", {
         method: "POST",
-        body: JSON.stringify({ reservationId }),
+        body: JSON.stringify(
+          typeof input === "string" ? { reservationId: input } : input,
+        ),
       }),
     // Deliberately not awaited. `invalidateQueries` resolves only once every
     // active query has refetched, and react-query awaits this callback before

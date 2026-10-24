@@ -26,6 +26,7 @@ import {
 } from "@/lib/specialist-dispatch-fallback";
 import { normalizePhone } from "@/lib/phone";
 import { claimRelease } from "@/lib/rekaz-claim";
+import { rekazDispatchRefusal, type ReservationOrderIntent } from "@/lib/rekaz-visit-gate";
 import {
   claimOutboxEvent,
   finishOrderDispatchCommand,
@@ -591,20 +592,15 @@ async function assertRekazVisitDispatchable(
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  const live = (data ?? []).filter((row) => row.status !== "Cancelled");
-  if (!live.length) return;
-  if (
-    live.every(
-      (row) => row.status === "Done",
-    )
-  ) {
+  const refusal = rekazDispatchRefusal(
+    (data ?? []).map((row) => row.status as string | null),
+  );
+  if (refusal === "RESERVATION_COMPLETED") {
     const completed = new RekazBookingError("RESERVATION_COMPLETED");
     completed.detail = "الزيارة مكتملة في ركاز — لا يمكن طلب سائق جديد لها";
     throw completed;
   }
-  if (
-    live.some((row) => row.status === "Pending")
-  ) {
+  if (refusal === "RESERVATION_NOT_CONFIRMED") {
     const pending = new RekazBookingError("RESERVATION_NOT_CONFIRMED");
     pending.detail =
       "الحجز ما زال طلبًا في ركاز — أكّدي الحجز هناك أولًا";
@@ -1055,7 +1051,8 @@ async function blockingOrderFor(
 
 export async function createBookingFromReservation(
   userId: string,
-  sourceId: string
+  sourceId: string,
+  intent: ReservationOrderIntent = "dispatch",
 ): Promise<DriverOrder> {
   const admin = getAdminSupabaseClient();
 
@@ -1082,7 +1079,13 @@ export async function createBookingFromReservation(
     providers?: string[];
   };
   const phone = String(reservation.customer_phone ?? "");
-  await assertRekazVisitDispatchable(admin, phone, String(reservation.arrival_at));
+  // Only «طلب سائق» needs Rekaz's go-ahead here. Opening a visit (to set its
+  // district after the service, say) raises the same pending row and sends
+  // nothing; preview and send still run this check, so no driver can be sent
+  // for a completed or unconfirmed visit through the order it opens.
+  if (intent === "dispatch") {
+    await assertRekazVisitDispatchable(admin, phone, String(reservation.arrival_at));
+  }
 
   // Every same-day service for this customer is one visit, even when Rekaz
   // assigns a different order id to each service. The driver is planned around

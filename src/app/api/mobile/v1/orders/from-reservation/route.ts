@@ -1,4 +1,5 @@
 import { createBookingFromReservation, RekazBookingError } from "@/lib/dispatch";
+import { parseReservationOrderIntent } from "@/lib/rekaz-visit-gate";
 import {
   authorizeMobileRequest,
   mobileData,
@@ -13,6 +14,11 @@ import {
  * order — no message is sent and nothing is assigned — so the employee
  * continues into the dispatch preview, where the exact driver and specialist
  * text is shown and edited before anything leaves the building.
+ *
+ * Tapping a «بدون طلب» card lands here too, with `intent: "open"`, so the
+ * employee can open the visit (for example to set its district) even when
+ * Rekaz already marks it completed. That intent skips the Rekaz state check
+ * here only; preview and send still enforce it.
  *
  * A customer who has never written on WhatsApp is not a reason to refuse: the
  * visit is real work regardless, so the thread is opened for her rather than
@@ -69,6 +75,7 @@ export async function POST(request: Request) {
     const order = await createBookingFromReservation(
       auth.session.userId,
       reservationId,
+      parseReservationOrderIntent(body.intent),
     );
     return mobileData({ order }, 201);
   } catch (error) {

@@ -21,6 +21,7 @@ import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import {
   addDays,
   buildDaySchedule,
+  canOpenUnlinkedVisit,
   dayKeyFromToday,
   dayKeyOf,
   draftNeedsRekazTime,
@@ -459,6 +460,23 @@ const VisitCard = memo(function VisitCard({
     });
   }, [createOrder, order, router, visit.reservation]);
 
+  // A «بدون طلب» card opens too. Its pending order is raised with nothing
+  // sent, and the employee lands on the visit, where the district (and so
+  // the trip cost) can be set even after Rekaz marks the visit completed.
+  const canOpenVisit = canOpenUnlinkedVisit(visit);
+  const openVisit = useCallback(() => {
+    if (!visit.reservation || createOrder.isPending) return;
+    tapFeedback();
+    createOrder.mutate(
+      { reservationId: visit.reservation.id, intent: "open" },
+      {
+        onSuccess: (result) =>
+          router.push({ pathname: "/orders/[id]", params: { id: result.order.id } }),
+        onError: (error) => Alert.alert("تعذّر فتح الحجز", error.message),
+      },
+    );
+  }, [createOrder, router, visit.reservation]);
+
   const body = (
     <View
       style={{
@@ -797,7 +815,21 @@ const VisitCard = memo(function VisitCard({
     </View>
   );
 
-  if (!order) return body;
+  if (!order) {
+    if (!canOpenVisit) return body;
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`حجز ${visit.customerName || visit.customerPhone}، بدون طلب، ${formatters.time.format(arrival)}`}
+        accessibilityHint="يفتح الزيارة لإضافة الحي ومتابعتها"
+        disabled={createOrder.isPending}
+        onPress={openVisit}
+        style={{ opacity: createOrder.isPending ? 0.6 : 1 }}
+      >
+        {body}
+      </Pressable>
+    );
+  }
   return (
     <Pressable
       accessibilityRole="button"
