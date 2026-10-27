@@ -118,3 +118,38 @@ test("descriptions say only what the numbers can", () => {
   assert.equal(catalog.arabicServiceDuration(140), "ساعتين و20 دقيقة");
   assert.equal(catalog.arabicServiceDuration(360), "6 ساعات");
 });
+
+test("Rekaz's rich text becomes WhatsApp text: lines, bullets and bold kept", () => {
+  const html =
+    '<p><span style="font-size: 14px;"><strong> بديكير VIP</strong></span></p>' +
+    '<p><span>تتضمن الخدمة:</span><span><br></span><span>• مساج مريح.</span><span><br></span>' +
+    '<span>• تقشير باستخدام <strong>مقشر جيلا</strong> لنعومة&nbsp;تدوم.</span></p><p></p><p>كيارا 🍃</p>';
+  assert.equal(
+    catalog.rekazHtmlToWhatsApp(html),
+    "*بديكير VIP*\n\nتتضمن الخدمة:\n• مساج مريح.\n• تقشير باستخدام *مقشر جيلا* لنعومة تدوم.\n\nكيارا 🍃",
+  );
+});
+
+test("the description is read from the product's own data, never a neighbour's", () => {
+  const page =
+    'x={id:"other",description:"\\x3Cp>غيرها\\x3C/p>"};' +
+    'y={id:"p-1",name:"جيلا",description:"\\x3Cp>\\x3Cspan style=\\"font-size: 20px;\\">تتضمن\\x3C/span>\\x3C/p>"}';
+  assert.equal(catalog.extractRekazDescription(page, "p-1"), "تتضمن");
+  assert.equal(catalog.extractRekazDescription(page, "missing"), null);
+});
+
+test("Rekaz's text goes in front of generated lines and option lists, never over prose", () => {
+  const withText = service("جيلا", { description: "تتضمن الخدمة:\n• مساج", options: [{ price: 250, durationMinutes: 120 }] });
+  // The auto duration line gains the description.
+  const [auto] = catalog.planCatalogSync([row("1", "جيلا", { description_ar: "المدة: ساعتين" })], [withText]).update;
+  assert.equal(auto.patch.description_ar, "تتضمن الخدمة:\n• مساج\n\nالمدة: ساعتين");
+  // An option list is kept under it.
+  const list = "كروم · 20 ر.س · 10 دقائق\nستيكر · 5 ر.س · 10 دقائق";
+  const [options] = catalog.planCatalogSync([row("1", "جيلا", { description_ar: list })], [withText]).update;
+  assert.equal(options.patch.description_ar, `تتضمن الخدمة:\n• مساج\n\n${list}`);
+  // A paragraph someone wrote, or text already filled in, is not touched again.
+  for (const written of ["بكج العروسة رحلة عناية متكاملة", "تتضمن الخدمة:\n• مساج\n\nالمدة: ساعتين"]) {
+    const plan = catalog.planCatalogSync([row("1", "جيلا", { description_ar: written })], [withText]);
+    assert.equal(plan.update.length, 0, written);
+  }
+});

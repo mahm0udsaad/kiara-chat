@@ -15,8 +15,9 @@
  *  - adds every service the app does not have yet;
  *  - brings the name, price, section and photo of the ones it has in line with
  *    Rekaz, and shows one again if it had been hidden;
- *  - never touches a description that is already written — the public list has
- *    no variant labels, so it can only ever say less than what is there;
+ *  - fills in what each service includes, from its page on the Rekaz site, in
+ *    front of the duration or option list the app already shows — but never
+ *    over a paragraph someone wrote here by hand;
  *  - never hides anything. The public list is only what is on the website, so a
  *    service missing from it may still exist in Rekaz (an offer, a gift card, a
  *    staff-only extra). Those are reported back for an admin to hide by hand.
@@ -43,6 +44,14 @@ export interface RekazService {
   imageUrl: string | null;
   /** Rekaz's own kind: Reservation, Bundle, Subscription… */
   type: string;
+  /** The URL part of the service's page on the Rekaz site. */
+  slug?: string | null;
+  /**
+   * What the service includes, as WhatsApp text, from its Rekaz page. Null
+   * when the page has none or could not be read — a missing description
+   * never fails a sync.
+   */
+  description?: string | null;
 }
 
 /** The `menu_items` columns a sync reads. */
@@ -128,6 +137,108 @@ export function describeNewService(service: RekazService): string {
   return `تبدأ الأسعار من ${Math.min(...options.map((option) => option.price!))} ر.س`;
 }
 
+const HTML_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+};
+
+/**
+ * Rekaz's rich-text description as WhatsApp text: paragraphs and line breaks
+ * kept, bold kept as *bold*, every font size and span dropped.
+ */
+export function rekazHtmlToWhatsApp(html: string): string {
+  const text = html
+    .replace(/_x000d_/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|h[1-6])>/gi, "\n\n")
+    .replace(/<li[^>]*>/gi, "• ")
+    .replace(/<\/li>/gi, "\n")
+    // Bold only where it wraps words; WhatsApp ignores "* x*".
+    .replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_, _tag, inner: string) => {
+      const plain = inner.replace(/<[^>]+>/g, "");
+      const word = plain.trim();
+      if (!word) return plain;
+      const lead = plain.match(/^\s*/)?.[0] ?? "";
+      const trail = plain.match(/\s*$/)?.[0] ?? "";
+      return `${lead}*${word}*${trail}`;
+    })
+    .replace(/<[^>]+>/g, "")
+    .replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (entity, code: string) => {
+      if (code[0] === "#") {
+        const point = code[1].toLowerCase() === "x" ? parseInt(code.slice(2), 16) : Number(code.slice(1));
+        return Number.isFinite(point) ? String.fromCodePoint(point) : entity;
+      }
+      return HTML_ENTITIES[code.toLowerCase()] ?? entity;
+    });
+  return text
+    .split("\n")
+    .map((line) => line.replace(/[ \t\u00a0]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * The description field of one product inside its Rekaz page. The page is a
+ * server-rendered app whose data rides along as a script; the product is found
+ * by its id, so another product's text can never be picked up by mistake.
+ */
+export function extractRekazDescription(page: string, productId: string): string | null {
+  const at = page.indexOf(`id:"${productId}"`);
+  if (at < 0) return null;
+  const match = page.slice(at, at + 60_000).match(/description:"((?:[^"\\]|\\.)*)"/);
+  if (!match) return null;
+  const html = match[1]
+    .replace(/\\x([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\u([0-9a-f]{4})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\(.)/g, (_, char: string) => (char === "n" ? "\n" : char));
+  const text = rekazHtmlToWhatsApp(html);
+  return text || null;
+}
+
+/** A WhatsApp image caption stops at 1,024 characters. */
+const DESCRIPTION_LIMIT = 850;
+
+function capDescription(text: string): string {
+  if (text.length <= DESCRIPTION_LIMIT) return text;
+  const cut = text.slice(0, DESCRIPTION_LIMIT);
+  const lastBreak = cut.lastIndexOf("\n");
+  return `${(lastBreak > DESCRIPTION_LIMIT / 2 ? cut.slice(0, lastBreak) : cut).trim()}…`;
+}
+
+/** One line of a price-option list: "كروم · 20 ر.س · 10 دقائق". */
+const OPTION_LINE = /·\s*\d[\d.,]*\s*ر\.س/;
+const GENERATED_LINE = /^(المدة: |تبدأ الأسعار من |.+ — \d[\d.,]* ر\.س$)/;
+
+/**
+ * Whether a stored description is only what the app generated or listed —
+ * a duration, a starting price, price options — with no prose of its own.
+ * Only those may gain Rekaz's text; a paragraph written here is left alone.
+ */
+export function isListOnlyDescription(text: string | null | undefined): boolean {
+  const lines = (text ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
+  return lines.every((line) => OPTION_LINE.test(line) || GENERATED_LINE.test(line));
+}
+
+/**
+ * The description a service should carry: what Rekaz says it includes, then
+ * the duration or options the app already listed for it.
+ */
+export function composeServiceDescription(
+  service: RekazService,
+  current: string | null | undefined,
+): string {
+  const list = current?.trim() || describeNewService(service);
+  const rekaz = service.description?.trim();
+  if (!rekaz) return list;
+  const body = capDescription(rekaz);
+  return list ? `${body}\n\n${list}` : body;
+}
+
 /** Rekaz names carry stray double spaces; they are not a rename. */
 export function cleanServiceName(name: string): string {
   return name.replace(/\s+/g, " ").trim();
@@ -209,9 +320,9 @@ export function planCatalogSync(existing: CatalogRow[], services: RekazService[]
       patch.is_available = true;
       changes.push("أُعيد إظهارها");
     }
-    if (!current.description_ar?.trim()) {
-      const description = describeNewService(service);
-      if (description) {
+    if (isListOnlyDescription(current.description_ar)) {
+      const description = composeServiceDescription(service, current.description_ar);
+      if (description && description !== (current.description_ar ?? "").trim()) {
         patch.description_ar = description;
         changes.push("الوصف");
       }
@@ -246,6 +357,7 @@ type RekazProduct = {
   images?: string[];
   amount?: number | null;
   pricing?: { amount?: number | null; duration?: number | null }[];
+  slug?: string | null;
 };
 type RekazCategory = {
   order?: number;
@@ -275,7 +387,7 @@ export async function fetchRekazServices(): Promise<RekazService[]> {
     }
   }
 
-  return products
+  const services = products
     .filter((product) => product?.id && product.name?.trim())
     .map((product) => ({
       rekazId: product.id,
@@ -288,7 +400,40 @@ export async function fetchRekazServices(): Promise<RekazService[]> {
       category: sectionOf.get(product.id) ?? null,
       imageUrl: product.images?.[0] ?? null,
       type: product.typeString ?? "Reservation",
+      slug: product.slug ?? null,
+      description: null as string | null,
     }));
+
+  // The list carries no description; each service's own page does. Read a few
+  // pages at a time, and let any one that fails simply come back without text.
+  let next = 0;
+  const worker = async () => {
+    while (next < services.length) {
+      const service = services[next++];
+      service.description = await fetchRekazDescription(service).catch(() => null);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  return services;
+}
+
+const REKAZ_SITE = "https://rekaz.io/kyara-sba-1/ar";
+const PAGE_KIND: Record<string, string> = {
+  Reservation: "reservation",
+  Bundle: "bundle",
+  Subscription: "subscription",
+};
+
+async function fetchRekazDescription(service: RekazService): Promise<string | null> {
+  const kind = PAGE_KIND[service.type];
+  if (!kind || !service.slug) return null;
+  const response = await fetchWithTimeout(
+    `${REKAZ_SITE}/${kind}/${encodeURIComponent(service.slug)}`,
+    { headers: { "User-Agent": "Mozilla/5.0 (Kiara catalogue sync)" }, cache: "no-store" },
+    { timeoutMs: 10_000, label: "Rekaz service page" },
+  );
+  if (!response.ok) return null;
+  return extractRekazDescription(await response.text(), service.rekazId);
 }
 
 /** Short and stable, so two racing pulls agree on which duplicate to keep. */
@@ -326,7 +471,7 @@ export async function syncCatalogFromRekaz(): Promise<CatalogSyncResult> {
       plan.insert.map((service) => ({
         restaurant_id: KIARA_RESTAURANT_ID,
         name_ar: service.name,
-        description_ar: describeNewService(service),
+        description_ar: composeServiceDescription(service, null),
         price: service.price,
         currency: "SAR",
         category: service.category ?? FALLBACK_CATEGORY,
