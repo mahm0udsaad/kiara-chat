@@ -143,10 +143,19 @@ test("Rekaz's text goes in front of generated lines and option lists, never over
   // The auto duration line gains the description.
   const [auto] = catalog.planCatalogSync([row("1", "جيلا", { description_ar: "المدة: ساعتين" })], [withText]).update;
   assert.equal(auto.patch.description_ar, "تتضمن الخدمة:\n• مساج\n\nالمدة: ساعتين");
-  // An option list is kept under it.
+  // An option list gives way to the description; only the duration stays.
   const list = "كروم · 20 ر.س · 10 دقائق\nستيكر · 5 ر.س · 10 دقائق";
   const [options] = catalog.planCatalogSync([row("1", "جيلا", { description_ar: list })], [withText]).update;
-  assert.equal(options.patch.description_ar, `تتضمن الخدمة:\n• مساج\n\n${list}`);
+  assert.equal(options.patch.description_ar, "تتضمن الخدمة:\n• مساج\n\nالمدة: ساعتين");
+  // So does one an earlier sync already wrote with the options under it.
+  const [earlier] = catalog.planCatalogSync(
+    [row("1", "جيلا", { description_ar: `تتضمن الخدمة:\n• مساج\n\n${list}` })],
+    [withText],
+  ).update;
+  assert.equal(earlier.patch.description_ar, "تتضمن الخدمة:\n• مساج\n\nالمدة: ساعتين");
+  // Without Rekaz text the option list is all there is, so it stays.
+  const bare = catalog.planCatalogSync([row("1", "جيلا", { description_ar: list })], [service("جيلا")]);
+  assert.equal(bare.update.length, 0);
   // A paragraph someone wrote, or text already filled in, is not touched again.
   for (const written of ["بكج العروسة رحلة عناية متكاملة", "تتضمن الخدمة:\n• مساج\n\nالمدة: ساعتين"]) {
     const plan = catalog.planCatalogSync([row("1", "جيلا", { description_ar: written })], [withText]);

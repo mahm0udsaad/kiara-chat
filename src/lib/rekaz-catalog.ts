@@ -224,19 +224,34 @@ export function isListOnlyDescription(text: string | null | undefined): boolean 
   return lines.every((line) => OPTION_LINE.test(line) || GENERATED_LINE.test(line));
 }
 
+const DURATION_LINE = /^المدة: /;
+
 /**
- * The description a service should carry: what Rekaz says it includes, then
- * the duration or options the app already listed for it.
+ * The description a service should carry.
+ *
+ * With Rekaz text: what the service includes, then its duration — and no
+ * price-option list. The options read as clutter on the card the customer
+ * gets, and the team asked for them out. Without Rekaz text the list the app
+ * already had stays, since it is all there is to say.
  */
 export function composeServiceDescription(
   service: RekazService,
   current: string | null | undefined,
 ): string {
-  const list = current?.trim() || describeNewService(service);
   const rekaz = service.description?.trim();
-  if (!rekaz) return list;
+  if (!rekaz) return current?.trim() || describeNewService(service);
+  const generated = describeNewService(service);
+  const duration =
+    (current ?? "").split("\n").map((line) => line.trim()).find((line) => DURATION_LINE.test(line)) ??
+    (DURATION_LINE.test(generated) ? generated : "");
   const body = capDescription(rekaz);
-  return list ? `${body}\n\n${list}` : body;
+  return duration ? `${body}\n\n${duration}` : body;
+}
+
+/** A description an earlier sync wrote: it opens with Rekaz's own text. */
+function startsWithRekazText(service: RekazService, current: string | null | undefined): boolean {
+  const rekaz = service.description?.trim();
+  return Boolean(rekaz && current?.trim().startsWith(capDescription(rekaz).replace(/…$/, "")));
 }
 
 /** Rekaz names carry stray double spaces; they are not a rename. */
@@ -320,7 +335,7 @@ export function planCatalogSync(existing: CatalogRow[], services: RekazService[]
       patch.is_available = true;
       changes.push("أُعيد إظهارها");
     }
-    if (isListOnlyDescription(current.description_ar)) {
+    if (isListOnlyDescription(current.description_ar) || startsWithRekazText(service, current.description_ar)) {
       const description = composeServiceDescription(service, current.description_ar);
       if (description && description !== (current.description_ar ?? "").trim()) {
         patch.description_ar = description;
