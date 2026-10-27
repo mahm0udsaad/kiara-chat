@@ -18,6 +18,7 @@ import {
   type ServiceTiming,
   type SpecialistServiceTiming,
 } from "@/lib/service-timing";
+import { pageRowsByDay } from "@/lib/paged-rows";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { isLateClassification } from "@/lib/punctuality-core";
@@ -322,41 +323,50 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
   const admin = getAdminSupabaseClient();
   const rangeStart = boundary(input.from, "00:00");
   const rangeEnd = boundary(input.to, "23:59");
+  // Every source is read in full. PostgREST stops at 1,000 rows a request, and
+  // the progress and checkpoint tables used to be read whole for the tenant:
+  // past 1,000 rows the newest trips silently lost their taps and finished
+  // trips showed as «لم يكتمل · لم يضغط» (يحيى, 24 Oct 2026). A month of
+  // Rekaz bookings is over 1,000 rows too, so the range reads are paged.
+  const startMs = Date.parse(rangeStart);
+  const endExclusiveMs = Date.parse(rangeEnd) + 60_000;
+  const settle = async <T,>(work: Promise<T[]>) => {
+    try {
+      return { data: await work, error: null };
+    } catch (error) {
+      return { data: null, error: { message: error instanceof Error ? error.message : String(error) } };
+    }
+  };
   const [
     reservationsResult,
     ordersResult,
-    progressResult,
-    checkpointsResult,
     specialistsResult,
     driversResult,
-    punctualityResult,
     punctualitySettingsResult,
   ] =
     await Promise.all([
-      admin
-        .from("rekaz_reservations")
-        .select("source_id, status, payload")
-        .eq("restaurant_id", KIARA_RESTAURANT_ID)
-        .is("removed_at", null)
-        .neq("status", "Cancelled")
-        .gte("arrival_at", rangeStart)
-        .lte("arrival_at", rangeEnd),
-      admin
-        .from("driver_orders")
-        .select("id, status, sent_at, specialist_id, driver_id, return_driver_id, trip_type, arrival_at, duration_minutes, customer_phone, rekaz_source_id, price, return_price")
-        .eq("restaurant_id", KIARA_RESTAURANT_ID)
-        .gte("arrival_at", rangeStart)
-        .lte("arrival_at", rangeEnd),
-      admin
-        .from("field_order_progress")
-        .select(
-          "order_id, driver_confirmed_at, driver_arrived_at, specialist_pickup_at, driver_client_arrived_at, service_started_at, completed_at, driver_returned_at",
-        )
-        .eq("restaurant_id", KIARA_RESTAURANT_ID),
-      admin
-        .from("field_location_checkpoints")
-        .select("order_id, action, source")
-        .eq("restaurant_id", KIARA_RESTAURANT_ID),
+      settle(pageRowsByDay(startMs, endExclusiveMs, (sliceStart, sliceEnd, from, to) =>
+        admin
+          .from("rekaz_reservations")
+          .select("source_id, status, payload")
+          .eq("restaurant_id", KIARA_RESTAURANT_ID)
+          .is("removed_at", null)
+          .neq("status", "Cancelled")
+          .gte("arrival_at", sliceStart)
+          .lt("arrival_at", sliceEnd)
+          .order("arrival_at")
+          .order("source_id")
+          .range(from, to))),
+      settle(pageRowsByDay(startMs, endExclusiveMs, (sliceStart, sliceEnd, from, to) =>
+        admin
+          .from("driver_orders")
+          .select("id, status, sent_at, specialist_id, driver_id, return_driver_id, trip_type, arrival_at, duration_minutes, customer_phone, rekaz_source_id, price, return_price")
+          .eq("restaurant_id", KIARA_RESTAURANT_ID)
+          .gte("arrival_at", sliceStart)
+          .lt("arrival_at", sliceEnd)
+          .order("arrival_at")
+          .order("id")
+          .range(from, to))),
       admin
         .from("specialists")
         .select("id, full_name, is_active")
@@ -366,16 +376,48 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         .select("id, full_name, is_active")
         .eq("restaurant_id", KIARA_RESTAURANT_ID),
       admin
-        .from("order_punctuality")
-        .select("order_id, classification, late_reason_code, late_reason_note, planned_specialist_arrival_at, driver_orders!inner(status)")
-        .eq("restaurant_id", KIARA_RESTAURANT_ID)
-        .neq("driver_orders.status", "cancelled"),
-      admin
         .from("punctuality_settings")
         .select("grace_minutes")
         .eq("restaurant_id", KIARA_RESTAURANT_ID)
         .maybeSingle(),
     ]);
+
+  // Only the range's orders, a chunk of ids at a time to keep URLs short.
+  const rangeIds = ((ordersResult.data ?? []) as { id: string }[]).map((order) => order.id);
+  const byOrderIds = <T,>(load: (ids: string[]) => PromiseLike<{ data: unknown; error: { message: string } | null }>) =>
+    settle((async () => {
+      const chunks: string[][] = [];
+      for (let at = 0; at < rangeIds.length; at += 150) chunks.push(rangeIds.slice(at, at + 150));
+      const pages = await Promise.all(chunks.map(async (ids) => {
+        const result = await load(ids);
+        if (result.error) throw new Error(result.error.message);
+        return (result.data ?? []) as T[];
+      }));
+      return pages.flat();
+    })());
+  const [progressResult, checkpointsResult, punctualityResult] = await Promise.all([
+    byOrderIds((ids) =>
+      admin
+        .from("field_order_progress")
+        .select(
+          "order_id, driver_confirmed_at, driver_arrived_at, specialist_pickup_at, driver_client_arrived_at, service_started_at, completed_at, driver_returned_at",
+        )
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .in("order_id", ids)),
+    byOrderIds((ids) =>
+      admin
+        .from("field_location_checkpoints")
+        .select("order_id, action, source")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .in("order_id", ids)),
+    byOrderIds((ids) =>
+      admin
+        .from("order_punctuality")
+        .select("order_id, classification, late_reason_code, late_reason_note, planned_specialist_arrival_at, driver_orders!inner(status)")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .neq("driver_orders.status", "cancelled")
+        .in("order_id", ids)),
+  ]);
 
   for (const result of [reservationsResult, ordersResult, progressResult, checkpointsResult, specialistsResult, driversResult]) {
     if (result.error) throw new Error(result.error.message);
