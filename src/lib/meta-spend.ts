@@ -1,5 +1,6 @@
 import "server-only";
 
+import { pageRowsByDay } from "@/lib/paged-rows";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import { templateKeyForContentSid, templateSpec } from "@/lib/templates";
@@ -250,23 +251,24 @@ async function templateCategories(): Promise<(name: string, sid: string) => Meta
  */
 async function estimateFromSends(fromMs: number, toMs: number): Promise<MetaSpend> {
   const admin = getAdminSupabaseClient();
-  const sent: DeliveredMessageRow[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await admin
-      .from("messages")
-      .select("created_at, metadata, conversations!inner(restaurant_id)")
-      .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
-      .eq("role", "agent")
-      .in("delivery_status", ["delivered", "read"])
-      .like("external_message_sid", "wamid.%")
-      .gte("created_at", new Date(fromMs).toISOString())
-      .lt("created_at", new Date(toMs).toISOString())
-      .order("created_at", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
-    if (error) throw new Error(error.message);
-    sent.push(...((data ?? []) as unknown as DeliveredMessageRow[]));
-    if ((data ?? []).length < PAGE_SIZE) break;
-  }
+  const sent = await pageRowsByDay<DeliveredMessageRow>(
+    fromMs,
+    toMs,
+    (sliceStart, sliceEnd, from, to) =>
+      admin
+        .from("messages")
+        .select("created_at, metadata, conversations!inner(restaurant_id)")
+        .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
+        .eq("role", "agent")
+        .in("delivery_status", ["delivered", "read"])
+        .like("external_message_sid", "wamid.%")
+        .gte("created_at", sliceStart)
+        .lt("created_at", sliceEnd)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    { pageSize: PAGE_SIZE },
+  );
 
   const categoryOf = sent.some((row) => row.metadata?.template) ? await templateCategories() : null;
   const spend = emptySpend("estimate", null);

@@ -183,7 +183,7 @@ export function validateOperationsReportInput(input: OperationsReportInput) {
     toMs < fromMs ||
     toMs - fromMs > MAX_RANGE_DAYS * 24 * 60 * 60 * 1_000
   ) {
-    throw new OperationsReportInputError("The report range is invalid or exceeds 31 days");
+    throw new OperationsReportInputError("الفترة غير صحيحة أو أطول من 31 يوماً. اختاري فترة أقصر.");
   }
   return { from: input.from, to: input.to, startTime, endTime };
 }

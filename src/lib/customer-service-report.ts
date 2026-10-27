@@ -8,6 +8,7 @@ import {
   validateOperationsReportInput,
 } from "@/lib/operations-report";
 import { getMetaSpend, type MetaSpend } from "@/lib/meta-spend";
+import { pageRowsByDay } from "@/lib/paged-rows";
 import { canonicalPhone, normalizePhone } from "@/lib/phone";
 import { fetchCustomerFirstBookingMs } from "@/lib/rekaz";
 import { RekazAuthError } from "@/lib/rekaz-auth";
@@ -291,13 +292,24 @@ function boundary(day: string, time: string): string {
   return `${day}T${time}:00+03:00`;
 }
 
+// Built once: constructing an Intl formatter costs far more than using one,
+// and these run several times for each of a month's ~80k messages — building
+// one per call was ~14 seconds of a month report.
+const MINUTE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  timeZone: OPERATIONS_TIME_ZONE,
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+const DAY_FORMAT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: OPERATIONS_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 function minuteOfDay(iso: string): number {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: OPERATIONS_TIME_ZONE,
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(iso));
+  const parts = MINUTE_FORMAT.formatToParts(new Date(iso));
   const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
   const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
   return hour * 60 + minute;
@@ -314,12 +326,7 @@ function insideWindow(at: string, start: number, end: number): boolean {
 }
 
 function dayOf(iso: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: OPERATIONS_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(iso));
+  return DAY_FORMAT.format(new Date(iso));
 }
 
 function csStatus(row: ConversationRow): "open" | "waiting" | "resolved" {
@@ -745,25 +752,27 @@ export async function getCustomerServiceReport(
         ? dailyPresenceRows(admin, memberIds, input.from, input.to)
         : Promise.resolve([]),
       memberIds.length
-        ? pageRows<MessageRow>((from, to) =>
+        ? pageRowsByDay<MessageRow>(rangeStartMs, rangeEndMs + 1, (sliceStart, sliceEnd, from, to) =>
             admin
               .from("messages")
               .select("id, conversation_id, role, sender_team_member_id, created_at, conversations!inner(restaurant_id)")
               .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
-              .gte("created_at", rangeStart)
-              .lte("created_at", rangeEnd)
+              .gte("created_at", sliceStart)
+              .lt("created_at", sliceEnd)
               .order("created_at", { ascending: true })
+              .order("id", { ascending: true })
               .range(from, to),
           )
         : Promise.resolve([]),
-      pageRows<EventRow>((from, to) =>
+      pageRowsByDay<EventRow>(rangeStartMs, rangeEndMs + 1, (sliceStart, sliceEnd, from, to) =>
         admin
           .from("operation_events")
           .select("id, aggregate_type, aggregate_id, event_type, occurred_at, actor_team_member_id, actor_user_id, payload")
           .eq("restaurant_id", KIARA_RESTAURANT_ID)
-          .gte("occurred_at", rangeStart)
-          .lte("occurred_at", rangeEnd)
+          .gte("occurred_at", sliceStart)
+          .lt("occurred_at", sliceEnd)
           .order("occurred_at", { ascending: true })
+          .order("id", { ascending: true })
           .range(from, to),
       ),
       memberIds.length

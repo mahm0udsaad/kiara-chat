@@ -8,7 +8,9 @@ const code = ts.transpileModule(readFileSync(new URL("../src/lib/customer-servic
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText + "\nexports.__sheetOutcome = sheetOutcome; exports.__sheetConflicts = sheetConflicts;";
 const loaded = { exports: {} };
-new Function("require", "module", "exports", code)(() => new Proxy({}, { get: () => () => ({}) }), loaded, loaded.exports);
+// The report builds its formatters at load, so the time zone must be real.
+const stub = new Proxy({}, { get: (_, key) => (key === "OPERATIONS_TIME_ZONE" ? "Asia/Riyadh" : () => ({})) });
+new Function("require", "module", "exports", code)(() => stub, loaded, loaded.exports);
 const { __sheetOutcome: sheetOutcome, __sheetConflicts: sheetConflicts } = loaded.exports;
 
 const chat = (metadata) => ({ id: "c1", customer_phone: "+966530341010", metadata });

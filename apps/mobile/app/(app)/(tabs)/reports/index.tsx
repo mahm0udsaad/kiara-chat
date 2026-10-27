@@ -20,7 +20,7 @@ import { Card } from "@/components/ui/card";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Segmented, type SegmentOption } from "@/components/ui/segmented";
 import { hitSize, numeric, radius, rtlText, spacing, type } from "@/constants/theme";
-import { addDays, dayKeyFromToday } from "@/lib/calendar";
+import { addDays, dayKeyFromToday, dayKeyOf } from "@/lib/calendar";
 import {
   delayLabel,
   REPORT_LOCALE,
@@ -154,8 +154,24 @@ export default function ReportsScreen() {
     setPicker(null);
     if (event.type === "dismissed" || !value || !picker) return;
     if (picker === "from" || picker === "to") {
-      const day = value.toISOString().slice(0, 10);
-      setDraft((current) => ({ ...current, [picker]: day }));
+      // Riyadh day, not UTC: toISOString() read a late-evening pick as the
+      // day before. The other end follows so the range never passes the
+      // server's 31-day limit — a longer one failed on every retry, and the
+      // error screen hid the filter needed to fix it.
+      const day = dayKeyOf(value);
+      setDraft((current) =>
+        picker === "from"
+          ? {
+              ...current,
+              from: day,
+              to: current.to < day ? day : current.to > addDays(day, 30) ? addDays(day, 30) : current.to,
+            }
+          : {
+              ...current,
+              to: day,
+              from: current.from > day ? day : current.from < addDays(day, -30) ? addDays(day, -30) : current.from,
+            },
+      );
     } else {
       const time = `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
       setDraft((current) => ({ ...current, [picker]: time }));
