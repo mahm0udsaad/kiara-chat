@@ -924,19 +924,19 @@ async function servicesForDispatchOrder(order: DriverOrder): Promise<VisitServic
  */
 async function releaseStaleRekazClaim(
   admin: ReturnType<typeof getAdminSupabaseClient>,
-  sourceId: string,
+  sourceIds: string[],
 ): Promise<boolean> {
   const [linked, captured] = await Promise.all([
     admin
       .from("driver_orders")
       .select("id")
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .eq("rekaz_source_id", sourceId),
+      .in("rekaz_source_id", sourceIds),
     admin
       .from("order_visit_services")
       .select("order_id")
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .eq("source_id", sourceId),
+      .in("source_id", sourceIds),
   ]);
   if (linked.error) {
     console.error("[dispatch] Could not read the Rekaz link", linked.error.message);
@@ -973,7 +973,7 @@ async function releaseStaleRekazClaim(
       .update({ rekaz_source_id: null, updated_at: stamp })
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .in("id", [...cancelledIds, ...pastIds])
-      .eq("rekaz_source_id", sourceId),
+      .in("rekaz_source_id", sourceIds),
   ];
   if (cancelledIds.length) {
     writes.push(
@@ -993,7 +993,7 @@ async function releaseStaleRekazClaim(
         .update({ source_id: null })
         .eq("restaurant_id", KIARA_RESTAURANT_ID)
         .in("order_id", pastIds)
-        .eq("source_id", sourceId),
+        .in("source_id", sourceIds),
     );
   }
   const results = await Promise.all(writes);
@@ -1023,13 +1023,13 @@ const BLOCKING_DAY_FMT = new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
  */
 async function blockingOrderFor(
   admin: ReturnType<typeof getAdminSupabaseClient>,
-  sourceId: string,
+  sourceIds: string[],
 ): Promise<{ id: string; arrival_at: string; status: string } | null> {
   const { data: linked } = await admin
     .from("driver_orders")
     .select("id, arrival_at, status")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq("rekaz_source_id", sourceId)
+    .in("rekaz_source_id", sourceIds)
     .limit(1);
   if (linked?.length) return linked[0] as { id: string; arrival_at: string; status: string };
 
@@ -1037,7 +1037,7 @@ async function blockingOrderFor(
     .from("order_visit_services")
     .select("order_id")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
-    .eq("source_id", sourceId)
+    .in("source_id", sourceIds)
     .limit(1);
   if (!captured?.length) return null;
   const { data: order } = await admin
@@ -1047,6 +1047,43 @@ async function blockingOrderFor(
     .eq("id", captured[0].order_id as string)
     .maybeSingle();
   return (order as { id: string; arrival_at: string; status: string } | null) ?? null;
+}
+
+/**
+ * Every reservation the capture trigger will claim for a new order: the tapped
+ * one plus its Rekaz-order siblings on the visit's Riyadh day.
+ *
+ * Checking only the tapped id missed the common case of a moved package. Dina's
+ * four services were moved from 26 to 27 October; yesterday's sent order still
+ * held three of them, so tapping the fourth was refused on a sibling's claim
+ * that nothing went looking for — and she got "حدّثي التقويم", which no
+ * refresh could ever fix.
+ */
+async function visitSourceIds(
+  admin: ReturnType<typeof getAdminSupabaseClient>,
+  sourceId: string,
+  visitStartsAt: string,
+): Promise<string[]> {
+  const ids = new Set([sourceId]);
+  const { data: anchor } = await admin
+    .from("rekaz_reservations")
+    .select("source_order_id")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("source_id", sourceId)
+    .maybeSingle();
+  if (!anchor?.source_order_id) return [...ids];
+  const { data: siblings } = await admin
+    .from("rekaz_reservations")
+    .select("source_id, arrival_at")
+    .eq("restaurant_id", KIARA_RESTAURANT_ID)
+    .eq("source_order_id", anchor.source_order_id)
+    .is("removed_at", null)
+    .neq("status", "Cancelled");
+  const day = riyadhDayOf(visitStartsAt);
+  for (const row of siblings ?? []) {
+    if (riyadhDayOf(String(row.arrival_at)) === day) ids.add(String(row.source_id));
+  }
+  return [...ids];
 }
 
 export async function createBookingFromReservation(
@@ -1256,7 +1293,10 @@ export async function createBookingFromReservation(
   // link fails as 23505; the capture trigger raises RESERVATION_ALREADY_LINKED.
   const blockedByStaleClaim =
     insErr?.code === "23505" || /RESERVATION_ALREADY_LINKED/.test(insErr?.message ?? "");
-  if (blockedByStaleClaim && (await releaseStaleRekazClaim(admin, sourceId))) {
+  const claimIds = blockedByStaleClaim
+    ? await visitSourceIds(admin, sourceId, visit.startsAt)
+    : [sourceId];
+  if (blockedByStaleClaim && (await releaseStaleRekazClaim(admin, claimIds))) {
     ({ data: created, error: insErr } = await insertOrder());
   }
 
@@ -1266,7 +1306,7 @@ export async function createBookingFromReservation(
   // booking to its new day; one already sent belongs to a driver and a
   // specialist who agreed a time, so that one is the employee's call.
   if (insErr && blockedByStaleClaim) {
-    const blocking = await blockingOrderFor(admin, sourceId);
+    const blocking = await blockingOrderFor(admin, claimIds);
     if (blocking && blocking.status === "pending") {
       const { data: moved, error: moveError } = await admin
         .from("driver_orders")
