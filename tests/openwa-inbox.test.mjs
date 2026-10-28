@@ -283,8 +283,13 @@ test("new chats imported from history start at the original time", async () => {
     insert: (row) => { inserts.push(row); return query; },
     single: async () => ({ data: { id: "new" }, error: null }),
   };
+  // Before the find_or_create_conversation migration: the old insert path.
+  const missingFunction = async () => ({
+    data: null,
+    error: { message: "Could not find the function public.find_or_create_conversation" },
+  });
   const server = load("src/lib/server-conversations.ts", {
-    "@/lib/supabase/admin": { getAdminSupabaseClient: () => ({ from: () => query }) },
+    "@/lib/supabase/admin": { getAdminSupabaseClient: () => ({ from: () => query, rpc: missingFunction }) },
     "@/lib/tenant": { KIARA_RESTAURANT_ID: "tenant" },
     "@/lib/delivery-status": { statusesReplaceableBy: () => null },
     "@/lib/phone": { canonicalPhone: (phone) => phone },
@@ -298,4 +303,56 @@ test("new chats imported from history start at the original time", async () => {
     assert.equal(row.last_message_at, timestamp);
     assert.equal(row.restaurant_id, "tenant");
   }
+});
+
+test("new threads are created through the per-number lock, original time kept", async () => {
+  const rpcCalls = [];
+  const query = {
+    select: () => query, eq: () => query, order: () => query, limit: () => query, is: () => query,
+    update: () => query,
+    maybeSingle: async () => ({ data: null, error: null }),
+    insert: () => { throw new Error("must not insert directly when the locked function exists"); },
+  };
+  const server = load("src/lib/server-conversations.ts", {
+    "@/lib/supabase/admin": {
+      getAdminSupabaseClient: () => ({
+        from: () => query,
+        rpc: async (name, args) => {
+          rpcCalls.push({ name, args });
+          return { data: [{ id: "locked", is_new: true }], error: null };
+        },
+      }),
+    },
+    "@/lib/tenant": { KIARA_RESTAURANT_ID: "tenant" },
+    "@/lib/delivery-status": { statusesReplaceableBy: () => null },
+    "@/lib/phone": { canonicalPhone: (phone) => phone },
+  });
+  const timestamp = "2026-09-01T10:00:00.000Z";
+  assert.deepEqual(await server.findOrCreateConversation("+966500000000", "Customer", timestamp), { id: "locked", is_new: true });
+  assert.deepEqual(await server.findOrCreateGroupConversation("123@g.us", "Group", timestamp), { id: "locked", is_new: true });
+  assert.equal(rpcCalls.length, 2);
+  assert.equal(rpcCalls[0].name, "find_or_create_conversation");
+  assert.equal(rpcCalls[0].args.p_customer_phone, "+966500000000");
+  assert.equal(rpcCalls[0].args.p_started_at, timestamp);
+  assert.deepEqual(rpcCalls[1].args.p_metadata, { chat_kind: "group" });
+});
+
+test("a failed thread lookup stops instead of opening another thread", async () => {
+  const query = {
+    select: () => query, eq: () => query, order: () => query, limit: () => query,
+    maybeSingle: async () => ({ data: null, error: { message: "canceling statement due to statement timeout" } }),
+    insert: () => { throw new Error("must not insert after a failed lookup"); },
+  };
+  const server = load("src/lib/server-conversations.ts", {
+    "@/lib/supabase/admin": {
+      getAdminSupabaseClient: () => ({
+        from: () => query,
+        rpc: async () => ({ data: null, error: { message: "canceling statement due to statement timeout" } }),
+      }),
+    },
+    "@/lib/tenant": { KIARA_RESTAURANT_ID: "tenant" },
+    "@/lib/delivery-status": { statusesReplaceableBy: () => null },
+    "@/lib/phone": { canonicalPhone: (phone) => phone },
+  });
+  await assert.rejects(() => server.findOrCreateConversation("+966500000000", "Customer"), /lookup failed/);
 });

@@ -24,6 +24,40 @@ function usableCustomerName(
   return trimmed;
 }
 
+/**
+ * Find the thread for an address, or create it, one caller at a time.
+ *
+ * "Look, then insert" let two webhooks for the same customer in the same
+ * second both find nothing and both insert — she wrote "السلام عليكم" and her
+ * question together, and the team answered her in two threads. The database
+ * function holds a lock on the number for the duration, so the second caller
+ * waits and finds the first one's row.
+ *
+ * Returns null only when that function does not exist yet (before its
+ * migration), so the caller can fall back to the old path.
+ */
+async function findOrCreateLocked(input: {
+  address: string;
+  name: string | null;
+  startedAt?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<{ id: string; is_new: boolean } | null> {
+  const { data, error } = await getAdminSupabaseClient().rpc("find_or_create_conversation", {
+    p_restaurant_id: KIARA_RESTAURANT_ID,
+    p_customer_phone: input.address,
+    p_customer_name: input.name,
+    p_started_at: input.startedAt ?? null,
+    p_metadata: input.metadata ?? null,
+  });
+  if (error) {
+    if (/find_or_create_conversation|could not find the function/i.test(error.message)) return null;
+    throw new Error(`Conversation lookup failed: ${error.message}`);
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as { id?: string; is_new?: boolean } | null;
+  if (!row?.id) throw new Error("Conversation lookup returned no row");
+  return { id: row.id, is_new: Boolean(row.is_new) };
+}
+
 export async function findOrCreateConversation(
   customerPhone: string,
   /** The sender's WhatsApp display name, when the engine forwarded one. */
@@ -34,7 +68,25 @@ export async function findOrCreateConversation(
   if (!canonical) throw new Error("Invalid customer phone");
   const admin = getAdminSupabaseClient();
   const name = usableCustomerName(customerName, canonical);
-  const { data: existing } = await admin
+
+  const locked = await findOrCreateLocked({ address: canonical, name, startedAt });
+  if (locked) {
+    if (!locked.is_new && name) {
+      // Fill the name in once; never overwrite one that's already there.
+      await admin
+        .from("conversations")
+        .update({ customer_name: name })
+        .eq("id", locked.id)
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .is("customer_name", null);
+    }
+    return locked;
+  }
+
+  // Before the find_or_create_conversation migration: the old path, except
+  // that a failed lookup now stops here. Treating it as "no thread yet" is how
+  // one number collected eleven threads in six minutes on 2026-10-04.
+  const { data: existing, error: lookupError } = await admin
     .from("conversations")
     .select("id, customer_name")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
@@ -42,6 +94,7 @@ export async function findOrCreateConversation(
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (lookupError) throw new Error(`Conversation lookup failed: ${lookupError.message}`);
 
   if (existing?.id) {
     // Fill the name in once; never overwrite one that's already there (it may
@@ -94,7 +147,16 @@ export async function findOrCreateGroupConversation(
 ): Promise<{ id: string; is_new: boolean }> {
   const admin = getAdminSupabaseClient();
   const name = (subject ?? "").trim().slice(0, 80) || null;
-  const { data: existing } = await admin
+
+  const locked = await findOrCreateLocked({
+    address: chatJid,
+    name,
+    startedAt,
+    metadata: { chat_kind: "group" },
+  });
+  if (locked?.is_new) return locked;
+
+  const { data: existing, error: lookupError } = await admin
     .from("conversations")
     .select("id, customer_name, metadata")
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
@@ -102,6 +164,7 @@ export async function findOrCreateGroupConversation(
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (lookupError) throw new Error(`Group lookup failed: ${lookupError.message}`);
 
   if (existing?.id) {
     // Unlike a person's pushName, a group's subject is the group's real title
