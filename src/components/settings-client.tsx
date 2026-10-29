@@ -4,15 +4,21 @@ import { Settings } from "lucide-react";
 import { BotSettingsCard } from "@/components/bot-settings-card";
 import { CatalogManager } from "@/components/catalog-manager";
 import { SavedRepliesManager } from "@/components/saved-replies-manager";
+import { WelcomeMessageCard } from "@/components/welcome-message-card";
 import type { BotSettings } from "@/lib/bot-schedule";
 import type { CatalogItem } from "@/lib/catalog";
 import type { SavedReply } from "@/lib/saved-replies";
+import type { WelcomeSettings } from "@/lib/welcome-message";
 export function SettingsClient({
   bot,
+  welcome,
+  welcomeQuietDays,
   savedReplies,
   catalog,
 }: {
   bot: BotSettings;
+  welcome: WelcomeSettings;
+  welcomeQuietDays: number;
   savedReplies: SavedReply[];
   catalog: CatalogItem[];
 }) {
@@ -32,6 +38,7 @@ export function SettingsClient({
 
       <SavedRepliesManager initial={savedReplies} />
       <CatalogManager initial={catalog} />
+      <WelcomeMessageCard initial={welcome} quietDays={welcomeQuietDays} />
       <BotSettingsCard initial={bot} />
     </div>
   );

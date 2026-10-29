@@ -55,6 +55,7 @@ function webhook({ customerProvider = "meta" } = {}) {
     calls: [],
     permissionReplies: [],
     transport: [],
+    welcomes: [],
   };
 
   const { POST } = load(
@@ -68,6 +69,9 @@ function webhook({ customerProvider = "meta" } = {}) {
       "@/lib/transport/inbox-provider": { inboxProvider: () => "meta" },
       "@/lib/transport": { customerProvider: () => customerProvider },
       "@/lib/bot/reply": { runBotTurn: async () => {} },
+      "@/lib/welcome-message": {
+        sendWelcomeIfDue: async (input) => seen.welcomes.push(input),
+      },
       "@/lib/inbox-notifications": { notifyInboundInboxMessage: async () => {} },
       "@/lib/tenant": { KIARA_RESTAURANT_ID: "tenant" },
       // Only quoted replies read through it; no test message quotes one.
@@ -290,4 +294,35 @@ test("an unknown webhook field is ignored rather than mistaken for either", asyn
   assert.equal(response.status, 200);
   assert.equal(seen.calls.length, 0);
   assert.equal(seen.messages.length, 0);
+});
+
+test("a customer message is offered the welcome; a reaction or permission tap is not", async () => {
+  const { send, seen } = webhook();
+  await send(textMessage);
+  await Promise.all(seen.jobs.map((job) => job()));
+  assert.equal(seen.welcomes.length, 1);
+  assert.deepEqual(seen.welcomes[0], {
+    conversationId: "conversation",
+    customerPhone: "+966501234567",
+    messageId: "message-row",
+    receivedAt: new Date(1789000000 * 1000).toISOString(),
+  });
+
+  const reaction = webhook();
+  await reaction.send(
+    envelope("messages", {
+      metadata: { phone_number_id: "PHONE" },
+      messages: [
+        {
+          id: "wamid.REACT",
+          from: "966501234567",
+          timestamp: "1789000000",
+          type: "reaction",
+          reaction: { message_id: "wamid.OURS", emoji: "❤️" },
+        },
+      ],
+    }),
+  );
+  await Promise.all(reaction.seen.jobs.map((job) => job()));
+  assert.equal(reaction.seen.welcomes.length, 0);
 });

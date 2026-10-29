@@ -2,6 +2,7 @@ import { inboxProvider } from "@/lib/transport/inbox-provider";
 import { createHmac, timingSafeEqual } from "crypto";
 import { after, NextRequest, NextResponse } from "next/server";
 import { runBotTurn } from "@/lib/bot/reply";
+import { sendWelcomeIfDue } from "@/lib/welcome-message";
 import { notifyInboundInboxMessage } from "@/lib/inbox-notifications";
 import {
   bumpConversationActivity,
@@ -371,6 +372,18 @@ async function ingestMessage(value: MetaValue, message: MetaMessage): Promise<vo
   if (permissionReply) {
     after(() =>
       applyCallPermissionReply(conversation.id, phone, permissionReply),
+    );
+  }
+  // A reaction or a call-permission tap answers something we sent; neither
+  // is her starting a chat.
+  if (message.type !== "reaction" && !permissionReply) {
+    after(() =>
+      sendWelcomeIfDue({
+        conversationId: conversation.id,
+        customerPhone: phone,
+        messageId,
+        receivedAt: createdAt,
+      }),
     );
   }
   if (content.trim() && inboxProvider() === "meta") {
