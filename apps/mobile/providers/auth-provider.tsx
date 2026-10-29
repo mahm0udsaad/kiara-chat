@@ -1,3 +1,4 @@
+import { clearReportCache } from "@/lib/report-cache";
 import type { Session } from "@supabase/supabase-js";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -63,6 +64,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       // process-wide cache before a different identity can render those keys.
       if (previousUserId !== undefined && previousUserId !== nextUserId) {
         queryClient.clear();
+        clearReportCache();
         if (nextUserId === null) void revokeLocalNotificationRegistrations();
         void clearNotificationRegistrationHints();
       }

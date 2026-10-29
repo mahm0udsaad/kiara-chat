@@ -120,7 +120,8 @@ export default function ReportsScreen() {
       : operationsReport;
 
   if (bootstrap.isSuccess && !bootstrap.data.capabilities.canViewReports) return <Redirect href="/inbox" />;
-  if (activeReport.isError) {
+  // A failed refresh behind a saved copy keeps the copy on screen.
+  if (activeReport.isError && !activeReport.data) {
     return <ErrorState title="تعذّر تحميل التقرير" message={activeReport.error.message} onRetry={() => void activeReport.refetch()} />;
   }
 
@@ -246,6 +247,19 @@ export default function ReportsScreen() {
       ) : null}
 
       {activeReport.isLoading ? <ActivityIndicator size="large" color={colors.brand} /> : null}
+      {role === "customer-service" && customerServiceReport.data && customerServiceReport.isFetching ? (
+        <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+          <ActivityIndicator size="small" color={colors.brand} />
+          <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
+            يُعرض آخر تقرير محفوظ — جارٍ التحديث…
+          </Text>
+        </View>
+      ) : null}
+      {role === "customer-service" && customerServiceReport.data && customerServiceReport.isError && !customerServiceReport.isFetching ? (
+        <Text style={{ ...type.footnote, ...rtlText, color: colors.danger }}>
+          تعذّر تحديث التقرير — المعروض آخر نسخة محفوظة. اسحبي للأسفل للمحاولة مجدداً.
+        </Text>
+      ) : null}
 
       {role === "customer-service" && customerServiceReport.data ? (
         <CustomerServiceTeam report={customerServiceReport.data} />

@@ -1,3 +1,4 @@
+import { readCachedReport, writeCachedReport } from "@/lib/report-cache";
 import {
   useInfiniteQuery,
   useMutation,
@@ -727,6 +728,13 @@ export function useOrdersReport(from: string, to: string, enabled = true) {
   });
 }
 
+/**
+ * A month of customer service reads every message in it and can take longer
+ * than the usual 20 s. Giving up at 20 s threw away work the server was about
+ * to finish: one load in three failed that way in late October 2026.
+ */
+const SLOW_REPORT_TIMEOUT_MS = 45_000;
+
 export function useCustomerServiceReport(
   from: string,
   to: string,
@@ -734,14 +742,22 @@ export function useCustomerServiceReport(
   endTime: string,
   enabled = true,
 ) {
+  const cacheKey = `customer-service:${from}:${to}:${startTime}:${endTime}`;
   return useQuery({
     queryKey: queryKeys.customerServiceReport(from, to, startTime, endTime),
-    queryFn: () => {
+    queryFn: async () => {
       const params = new URLSearchParams({ from, to, startTime, endTime });
-      return apiRequest<CustomerServiceReport>(
+      const report = await apiRequest<CustomerServiceReport>(
         `/reports/customer-service?${params.toString()}`,
+        { timeoutMs: SLOW_REPORT_TIMEOUT_MS },
       );
+      writeCachedReport(cacheKey, report);
+      return report;
     },
+    // Open on the last copy saved on the phone; being older than staleTime,
+    // it is refreshed straight away behind it.
+    initialData: () => readCachedReport<CustomerServiceReport>(cacheKey)?.data,
+    initialDataUpdatedAt: () => readCachedReport(cacheKey)?.at,
     enabled: enabled && Boolean(from && to && startTime && endTime),
     // Building this report reads the full activity history. It refreshes on
     // focus and every report screen has pull-to-refresh; polling every 30 s
@@ -773,6 +789,7 @@ export function useCustomerServiceEmployeeActivities(
       });
       return apiRequest<CustomerServiceEmployeeActivitiesResponse>(
         `/reports/customer-service/activities?${params.toString()}`,
+        { timeoutMs: SLOW_REPORT_TIMEOUT_MS },
       );
     },
     getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
