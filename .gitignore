@@ -45,3 +45,6 @@ next-env.d.ts
 .claude/worktrees/
 vercel.env.template
 HANDOFF_TO_NEXT_AI.md
+
+# Customer data saved by scripts/merge-split-conversations.mjs
+merge-split-conversations-backup-*.json
