@@ -60,3 +60,15 @@ test("the stage's own event time counts when there is no visit", () => {
   assert.equal(sheetOutcome(row, Date.parse("2026-09-25T16:51:00Z")), "not_booked");
   assert.equal(sheetOutcome(row, Date.parse("2026-10-08T09:00:00Z")), "booked");
 });
+
+test("a Rekaz answer is reused only when it settles new or returning", () => {
+  const final = loaded.exports.firstBookingAnswerIsFinal;
+  const firstMessage = Date.parse("2026-10-20T10:00:00Z");
+  // A found first booking never moves.
+  assert.equal(final({ firstMs: Date.parse("2026-01-01"), checkedAt: 0 }, firstMessage), true);
+  // "None" checked after her first message: anything later is after it too.
+  assert.equal(final({ firstMs: null, checkedAt: Date.parse("2026-10-21") }, firstMessage), true);
+  // "None" checked before her first message must be asked again.
+  assert.equal(final({ firstMs: null, checkedAt: Date.parse("2026-10-19") }, firstMessage), false);
+  assert.equal(final(undefined, firstMessage), false);
+});

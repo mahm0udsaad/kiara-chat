@@ -248,20 +248,29 @@ async function templateCategories(): Promise<(name: string, sid: string) => Meta
  * as a service reply. Meta's own figures for Kiara show every service reply
  * charged at the regular rate, none inside a free window, so none is
  * treated as free here either.
+ *
+ * Only templates need reading one by one, for their category; they are a few
+ * hundred a month. Plain replies are all priced the same, so the database just
+ * counts them per day. Downloading all ~28,000 of a month's replies to count
+ * them used to compete with the report's own reads and slowed both.
  */
 async function estimateFromSends(fromMs: number, toMs: number): Promise<MetaSpend> {
   const admin = getAdminSupabaseClient();
-  const sent = await pageRowsByDay<DeliveredMessageRow>(
+  const priced = () =>
+    admin
+      .from("messages")
+      .select("created_at, metadata, conversations!inner(restaurant_id)", { count: "exact" })
+      .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
+      .eq("role", "agent")
+      .in("delivery_status", ["delivered", "read"])
+      .like("external_message_sid", "wamid.%");
+
+  const templates = await pageRowsByDay<DeliveredMessageRow>(
     fromMs,
     toMs,
     (sliceStart, sliceEnd, from, to) =>
-      admin
-        .from("messages")
-        .select("created_at, metadata, conversations!inner(restaurant_id)")
-        .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
-        .eq("role", "agent")
-        .in("delivery_status", ["delivered", "read"])
-        .like("external_message_sid", "wamid.%")
+      priced()
+        .not("metadata->template", "is", null)
         .gte("created_at", sliceStart)
         .lt("created_at", sliceEnd)
         .order("created_at", { ascending: true })
@@ -270,22 +279,42 @@ async function estimateFromSends(fromMs: number, toMs: number): Promise<MetaSpen
     { pageSize: PAGE_SIZE },
   );
 
-  const categoryOf = sent.some((row) => row.metadata?.template) ? await templateCategories() : null;
+  // One count per UTC day — the same buckets Meta reports in.
+  const dayStarts: number[] = [];
+  for (let at = fromMs; at < toMs; at += 86_400_000) dayStarts.push(at);
+  const replyCounts = await Promise.all(
+    dayStarts.map(async (at) => {
+      const { count, error } = await priced()
+        .is("metadata->template", null)
+        .gte("created_at", new Date(at).toISOString())
+        .lt("created_at", new Date(Math.min(at + 86_400_000, toMs)).toISOString())
+        .limit(1);
+      if (error) throw new Error(error.message);
+      return { day: utcDay(at), count: count ?? 0 };
+    }),
+  );
+
+  const categoryOf = templates.length ? await templateCategories() : null;
   const spend = emptySpend("estimate", null);
   const days = new Map<string, MetaSpendDay>();
-  for (const row of sent) {
+  const add = (dayKey: string, category: MetaSpendCategory, count: number) => {
+    if (!count) return;
+    const rate = META_SAUDI_RATES_SAR[category];
+    const day = dayOf(days, dayKey);
+    day[category] += count;
+    day.costSar += rate * count;
+    day.estimated = true;
+    day.categoryCostSar[category] = (day.categoryCostSar[category] ?? 0) + rate * count;
+    spend.byCategory[category].count += count;
+    spend.byCategory[category].costSar += rate * count;
+  };
+  for (const { day, count } of replyCounts) add(day, "service", count);
+  for (const row of templates) {
     const sid = row.metadata?.template?.contentSid ?? row.metadata?.template?.key ?? "";
     const category: MetaSpendCategory = sid && categoryOf
       ? categoryOf(sid.slice("meta:".length).split(":")[0] ?? "", sid)
       : "service";
-    const rate = META_SAUDI_RATES_SAR[category];
-    const day = dayOf(days, utcDay(Date.parse(row.created_at)));
-    day[category] += 1;
-    day.costSar += rate;
-    day.estimated = true;
-    day.categoryCostSar[category] = (day.categoryCostSar[category] ?? 0) + rate;
-    spend.byCategory[category].count += 1;
-    spend.byCategory[category].costSar += rate;
+    add(utcDay(Date.parse(row.created_at)), category, 1);
   }
   return finish(spend, days);
 }

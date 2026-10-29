@@ -523,21 +523,32 @@ function sheetOutcome(conversation: ConversationRow | undefined, stageSetAt = Na
 /** Lookups to Rekaz per report: enough for a busy week, bounded for a month. */
 const REKAZ_HISTORY_LOOKUP_LIMIT = 300;
 const REKAZ_HISTORY_CONCURRENCY = 6;
-/** A customer with no Rekaz booking is asked again after this; she may book. */
-const REKAZ_NO_HISTORY_TTL_MS = 30 * 60_000;
-
 /**
- * First-booking answers kept for the life of the server instance. A found
- * first booking never moves, so it is kept for good; "none yet" expires.
+ * First-booking answers kept for the life of the server instance.
+ *
+ * The report only asks "did she book before her first message?". A found
+ * first booking never moves, so it answers that for good. "No booking yet"
+ * does too, once it was checked after her first message: anything she books
+ * later is booked after that message, so she stays new. Only a "none" checked
+ * before her first message has to be asked again.
+ *
+ * This used to expire every "none" after 30 minutes, and most customers in a
+ * report are new — so nearly every load asked Rekaz about them all over again.
  */
 const firstBookingCache = new Map<string, { firstMs: number | null; checkedAt: number }>();
 
-async function cachedFirstBookingMs(phone: string): Promise<number | null> {
+/** Whether a stored answer settles new-or-returning for a first message at `firstInboundMs`. */
+export function firstBookingAnswerIsFinal(
+  hit: { firstMs: number | null; checkedAt: number } | undefined,
+  firstInboundMs: number,
+): boolean {
+  return Boolean(hit && (hit.firstMs !== null || hit.checkedAt >= firstInboundMs));
+}
+
+async function cachedFirstBookingMs(phone: string, firstInboundMs: number): Promise<number | null> {
   const key = normalizePhone(phone);
   const hit = firstBookingCache.get(key);
-  if (hit && (hit.firstMs !== null || Date.now() - hit.checkedAt < REKAZ_NO_HISTORY_TTL_MS)) {
-    return hit.firstMs;
-  }
+  if (firstBookingAnswerIsFinal(hit, firstInboundMs)) return hit!.firstMs;
   const firstMs = await fetchCustomerFirstBookingMs(phone);
   firstBookingCache.set(key, { firstMs, checkedAt: Date.now() });
   return firstMs;
@@ -595,7 +606,7 @@ async function classifyCustomers(
       return;
     }
     try {
-      const first = await cachedFirstBookingMs(customer.phone);
+      const first = await cachedFirstBookingMs(customer.phone, customer.firstInboundMs);
       result.set(
         customer.conversationId,
         first !== null && first < customer.firstInboundMs ? "returning" : "new",
