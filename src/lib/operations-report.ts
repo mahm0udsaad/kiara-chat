@@ -650,8 +650,11 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
       : orderProgress?.driver_returned_at ?? null;
     const returnCompletedAt = orderProgress?.driver_returned_at ?? null;
     const first = rows[0]?.payload;
+    // A driver's trip is one leg of one order. Keying it by the Rekaz visit
+    // folded a round trip's two legs, and two orders on one Rekaz visit, into a
+    // single trip in both the counts and the trip log, so drivers' own tallies
+    // ran ahead of the report.
     const common = {
-      visitKey: linked?.[0] ?? `order:${order.id}`,
       source: first ? "rekaz" as const : "whatsapp" as const,
       sourceLabel: first ? "حجز ركاز" as const : "طلب واتساب" as const,
       orderId: order.id,
@@ -666,6 +669,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
       driverEvents.push({
         ...common,
         id: `order:driver:outbound:${order.id}`,
+        visitKey: `driver:outbound:${order.id}`,
         personIds: [order.driver_id],
         service: rows.length
           ? unique(rows.map((row) => row.payload.service).filter(Boolean)).join("، ")
@@ -695,6 +699,7 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
       driverEvents.push({
         ...common,
         id: `order:driver:return:${order.id}`,
+        visitKey: `driver:return:${order.id}`,
         personIds: [order.return_driver_id],
         service: "عودة الأخصائية من منزل العميلة",
         status: returnCompletedAt ? "Done" : "Scheduled",
