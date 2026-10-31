@@ -90,7 +90,7 @@ export default function ReportsScreen() {
   // remain one tap away, but the owner dashboard starts with orders.
   const [role, setRole] = useState<ReportTeam>("orders");
   const [summaryRange, setSummaryRange] = useState(() => createReportDateSelection("today", today));
-  const [draft, setDraft] = useState({ from: today, to: addDays(today, 6), startTime: "08:00", endTime: "22:00" });
+  const [draft, setDraft] = useState({ from: today, to: addDays(today, 6), startTime: "00:00", endTime: "23:59" });
   const [applied, setApplied] = useState(draft);
   const [picker, setPicker] = useState<PickerField | null>(null);
   const canViewReports = bootstrap.data?.capabilities.canViewReports === true;

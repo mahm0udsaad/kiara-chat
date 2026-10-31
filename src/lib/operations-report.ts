@@ -168,8 +168,10 @@ function boundary(day: string, time: string): string {
 }
 
 export function validateOperationsReportInput(input: OperationsReportInput) {
-  const startTime = input.startTime ?? "08:00";
-  const endTime = input.endTime ?? "22:00";
+  // A whole day by default: evening bookings (a 10:50 PM visit on 2 Oct) fell
+  // outside 08:00–22:00 and their trips never reached the driver's report.
+  const startTime = input.startTime ?? "00:00";
+  const endTime = input.endTime ?? "23:59";
   if (!DAY_KEY.test(input.from) || !DAY_KEY.test(input.to)) {
     throw new OperationsReportInputError("from and to must be YYYY-MM-DD");
   }
