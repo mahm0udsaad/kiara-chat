@@ -500,6 +500,10 @@ const MessageBubble = memo(function MessageBubble({
           <Text
             selectable
             style={{
+              // Without it, Android sizes the text to one line inside this
+              // row, wraps the last word anyway and clips it: «بكم المساج
+              // لبئرعسكر» showed as «بكم المساج».
+              flexShrink: 1,
               ...type.body,
               color: outbound ? colors.onBrand : colors.text,
               fontStyle: placeholder ? "italic" : "normal",
