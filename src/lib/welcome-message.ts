@@ -78,6 +78,7 @@ export type WelcomeOutcome =
   | "sent"
   | "off"
   | "not_first"
+  | "answered"
   | "has_booking"
   | "no_transport"
   | "error";
@@ -119,6 +120,22 @@ export async function sendWelcomeIfDue(input: {
       .maybeSingle();
     if (firstError) throw new Error(firstError.message);
     if (first?.id !== input.messageId) return "not_first";
+
+    // Being first by timestamp is not enough. Meta can deliver a customer's
+    // opening messages minutes late, and each one carries its original
+    // (older) time, so it sorts ahead of everything already in the thread.
+    // Any reply from us in the window, the welcome included, means the chat
+    // has already started, wherever this message sorts.
+    const { data: answered, error: answeredError } = await admin
+      .from("messages")
+      .select("id")
+      .eq("conversation_id", input.conversationId)
+      .gte("created_at", cutoff)
+      .neq("role", "customer")
+      .limit(1)
+      .maybeSingle();
+    if (answeredError) throw new Error(answeredError.message);
+    if (answered) return "answered";
 
     // Rekaz is mirrored here from 21 Aug 2026, which covers the whole window.
     const { data: booking, error: bookingError } = await admin

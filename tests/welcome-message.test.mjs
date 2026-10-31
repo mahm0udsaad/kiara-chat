@@ -41,6 +41,7 @@ function fakeDb({ welcome, messages = [], reservations = [] }) {
       select: () => q,
       eq: (col, v) => ((rows = rows.filter((r) => r[col] === undefined || r[col] === v)), q),
       gte: (col, v) => ((rows = rows.filter((r) => r[col] >= v)), q),
+      neq: (col, v) => ((rows = rows.filter((r) => r[col] !== v)), q),
       is: (col, v) => ((rows = rows.filter((r) => (r[col] ?? null) === v)), q),
       order: (col, { ascending }) => (keys.push({ col, ascending }), q),
       limit: (n) => ((rows = sorted().slice(0, n)), q),
@@ -81,7 +82,7 @@ function welcomeModule(db) {
 const NOW = "2026-10-29T10:00:00.000Z";
 const daysAgo = (n) => new Date(Date.parse(NOW) - n * 86_400_000).toISOString();
 const input = { conversationId: "c1", customerPhone: "+966501234567", messageId: "m-new", receivedAt: NOW };
-const mine = { id: "m-new", conversation_id: "c1", created_at: NOW };
+const mine = { id: "m-new", conversation_id: "c1", role: "customer", created_at: NOW };
 
 test("a first-ever message gets the welcome, recorded in the thread", async () => {
   const db = fakeDb({ welcome: { enabled: true, text: "أهلًا" }, messages: [mine] });
@@ -93,14 +94,14 @@ test("a first-ever message gets the welcome, recorded in the thread", async () =
 });
 
 test("a customer back after more than 60 days of silence gets it again", async () => {
-  const old = { id: "m-old", conversation_id: "c1", created_at: daysAgo(61) };
+  const old = { id: "m-old", conversation_id: "c1", role: "customer", created_at: daysAgo(61) };
   const db = fakeDb({ welcome: { enabled: true, text: "أهلًا" }, messages: [old, mine] });
   const { mod } = welcomeModule(db);
   assert.equal(await mod.sendWelcomeIfDue(input), "sent");
 });
 
 test("a customer who wrote within 60 days does not", async () => {
-  const recent = { id: "m-old", conversation_id: "c1", created_at: daysAgo(59) };
+  const recent = { id: "m-old", conversation_id: "c1", role: "customer", created_at: daysAgo(59) };
   const db = fakeDb({ welcome: { enabled: true, text: "أهلًا" }, messages: [recent, mine] });
   const { mod, seen } = welcomeModule(db);
   assert.equal(await mod.sendWelcomeIfDue(input), "not_first");
@@ -108,11 +109,22 @@ test("a customer who wrote within 60 days does not", async () => {
 });
 
 test("of two messages in the same second, only the first gets the welcome", async () => {
-  const twin = { id: "m-a", conversation_id: "c1", created_at: NOW };
+  const twin = { id: "m-a", conversation_id: "c1", role: "customer", created_at: NOW };
   const db = fakeDb({ welcome: { enabled: true, text: "أهلًا" }, messages: [mine, twin] });
   const { mod } = welcomeModule(db);
   assert.equal(await mod.sendWelcomeIfDue({ ...input, messageId: "m-a" }), "sent");
   assert.equal(await mod.sendWelcomeIfDue(input), "not_first");
+});
+
+test("a late-delivered older message does not re-send it once we have replied", async () => {
+  // Meta delivered her opening message after staff had answered and after the
+  // welcome went out. It carries its original time, so it sorts first.
+  const late = { id: "m-late", conversation_id: "c1", role: "customer", created_at: daysAgo(0.01) };
+  const reply = { id: "m-staff", conversation_id: "c1", role: "agent", created_at: NOW };
+  const db = fakeDb({ welcome: { enabled: true, text: "أهلًا" }, messages: [late, reply] });
+  const { mod, seen } = welcomeModule(db);
+  assert.equal(await mod.sendWelcomeIfDue({ ...input, messageId: "m-late" }), "answered");
+  assert.equal(seen.sent.length, 0);
 });
 
 test("a recent or upcoming Rekaz booking skips it; an old or removed one does not", async () => {
