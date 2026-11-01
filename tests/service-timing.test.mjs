@@ -11,10 +11,49 @@ const minute = 60_000;
 const at = (minutes) => new Date(Date.UTC(2026, 9, 12, 12, 0) + minutes * minute).toISOString();
 
 describe("serviceTimingOf", () => {
-  test("the expected end is the booking time plus the summed services", () => {
+  test("the clock starts at her start tap and runs for the summed services", () => {
+    // Booked 12:00, two one-hour services, she taps start at 12:30: she has
+    // until 14:30. Ending at 14:30 is on time although the visit began late.
+    expect(serviceTimingOf(at(0), 60 + 60, at(150), at(30))).toEqual({
+      bookedAt: at(0),
+      startedAt: at(30),
+      countedFrom: "start_tap",
+      bookedMinutes: 120,
+      expectedEndAt: at(150),
+      completedAt: at(150),
+      varianceMinutes: 0,
+      verdict: "on_time",
+    });
+    // Ending at 14:45 overruns her two hours by 15 minutes.
+    expect(serviceTimingOf(at(0), 120, at(165), at(30))).toMatchObject({
+      varianceMinutes: 15,
+      verdict: "late",
+    });
+    // Starting early does not hand her extra time: 11:50 + 2 h = 13:50.
+    expect(serviceTimingOf(at(0), 120, at(125), at(-10))).toMatchObject({
+      expectedEndAt: at(110),
+      varianceMinutes: 15,
+      verdict: "late",
+    });
+  });
+
+  test("without a start tap the clock falls back to the booking time", () => {
     // Two services, 60 + 30 minutes, booked at 12:00: expected end 13:30.
+    for (const startedAt of [undefined, null, "not a date"]) {
+      expect(serviceTimingOf(at(0), 60 + 30, at(90), startedAt)).toMatchObject({
+        startedAt: null,
+        countedFrom: "booking",
+        expectedEndAt: at(90),
+        verdict: "on_time",
+      });
+    }
+  });
+
+  test("the expected end is the booking time plus the summed services when nothing else is known", () => {
     expect(serviceTimingOf(at(0), 60 + 30, at(90))).toEqual({
       bookedAt: at(0),
+      startedAt: null,
+      countedFrom: "booking",
       bookedMinutes: 90,
       expectedEndAt: at(90),
       completedAt: at(90),

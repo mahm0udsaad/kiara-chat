@@ -149,6 +149,15 @@ const arabic = {
   timingWaiting: "متأخرة حتى الآن بـ {duration}",
   timingUpcoming: "متبقي على الموعد {duration}",
   timingFootnote: "يتم تثبيت الحساب من وقت ضغطة الأخصائية على «بدء الخدمة».",
+  timingExpectedEnd: "يجب أن تنتهي الخدمة بحلول",
+  timingActualEnd: "انتهاء الخدمة الفعلي",
+  timingNotEndedYet: "لم تضغط الأخصائية إنهاء الخدمة بعد",
+  timingEndRunning: "متبقي من وقت الخدمة {duration}",
+  timingEndOverdue: "تجاوزت وقت الخدمة حتى الآن بـ {duration}",
+  timingEndLate: "انتهت متأخرة بـ {duration}",
+  timingEndEarly: "انتهت قبل الوقت بـ {duration}",
+  timingEndOnTime: "انتهت في الوقت",
+  timingEndFootnote: "مدة الخدمات {duration} تبدأ من ضغطة «بدء الخدمة».",
 } as const;
 
 type TranslationKey = keyof typeof arabic;
@@ -209,6 +218,11 @@ const english: Dictionary = {
   timingEarly: "Started {duration} early", timingOnTime: "Started on time", timingWaiting: "{duration} late so far",
   timingUpcoming: "{duration} until the appointment",
   timingFootnote: "Timing is counted from when you tapped “Start service”.",
+  timingExpectedEnd: "Service must end by", timingActualEnd: "Actual end",
+  timingNotEndedYet: "You have not tapped Finish service yet", timingEndRunning: "{duration} of service time left",
+  timingEndOverdue: "{duration} over the service time so far", timingEndLate: "Finished {duration} late",
+  timingEndEarly: "Finished {duration} early", timingEndOnTime: "Finished on time",
+  timingEndFootnote: "Your {duration} of services starts when you tap “Start service”.",
 };
 
 const indonesian: Dictionary = {
@@ -266,6 +280,11 @@ const indonesian: Dictionary = {
   timingEarly: "Mulai lebih awal {duration}", timingOnTime: "Mulai tepat waktu", timingWaiting: "Sudah terlambat {duration}",
   timingUpcoming: "{duration} lagi menuju jadwal",
   timingFootnote: "Waktu dihitung sejak Anda menekan “Mulai layanan”.",
+  timingExpectedEnd: "Layanan harus selesai paling lambat", timingActualEnd: "Waktu selesai sebenarnya",
+  timingNotEndedYet: "Anda belum menekan Selesaikan layanan", timingEndRunning: "Sisa waktu layanan {duration}",
+  timingEndOverdue: "Sudah melewati waktu layanan {duration}", timingEndLate: "Selesai terlambat {duration}",
+  timingEndEarly: "Selesai lebih awal {duration}", timingEndOnTime: "Selesai tepat waktu",
+  timingEndFootnote: "Waktu layanan Anda {duration} dimulai saat Anda menekan “Mulai layanan”.",
 };
 
 const filipino: Dictionary = {
@@ -323,6 +342,11 @@ const filipino: Dictionary = {
   timingEarly: "Nagsimula nang mas maaga ng {duration}", timingOnTime: "Nagsimula sa tamang oras", timingWaiting: "Huli na ng {duration}",
   timingUpcoming: "{duration} bago ang appointment",
   timingFootnote: "Binibilang ang oras mula nang pindutin mo ang “Simulan ang serbisyo”.",
+  timingExpectedEnd: "Dapat matapos ang serbisyo bago mag", timingActualEnd: "Aktwal na pagtatapos",
+  timingNotEndedYet: "Hindi mo pa pinipindot ang Tapusin ang serbisyo", timingEndRunning: "{duration} pang natitira sa oras ng serbisyo",
+  timingEndOverdue: "Lampas na ng {duration} sa oras ng serbisyo", timingEndLate: "Natapos nang huli ng {duration}",
+  timingEndEarly: "Natapos nang mas maaga ng {duration}", timingEndOnTime: "Natapos sa tamang oras",
+  timingEndFootnote: "Ang {duration} mo para sa mga serbisyo ay nagsisimula kapag pinindot mo ang “Simulan ang serbisyo”.",
 };
 
 const russian: Dictionary = {
@@ -379,6 +403,11 @@ const russian: Dictionary = {
   timingEarly: "Начали раньше на {duration}", timingOnTime: "Начали вовремя", timingWaiting: "Опоздание пока {duration}",
   timingUpcoming: "До назначенного времени {duration}",
   timingFootnote: "Время считается с момента, когда вы нажали «Начать услугу».",
+  timingExpectedEnd: "Услуга должна закончиться к", timingActualEnd: "Фактическое окончание",
+  timingNotEndedYet: "Вы ещё не нажали «Завершить услугу»", timingEndRunning: "Осталось времени услуги: {duration}",
+  timingEndOverdue: "Превышение времени услуги пока {duration}", timingEndLate: "Закончили с опозданием на {duration}",
+  timingEndEarly: "Закончили раньше на {duration}", timingEndOnTime: "Закончили вовремя",
+  timingEndFootnote: "Ваши {duration} на услуги отсчитываются с нажатия «Начать услугу».",
 };
 
 const amharic: Dictionary = {
@@ -438,6 +467,11 @@ const amharic: Dictionary = {
   timingEarly: "በ{duration} ቀድሞ ተጀምሯል", timingOnTime: "በሰዓቱ ተጀምሯል", timingWaiting: "እስካሁን በ{duration} ዘግይቷል",
   timingUpcoming: "እስከ ቀጠሮው {duration} ይቀራል",
   timingFootnote: "ሰዓቱ የሚቆጠረው «አገልግሎት ጀምር»ን ከነኩበት ጊዜ ጀምሮ ነው።",
+  timingExpectedEnd: "አገልግሎቱ መጨረስ ያለበት እስከ", timingActualEnd: "ትክክለኛ የማብቂያ ሰዓት",
+  timingNotEndedYet: "«አገልግሎት ጨርስ»ን ገና አልነኩም", timingEndRunning: "ከአገልግሎት ሰዓቱ {duration} ይቀራል",
+  timingEndOverdue: "እስካሁን የአገልግሎት ሰዓቱን በ{duration} አልፏል", timingEndLate: "በ{duration} ዘግይቶ ተጠናቋል",
+  timingEndEarly: "በ{duration} ቀድሞ ተጠናቋል", timingEndOnTime: "በሰዓቱ ተጠናቋል",
+  timingEndFootnote: "የአገልግሎቶቹ {duration} የሚቆጠረው «አገልግሎት ጀምር»ን ከነኩበት ጊዜ ጀምሮ ነው።",
 };
 
 const dictionaries: Record<FieldLocale, Dictionary> = {

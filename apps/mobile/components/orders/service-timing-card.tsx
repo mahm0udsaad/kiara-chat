@@ -7,10 +7,11 @@ import { DetailRow, SectionHeader } from "@/components/ui/detail-row";
 import { spacing, type, rtlText } from "@/constants/theme";
 import { useFieldI18n } from "@/lib/field-i18n";
 import { durationLabel, formatters } from "@/lib/format";
-import { serviceStartTimingOf } from "@/lib/service-timing";
+import { serviceEndTimingOf, serviceStartTimingOf } from "@/lib/service-timing";
 import { useTheme } from "@/providers/theme-provider";
 
 type Timing = NonNullable<ReturnType<typeof serviceStartTimingOf>>;
+type EndTiming = NonNullable<ReturnType<typeof serviceEndTimingOf>>;
 
 /**
  * Follows the field locale: a specialist reads her own language, while the
@@ -19,10 +20,16 @@ type Timing = NonNullable<ReturnType<typeof serviceStartTimingOf>>;
 export function ServiceTimingCard({
   scheduledAt,
   serviceStartedAt,
+  durationMinutes,
+  completedAt,
   now,
 }: {
   scheduledAt: string;
   serviceStartedAt: string | null | undefined;
+  /** The booked services' durations, added up. */
+  durationMinutes?: number | null;
+  /** Her «إنهاء الخدمة» tap. */
+  completedAt?: string | null;
   now?: Date;
 }) {
   const { colors } = useTheme();
@@ -39,6 +46,9 @@ export function ServiceTimingCard({
 
   const duration = locale === "ar" ? durationLabel(timing.minutes) : localizedDuration(timing.minutes);
   const status = timingStatus(timing, t, duration);
+  const end = serviceEndTimingOf(timing.startedAt, durationMinutes, completedAt, now);
+  const durationOf = (minutes: number) =>
+    locale === "ar" ? durationLabel(minutes) : localizedDuration(minutes);
   const captionStyle = locale === "ar" ? rtlText : textStyle;
 
   return (
@@ -74,6 +84,35 @@ export function ServiceTimingCard({
             {t("timingFootnote")}
           </Text>
         </View>
+        {end ? (
+          <>
+            <Divider inset={46} />
+            <DetailRow
+              icon="clock"
+              label={t("timingExpectedEnd")}
+              value={dateTime.format(new Date(end.expectedEndAt))}
+              monospacedValue
+            />
+            <Divider inset={46} />
+            <DetailRow
+              icon="checkmark.circle"
+              label={t("timingActualEnd")}
+              value={end.completedAt ? dateTime.format(new Date(end.completedAt)) : t("timingNotEndedYet")}
+              monospacedValue={Boolean(end.completedAt)}
+              tone={end.completedAt ? "default" : "muted"}
+            />
+            <Divider inset={46} />
+            <View style={{ paddingVertical: spacing.md, gap: spacing.sm }}>
+              <Badge
+                {...endStatus(end, t, durationOf(end.minutes))}
+                icon={end.state === "late" || end.state === "overdue" ? "exclamationmark.circle" : "clock"}
+              />
+              <Text selectable style={{ ...type.caption, color: colors.textTertiary, ...captionStyle }}>
+                {t("timingEndFootnote", { duration: durationOf(end.durationMinutes) })}
+              </Text>
+            </View>
+          </>
+        ) : null}
       </Card>
     </View>
   );
@@ -95,5 +134,24 @@ function timingStatus(
       return { label: t("timingWaiting", { duration }), tone: "danger" };
     case "upcoming":
       return { label: t("timingUpcoming", { duration }), tone: "neutral" };
+  }
+}
+
+function endStatus(
+  state: EndTiming,
+  t: ReturnType<typeof useFieldI18n>["t"],
+  duration: string,
+): { label: string; tone: BadgeTone } {
+  switch (state.state) {
+    case "late":
+      return { label: t("timingEndLate", { duration }), tone: "danger" };
+    case "overdue":
+      return { label: t("timingEndOverdue", { duration }), tone: "danger" };
+    case "early":
+      return { label: t("timingEndEarly", { duration }), tone: "success" };
+    case "on_time":
+      return { label: t("timingEndOnTime"), tone: "success" };
+    case "running":
+      return { label: t("timingEndRunning", { duration }), tone: "neutral" };
   }
 }

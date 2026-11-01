@@ -1,19 +1,27 @@
 /**
- * Whether a specialist finished when the booking said she would.
+ * Whether a specialist finished within the time her services allow.
  *
- * The owner's rule: the visit is expected to end at the booking time plus the
- * durations of every service booked in it, added up. Her «إنهاء الخدمة» tap is
- * compared with that moment. Her «بدء الخدمة» tap plays no part — a late start
- * that still ends on time is on time, and an on-time start that overruns is
- * not. Pure, so the reports and tests share it.
+ * The owner's rule (changed 2026-11-01): the clock starts at her «بدء الخدمة»
+ * tap, and she has the durations of every service booked in the visit, added
+ * up — two one-hour services give her two hours from that tap. Her
+ * «إنهاء الخدمة» tap is compared with that moment. A late start is judged
+ * separately (the start-timing card); it no longer eats into her service time.
+ *
+ * A visit with no start tap falls back to the booking time, so older visits
+ * and forgotten start taps are still judged rather than dropped. Pure, so the
+ * reports and tests share it.
  */
 
 export type ServiceTiming = {
   /** The booking time of the visit. */
   bookedAt: string;
+  /** Her «بدء الخدمة» tap, when there is one. */
+  startedAt: string | null;
+  /** Which moment the clock ran from: her start tap, or the booking time without one. */
+  countedFrom: "start_tap" | "booking";
   /** The booked services' durations, added up. */
   bookedMinutes: number;
-  /** bookedAt + bookedMinutes. */
+  /** (startedAt, else bookedAt) + bookedMinutes. */
   expectedEndAt: string;
   /** Her «إنهاء الخدمة» tap. */
   completedAt: string;
@@ -52,14 +60,19 @@ export function serviceTimingOf(
   bookedAt: string,
   bookedMinutes: number,
   completedAt: string | null | undefined,
+  startedAt?: string | null,
 ): ServiceTiming | null {
-  const startMs = Date.parse(bookedAt);
+  const tapMs = startedAt ? Date.parse(startedAt) : NaN;
+  const countedFrom = Number.isFinite(tapMs) ? "start_tap" : "booking";
+  const startMs = countedFrom === "start_tap" ? tapMs : Date.parse(bookedAt);
   const endMs = completedAt ? Date.parse(completedAt) : NaN;
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !completedAt) return null;
   const expectedEndMs = startMs + Math.max(bookedMinutes, 0) * 60_000;
   const varianceMinutes = Math.trunc((endMs - expectedEndMs) / 60_000);
   return {
     bookedAt,
+    startedAt: countedFrom === "start_tap" ? startedAt! : null,
+    countedFrom,
     bookedMinutes,
     expectedEndAt: new Date(expectedEndMs).toISOString(),
     completedAt,

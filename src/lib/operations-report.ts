@@ -525,14 +525,16 @@ export async function getOperationsReport(raw: OperationsReportInput): Promise<O
         ),
       ),
   );
-  // Expected end = the booking time plus every booked service's duration,
-  // added up; judged against the specialist's «إنهاء الخدمة» tap.
+  // Expected end = her «بدء الخدمة» tap (the booking time without one) plus
+  // every booked service's duration, added up; judged against her
+  // «إنهاء الخدمة» tap.
   const timingOfOrder = (order: OrderRow | undefined, bookedAt?: string, bookedMinutes?: number) => {
     if (!order) return null;
     return serviceTimingOf(
       bookedAt ?? order.arrival_at,
       bookedMinutes ?? order.duration_minutes,
       progressByOrder.get(order.id)?.completed_at,
+      progressByOrder.get(order.id)?.service_started_at,
     );
   };
   const claimedOrders = new Set<string>();

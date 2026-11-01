@@ -382,9 +382,9 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
         });
       }
       const serviceStart = progress?.service_started_at ? Date.parse(progress.service_started_at) : NaN;
-      // Same rule as the specialist report: the visit should end at its
-      // booking time plus its booked services summed; the end tap is judged
-      // against that. "Actual" is booking time to end tap.
+      // Same rule as the specialist report: from her start tap she has her
+      // booked services summed; the end tap is judged against that. "Actual"
+      // is start tap to end tap (booking time when she never tapped start).
       const liveReservations = order.reservations.filter(
         (row) => row.status !== "Cancelled" && !row.removed_at && row.payload?.arrivalAt,
       );
@@ -398,8 +398,14 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
               0,
             ),
             progress?.completed_at,
+            progress?.service_started_at,
           )
-        : serviceTimingOf(local.arrival_at, local.duration_minutes, progress?.completed_at);
+        : serviceTimingOf(
+            local.arrival_at,
+            local.duration_minutes,
+            progress?.completed_at,
+            progress?.service_started_at,
+          );
       const judgedTiming = timing && timing.verdict !== "unreliable" ? timing : null;
       const bookedMinutes = timing?.bookedMinutes ?? local.duration_minutes;
       const actualMinutes = judgedTiming ? judgedTiming.bookedMinutes + judgedTiming.varianceMinutes : null;

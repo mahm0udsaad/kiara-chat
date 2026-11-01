@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ActionBar, PrimaryButton } from "@/components/primary-button";
 import { ServiceTimingCard } from "@/components/orders/service-timing-card";
+import { totalServiceMinutes } from "@/lib/service-timing";
 import { ErrorState, InlineAlert, LoadingScreen } from "@/components/screen-state";
 import { Badge } from "@/components/ui/badge";
 import { Card, Divider } from "@/components/ui/card";
@@ -543,6 +544,8 @@ export default function FieldOrderDetailScreen() {
         <ServiceTimingCard
           scheduledAt={order.arrivalAt}
           serviceStartedAt={order.progress.serviceStartedAt}
+          durationMinutes={totalServiceMinutes(order.services, order.durationMinutes)}
+          completedAt={order.progress.completedAt}
         />
 
         <View style={{ gap: spacing.sm }}>

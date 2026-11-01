@@ -8,6 +8,7 @@ import { ActionBar, PrimaryButton } from "@/components/primary-button";
 import { TripDistrictCard } from "@/components/orders/trip-district-card";
 import { CustomerReminderCard } from "@/components/orders/customer-reminder-card";
 import { ServiceTimingCard } from "@/components/orders/service-timing-card";
+import { totalServiceMinutes } from "@/lib/service-timing";
 import { ErrorState, LoadingScreen } from "@/components/screen-state";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -582,6 +583,8 @@ export default function OrderDetailScreen() {
         <ServiceTimingCard
           scheduledAt={order.arrival_at}
           serviceStartedAt={order.field_progress?.serviceStartedAt ?? order.specialist_session?.started_at}
+          durationMinutes={totalServiceMinutes(order.approved_services, order.duration_minutes)}
+          completedAt={order.field_progress?.completedAt}
         />
 
         {/* Any employee may set the district, now or after the visit; the trip
