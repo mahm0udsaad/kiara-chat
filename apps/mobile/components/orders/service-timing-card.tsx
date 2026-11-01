@@ -38,7 +38,7 @@ export function ServiceTimingCard({
     () =>
       locale === "ar"
         ? formatters.dateTime
-        : new Intl.DateTimeFormat(localeTag, { day: "numeric", month: "long", hour: "numeric", minute: "2-digit" }),
+        : new Intl.DateTimeFormat(localeTag, { day: "numeric", month: "long", hour: "numeric", minute: "2-digit", timeZone: "Asia/Riyadh" }),
     [locale, localeTag],
   );
   const timing = serviceStartTimingOf(scheduledAt, serviceStartedAt, now);

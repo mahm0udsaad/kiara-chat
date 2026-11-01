@@ -42,6 +42,7 @@ import {
   ToggleGroupItem,
 } from "@/components/ui/toggle-group";
 import { formatRelativeTime } from "@/lib/format";
+import { localDateKey, riyadhInputsToIso, riyadhWallClock } from "@/lib/riyadh-time";
 import type { SharedLocation, SharedLocationSource } from "@/lib/location";
 import type { BookingRequest, DriverOrderRow, TripType } from "@/lib/types";
 
@@ -59,8 +60,10 @@ const TIME_OPTIONS = Array.from({ length: 29 }, (_, index) => {
   return `${hour}:${minute}`;
 });
 
+// The calendar and hour list work on local Dates, so they hold the Riyadh wall
+// clock (riyadhWallClock): staff browsers in Cairo are an hour behind in winter.
 function roundedDefault(): Date {
-  const date = new Date(Date.now() + 60 * 60 * 1000);
+  const date = riyadhWallClock(new Date(Date.now() + 60 * 60 * 1000));
   date.setMinutes(Math.ceil(date.getMinutes() / 30) * 30, 0, 0);
   if (date.getHours() < 8) {
     date.setHours(8, 0, 0, 0);
@@ -78,7 +81,7 @@ function timeOf(date: Date): string {
 }
 
 function startOfToday(): Date {
-  const date = new Date();
+  const date = riyadhWallClock(new Date());
   date.setHours(0, 0, 0, 0);
   return date;
 }
@@ -144,7 +147,7 @@ export function CreateOrderSheet({
   const initialDate = useCallback((): Date => {
     if (initialArrival) {
       const d = new Date(initialArrival);
-      if (!Number.isNaN(d.getTime())) return d;
+      if (!Number.isNaN(d.getTime())) return riyadhWallClock(d);
     }
     return roundedDefault();
   }, [initialArrival]);
@@ -225,9 +228,11 @@ export function CreateOrderSheet({
       return;
     }
 
-    const [hour, minute] = selectedTime.split(":").map(Number);
-    const arrival = new Date(selectedDate);
-    arrival.setHours(hour, minute, 0, 0);
+    const arrivalAt = riyadhInputsToIso(localDateKey(selectedDate), selectedTime);
+    if (!arrivalAt) {
+      setError("اختاري وقت الحجز");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -235,7 +240,7 @@ export function CreateOrderSheet({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          arrivalAt: arrival.toISOString(),
+          arrivalAt,
           customerLocation: location.trim(),
           durationMinutes: Number(duration),
           tripType,

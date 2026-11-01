@@ -1,5 +1,7 @@
 import type { BookingStage, ContactOutcome, CsStatus, OrderStatus, TripType } from "@/types/api";
 
+import { RIYADH_TZ, riyadhDayNumber } from "./riyadh-time";
+
 const locale = "ar-EG";
 /** Clocks stay easy to scan inside RTL copy: `10:00 PM`, never `٢٢:٠٠`. */
 const timeLocale = "en-US-u-nu-latn";
@@ -21,23 +23,28 @@ export function isWhatsAppReplyWindowOpen(
 
 export const formatters = {
   time: new Intl.DateTimeFormat(timeLocale, {
+    timeZone: RIYADH_TZ,
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
   }),
   weekdayDate: new Intl.DateTimeFormat(locale, {
+    timeZone: RIYADH_TZ,
     weekday: "long",
     day: "numeric",
     month: "long",
   }),
-  shortDate: new Intl.DateTimeFormat(locale, { day: "numeric", month: "short" }),
+  shortDate: new Intl.DateTimeFormat(locale, {
+    timeZone: RIYADH_TZ, day: "numeric", month: "short" }),
   dateTime: new Intl.DateTimeFormat(locale, {
+    timeZone: RIYADH_TZ,
     day: "numeric",
     month: "long",
     hour: "numeric",
     minute: "2-digit",
   }),
   fullDateTime: new Intl.DateTimeFormat(locale, {
+    timeZone: RIYADH_TZ,
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -46,17 +53,9 @@ export const formatters = {
   }),
 };
 
-function startOfDay(date: Date) {
-  const copy = new Date(date);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
-}
-
-/** Whole days from today — negative for the past, 0 today, 1 tomorrow. */
+/** Whole Riyadh days from today — negative for the past, 0 today, 1 tomorrow. */
 export function dayOffset(iso: string, now = new Date()) {
-  const day = startOfDay(new Date(iso)).getTime();
-  const today = startOfDay(now).getTime();
-  return Math.round((day - today) / 86_400_000);
+  return riyadhDayNumber(new Date(iso)) - riyadhDayNumber(now);
 }
 
 /** "اليوم" / "غدًا" / "أمس", falling back to a written-out date. */
@@ -83,8 +82,10 @@ export function relativeTimeLabel(iso: string, now = new Date()) {
   return formatters.shortDate.format(new Date(iso));
 }
 
-const shortWeekday = new Intl.DateTimeFormat(locale, { weekday: "short" });
+const shortWeekday = new Intl.DateTimeFormat(locale, {
+    timeZone: RIYADH_TZ, weekday: "short" });
 const shortNumericDate = new Intl.DateTimeFormat(locale, {
+    timeZone: RIYADH_TZ,
   day: "numeric",
   month: "numeric",
   year: "2-digit",

@@ -30,6 +30,7 @@ import {
   tripTypeLabel,
 } from "@/lib/format";
 import { successFeedback, tapFeedback } from "@/lib/haptics";
+import { RIYADH_TZ, roundedBookingDefault } from "@/lib/riyadh-time";
 import { useCreateConversationOrder, useDispatchOptions } from "@/lib/queries";
 import { DistrictPicker } from "@/components/orders/district-picker";
 import { useTheme } from "@/providers/theme-provider";
@@ -60,18 +61,8 @@ const SHARED_LABEL: Record<SharedLocation["source"], string> = {
   text: "آخر عنوان كتبته العميلة",
 };
 
-/** An hour from now, on the half hour, inside the working day. */
-function roundedDefault(): Date {
-  const date = new Date(Date.now() + 60 * 60 * 1000);
-  date.setMinutes(Math.ceil(date.getMinutes() / 30) * 30, 0, 0);
-  if (date.getHours() < 8) {
-    date.setHours(8, 0, 0, 0);
-  } else if (date.getHours() > 22) {
-    date.setDate(date.getDate() + 1);
-    date.setHours(8, 0, 0, 0);
-  }
-  return date;
-}
+/** An hour from now, on the half hour, inside the Riyadh working day. */
+const roundedDefault = () => roundedBookingDefault();
 
 /**
  * What the location field opens with. A pin or a maps link she shared IS the
@@ -531,6 +522,7 @@ export function BookingSheet({
                       mode={picker}
                       display={process.env.EXPO_OS === "ios" ? "spinner" : "default"}
                       locale="ar"
+                      timeZoneName={RIYADH_TZ}
                       themeVariant={scheme}
                       minimumDate={picker === "date" ? new Date() : undefined}
                       onChange={onPickerChange}

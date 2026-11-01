@@ -96,7 +96,7 @@ function PunctualityCard({ value, onReason }: { value: PunctualitySummary; onRea
     ],
     ["بدء الخدمة", null, value.serviceStartedAt],
   ] as const;
-  const time = (iso: string | null) => iso ? new Intl.DateTimeFormat("ar-SA", { hour: "numeric", minute: "2-digit" }).format(new Date(iso)) : "—";
+  const time = (iso: string | null) => iso ? new Intl.DateTimeFormat("ar-SA", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Riyadh" }).format(new Date(iso)) : "—";
   const distance = (metres: number | null) => metres === null
     ? "غير متاح"
     : metres < 1000

@@ -2,6 +2,7 @@ import { createContext, type PropsWithChildren, use, useMemo } from "react";
 import type { FlexStyle, TextStyle } from "react-native";
 
 import type { FieldOrderAction, TripType } from "@/types/api";
+import { riyadhDayNumber } from "@/lib/riyadh-time";
 
 export const FIELD_LOCALES = ["ar", "en", "id", "fil", "ru", "am"] as const;
 export type FieldLocale = (typeof FIELD_LOCALES)[number];
@@ -554,8 +555,8 @@ function createI18n(locale: FieldLocale): FieldI18n {
   const isRtl = locale === "ar";
   const t: FieldI18n["t"] = (key, variables) => interpolate(dictionary[key], variables);
   const number = new Intl.NumberFormat(localeTag);
-  const date = new Intl.DateTimeFormat(localeTag, { weekday: "long", day: "numeric", month: "long" });
-  const time = new Intl.DateTimeFormat(localeTag, { hour: "numeric", minute: "2-digit" });
+  const date = new Intl.DateTimeFormat(localeTag, { weekday: "long", day: "numeric", month: "long", timeZone: "Asia/Riyadh" });
+  const time = new Intl.DateTimeFormat(localeTag, { hour: "numeric", minute: "2-digit", timeZone: "Asia/Riyadh" });
 
   return {
     locale,
@@ -568,9 +569,7 @@ function createI18n(locale: FieldLocale): FieldI18n {
     formatTime: (iso) => time.format(new Date(iso)),
     relativeDay: (iso, now = new Date()) => {
       const target = new Date(iso);
-      const targetDay = new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime();
-      const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-      const offset = Math.round((targetDay - nowDay) / 86_400_000);
+      const offset = riyadhDayNumber(target) - riyadhDayNumber(now);
       if (offset === 0) return t("todayRelative");
       if (offset === 1) return t("tomorrowRelative");
       if (offset === -1) return t("yesterdayRelative");

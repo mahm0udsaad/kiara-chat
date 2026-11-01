@@ -16,6 +16,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { durationLabel, formatters, relativeDayLabel, tripTypeLabel } from "@/lib/format";
 import { tapFeedback, successFeedback } from "@/lib/haptics";
+import { RIYADH_TZ } from "@/lib/riyadh-time";
 import {
   useAddOrderDoorPhoto,
   useCancelOrder,
@@ -274,6 +275,7 @@ function EditForm({
                 mode={picker}
                 display={process.env.EXPO_OS === "ios" ? "spinner" : "default"}
                 locale="ar"
+                timeZoneName={RIYADH_TZ}
                 themeVariant={scheme}
                 onChange={onPickerChange}
               />

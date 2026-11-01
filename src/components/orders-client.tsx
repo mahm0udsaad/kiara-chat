@@ -89,6 +89,7 @@ import {
   TRIP_TYPE_LABEL,
 } from "@/lib/format";
 import { phoneMatches } from "@/lib/phone";
+import { riyadhDateInput, riyadhInputsToIso, riyadhTimeInput } from "@/lib/riyadh-time";
 import { RekazReservations } from "@/components/rekaz-reservations";
 import type { ReservationsSnapshot } from "@/lib/reservations";
 import type { ReservationFollowUpMap } from "@/lib/reservation-follow-up";
@@ -811,11 +812,10 @@ function OrderCard({
   );
 }
 
-const pad2 = (n: number) => String(n).padStart(2, "0");
 /** Native date/time inputs speak local wall-clock — the salon's own timezone. */
-const toDateInput = (d: Date) =>
-  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-const toTimeInput = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+// Riyadh clock, not the browser's: staff in Cairo are an hour behind in winter.
+const toDateInput = riyadhDateInput;
+const toTimeInput = riyadhTimeInput;
 const DURATION_PRESETS = [30, 45, 60, 90, 120] as const;
 
 /**
@@ -926,14 +926,7 @@ function OrderDetailsSheet({
     };
   }, [open]);
 
-  const arrivalIso = useMemo(() => {
-    if (!date || !time) return null;
-    const [hour, minute] = time.split(":").map(Number);
-    const next = new Date(`${date}T00:00:00`);
-    if (Number.isNaN(next.getTime())) return null;
-    next.setHours(hour, minute, 0, 0);
-    return next.toISOString();
-  }, [date, time]);
+  const arrivalIso = useMemo(() => riyadhInputsToIso(date, time), [date, time]);
 
   const legs = fieldLegsOf(order.field_progress, order.sent_at);
 
