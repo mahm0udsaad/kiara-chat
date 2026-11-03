@@ -18,6 +18,7 @@ import { BookingSheet } from "@/components/inbox/booking-sheet";
 import { CallControl } from "@/components/inbox/call-control";
 import { Composer, type ReplyTarget } from "@/components/inbox/composer";
 import { MessageResendSheet } from "@/components/inbox/message-resend-sheet";
+import { OutboxBubble } from "@/components/inbox/outbox-bubble";
 import { ConversationActionsButton } from "@/components/conversation-actions-button";
 import {
   MEDIA_MESSAGE_TYPES,
@@ -64,10 +65,13 @@ import { useTheme } from "@/providers/theme-provider";
 import { useIsTyping } from "@/providers/inbox-live-provider";
 import type { ConversationMessage, MediaSlot } from "@/types/api";
 import { markChatInteraction, useChatScreenPresence } from "@/lib/employee-presence";
+import { useOutbox } from "@/lib/outbox";
+import type { OutboxEntry } from "@/lib/outbox-core";
 
 /** A message, or the date chip that introduces the messages below it. */
 type ChatItem =
   | { kind: "message"; message: ConversationMessage }
+  | { kind: "outbox"; entry: OutboxEntry }
   | { kind: "day"; id: string; label: string };
 
 /**
@@ -488,31 +492,44 @@ const MessageBubble = memo(function MessageBubble({
         />
       ))}
 
-      {message.content || placeholder ? (
+      {placeholder ? (
         <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.xs + 2 }}>
-          {placeholder ? (
-            <IconSymbol
-              name="paperplane.fill"
-              color={outbound ? colors.onBrand : colors.textTertiary}
-              size={14}
-            />
-          ) : null}
+          <IconSymbol
+            name="paperplane.fill"
+            color={outbound ? colors.onBrand : colors.textTertiary}
+            size={14}
+          />
           <Text
             selectable
             style={{
-              // Without it, Android sizes the text to one line inside this
-              // row, wraps the last word anyway and clips it: «بكم المساج
-              // لبئرعسكر» showed as «بكم المساج».
               flexShrink: 1,
               ...type.body,
               color: outbound ? colors.onBrand : colors.text,
-              fontStyle: placeholder ? "italic" : "normal",
+              fontStyle: "italic",
               ...rtlText,
             }}
           >
-            {message.content || emptyMessageLabel(message.message_type)}
+            {emptyMessageLabel(message.message_type)}
           </Text>
         </View>
+      ) : message.content ? (
+        // A direct child of the bubble, so it gets the bubble's full width,
+        // and Android's "simple" line breaking. Inside a row, with the default
+        // "highQuality" breaking, Android measured the text a little narrower
+        // than it drew it, wrapped the last word onto a line the bubble had no
+        // height for, and cut it: «حق الاظافر» showed as «حق», «بكم المساج
+        // لبئرعسكر» as «بكم المساج».
+        <Text
+          selectable
+          textBreakStrategy="simple"
+          style={{
+            ...type.body,
+            color: outbound ? colors.onBrand : colors.text,
+            ...rtlText,
+          }}
+        >
+          {message.content}
+        </Text>
       ) : null}
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
@@ -536,7 +553,11 @@ const MessageBubble = memo(function MessageBubble({
 });
 
 const keyOfChatItem = (item: ChatItem) =>
-  item.kind === "day" ? item.id : item.message.id;
+  item.kind === "day"
+    ? item.id
+    : item.kind === "outbox"
+      ? `outbox-${item.entry.key}`
+      : item.message.id;
 
 export default function ConversationScreen() {
   const { colors } = useTheme();
@@ -640,7 +661,20 @@ export default function ConversationScreen() {
     currentConversation?.isGroup ||
       (myTeamMemberId && currentConversation?.assigned_to === myTeamMemberId),
   );
-  const chatItems = useMemo(() => buildChatItems(messages ?? []), [messages]);
+  // Her replies the thread does not have yet (sending, or failed with a
+  // retry) sit below everything else, newest at the bottom.
+  const threadMessageIds = useMemo(
+    () => new Set((messages ?? []).map((message) => message.id)),
+    [messages],
+  );
+  const outbox = useOutbox(id, threadMessageIds);
+  const chatItems = useMemo<ChatItem[]>(
+    () => [
+      ...[...outbox].reverse().map((entry) => ({ kind: "outbox" as const, entry })),
+      ...buildChatItems(messages ?? []),
+    ],
+    [messages, outbox],
+  );
   // Read from the thread the same way the web inbox does, so a pin or a maps
   // link she already sent fills the booking sheet instead of being retyped.
   // The server sends the same value; this keeps working against older builds
@@ -1050,6 +1084,8 @@ export default function ConversationScreen() {
         renderItem={({ item }) =>
           item.kind === "day" ? (
             <DaySeparator label={item.label} />
+          ) : item.kind === "outbox" ? (
+            <OutboxBubble entry={item.entry} />
           ) : (
             <Pressable
               onLongPress={() => showMessageActions(item.message)}

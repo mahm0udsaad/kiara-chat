@@ -34,7 +34,9 @@ import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { commitFeedback, errorFeedback, tapFeedback } from "@/lib/haptics";
 import { formatMegabytes, maxDirectUploadBytes } from "@/lib/api";
-import { useBootstrap, useReply, useSendMedia } from "@/lib/queries";
+import { useBootstrap, useSendMedia } from "@/lib/queries";
+import { sendToOutbox } from "@/lib/outbox";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "@/providers/theme-provider";
 import type { CatalogItem } from "@/types/api";
 
@@ -75,7 +77,7 @@ export function Composer({
 }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const reply = useReply(conversationId);
+  const queryClient = useQueryClient();
   const sendMedia = useSendMedia(conversationId);
   const bootstrap = useBootstrap().data;
   const savedReplies = bootstrap?.savedReplies ?? [];
@@ -95,9 +97,8 @@ export function Composer({
   const recorderState = useAudioRecorderState(recorder, 250);
   const [recording, setRecording] = useState(false);
   const inputRef = useRef<TextInput>(null);
-  const textAttempt = useRef<{ text: string; idempotencyKey: string; replyToMessageId?: string } | null>(null);
 
-  const canSendText = Boolean(draft.trim()) && !reply.isPending;
+  const canSendText = Boolean(draft.trim());
 
   /**
    * Stage picked files. Whatever was already typed rides along as the first
@@ -374,20 +375,17 @@ export function Composer({
 
   const sendText = () => {
     const text = draft.trim();
-    if (!text || reply.isPending) return;
-    const attempt =
-      textAttempt.current?.text === text && textAttempt.current.replyToMessageId === replyTarget?.id
-        ? textAttempt.current
-        : { text, idempotencyKey: Crypto.randomUUID(), replyToMessageId: replyTarget?.id };
-    textAttempt.current = attempt;
+    if (!text) return;
     commitFeedback();
-    reply.mutate(attempt, {
-      onSuccess: () => {
-        textAttempt.current = null;
-        setDraft("");
-        onClearReply?.();
-      },
-    });
+    // Into the thread at once, like WhatsApp: the bubble shows it sending,
+    // and if it fails it turns red with a retry button (see lib/outbox.ts)
+    // instead of leaving an error under the box that leaving the chat erased.
+    sendToOutbox(
+      { conversationId, text, replyToMessageId: replyTarget?.id },
+      queryClient,
+    );
+    setDraft("");
+    onClearReply?.();
   };
 
   const runFromMenu = (action: () => void | Promise<void>) => {
@@ -428,7 +426,6 @@ export function Composer({
               </Pressable>
             </View>
           ) : null}
-          {reply.error ? <InlineAlert message={reply.error.message} /> : null}
           {mediaError ? <InlineAlert message={mediaError} /> : null}
 
           {recording ? (
@@ -504,7 +501,7 @@ export function Composer({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="إرسال الرد"
-                  accessibilityState={{ disabled: !canSendText, busy: reply.isPending }}
+                  accessibilityState={{ disabled: !canSendText }}
                   disabled={!canSendText}
                   onPress={sendText}
                   style={({ pressed }) => ({
