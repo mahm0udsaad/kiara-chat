@@ -3,6 +3,8 @@ import "react-native-url-polyfill/auto";
 import { createClient, type Session } from "@supabase/supabase-js";
 import * as SecureStore from "expo-secure-store";
 
+import { supabaseRequestDeadlineMs } from "./auth-resilience";
+
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() ?? "";
 const publishableKey =
   process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim() ?? "";
@@ -13,14 +15,15 @@ const publishableKey =
  * background to foreground; every getSession() close to token expiry then
  * joins the same in-flight refresh. Bound the underlying request so the Auth
  * client can release its single-flight and recover on the next tick/retry.
+ * Token requests get a longer bound (see auth-resilience.ts): cutting one off
+ * after the server rotated the token is what signed staff out on slow networks.
  */
-const SUPABASE_REQUEST_TIMEOUT_MS = 7_000;
 const platformFetch = globalThis.fetch.bind(globalThis);
 const fetchWithDeadline: typeof globalThis.fetch = async (input, init) => {
   const controller = new AbortController();
   const callerSignal = init?.signal;
   const abortFromCaller = () => controller.abort();
-  const timer = setTimeout(() => controller.abort(), SUPABASE_REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), supabaseRequestDeadlineMs(input));
 
   if (callerSignal?.aborted) abortFromCaller();
   else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });

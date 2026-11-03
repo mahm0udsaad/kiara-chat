@@ -1,6 +1,9 @@
 import { fetch } from "expo/fetch";
 import { File, UploadType } from "expo-file-system";
 
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
+
+import { classifySessionLookup } from "@/lib/auth-resilience";
 import { recordRequestTiming } from "@/lib/diagnostics";
 import {
   rememberSession,
@@ -110,11 +113,16 @@ async function accessTokenUntilAborted(signal: AbortSignal): Promise<string> {
   if (remembered) return remembered;
 
   const { data, error } = await untilAborted(supabase.auth.getSession(), signal);
-  if (error || !data.session?.access_token) {
+  const lookup = classifySessionLookup(data.session, error, isAuthRetryableFetchError);
+  if (lookup.kind === "network") {
+    // The refresh failed on the connection; she is still signed in.
+    throw new ApiError("تعذر الاتصال بالخادم. تحققي من الإنترنت.", 0, "NETWORK");
+  }
+  if (lookup.kind === "signed_out") {
     throw new ApiError("انتهت الجلسة. سجّلي الدخول مرة أخرى.", 401, "NO_SESSION");
   }
   rememberSession(data.session);
-  return data.session.access_token;
+  return lookup.accessToken;
 }
 
 export type ApiRequestOptions = RequestInit & {
