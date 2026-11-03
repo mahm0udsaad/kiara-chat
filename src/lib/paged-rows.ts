@@ -48,3 +48,31 @@ export async function pageRowsByDay<T>(
   await Promise.all(Array.from({ length: Math.min(concurrency, slices.length) }, worker));
   return results.flat();
 }
+
+/**
+ * Look rows up by a list of ids, a slice of ids at a time. The ids travel in
+ * the request URL, and past a few hundred UUIDs PostgREST answers "Bad
+ * Request": a month's 700 orders broke the orders report that way. 150 ids is
+ * about 5.5 KB of URL.
+ */
+export async function rowsByIdChunks<T>(
+  ids: readonly string[],
+  load: (ids: string[]) => PageResult,
+  { chunkSize = 150, concurrency = 4 }: { chunkSize?: number; concurrency?: number } = {},
+): Promise<T[]> {
+  const chunks: string[][] = [];
+  for (let at = 0; at < ids.length; at += chunkSize) chunks.push(ids.slice(at, at + chunkSize));
+
+  const results: T[][] = new Array(chunks.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const index = next++;
+      const result = await load(chunks[index]!);
+      if (result.error) throw new Error(result.error.message);
+      results[index] = (result.data ?? []) as T[];
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
+  return results.flat();
+}

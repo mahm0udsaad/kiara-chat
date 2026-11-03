@@ -2,6 +2,7 @@ import "server-only";
 
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import { pageRowsByDay, rowsByIdChunks } from "@/lib/paged-rows";
 import { serviceTimingOf } from "@/lib/service-timing";
 import {
   OPERATIONS_TIME_ZONE,
@@ -166,98 +167,97 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
   const admin = getAdminSupabaseClient();
   const rangeStart = boundary(input.from, "00:00");
   const rangeEnd = boundary(input.to, "23:59");
-  const [reservationResult, localResult] = await Promise.all([
-    admin
-      .from("rekaz_reservations")
-      .select("source_id, source_order_id, arrival_at, status, removed_at, payload")
-      .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .gte("arrival_at", rangeStart)
-      .lte("arrival_at", rangeEnd),
-    admin
-      .from("driver_orders")
-      .select("id, conversation_id, customer_phone, specialist_id, driver_id, return_driver_id, trip_type, arrival_at, duration_minutes, price, return_price, status, sent_at, rekaz_source_id")
-      .eq("restaurant_id", KIARA_RESTAURANT_ID)
-      .gte("arrival_at", rangeStart)
-      .lte("arrival_at", rangeEnd),
+  // A day at a time, paged: one request stops at 1,000 rows, and a month of
+  // Rekaz bookings is ~1,300.
+  const startMs = Date.parse(rangeStart);
+  const endExclusiveMs = Date.parse(rangeEnd) + 1;
+  const [reservations, locals] = await Promise.all([
+    pageRowsByDay<ReservationRow>(startMs, endExclusiveMs, (sliceStart, sliceEnd, from, to) =>
+      admin
+        .from("rekaz_reservations")
+        .select("source_id, source_order_id, arrival_at, status, removed_at, payload")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .gte("arrival_at", sliceStart)
+        .lt("arrival_at", sliceEnd)
+        .order("arrival_at")
+        .order("source_id")
+        .range(from, to)),
+    pageRowsByDay<LocalOrderRow>(startMs, endExclusiveMs, (sliceStart, sliceEnd, from, to) =>
+      admin
+        .from("driver_orders")
+        .select("id, conversation_id, customer_phone, specialist_id, driver_id, return_driver_id, trip_type, arrival_at, duration_minutes, price, return_price, status, sent_at, rekaz_source_id")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .gte("arrival_at", sliceStart)
+        .lt("arrival_at", sliceEnd)
+        .order("arrival_at")
+        .order("id")
+        .range(from, to)),
   ]);
-  if (reservationResult.error) throw new Error(reservationResult.error.message);
-  if (localResult.error) throw new Error(localResult.error.message);
-  const reservations = (reservationResult.data ?? []) as ReservationRow[];
-  const locals = (localResult.data ?? []) as LocalOrderRow[];
 
+  const localIds = locals.map((order) => order.id);
   const driverIds = [...new Set(locals.flatMap((order) => [order.driver_id, order.return_driver_id]).filter((id): id is string => Boolean(id)))];
   const specialistIds = [...new Set(locals.map((order) => order.specialist_id).filter((id): id is string => Boolean(id)))];
   const conversationIds = [...new Set(locals.map((order) => order.conversation_id).filter(Boolean))];
-  const [progressResult, changesResult, editEventsResult, driversResult, specialistsResult, conversationsResult] = await Promise.all([
-    locals.length
-      ? admin
-          .from("field_order_progress")
-          .select("order_id, service_started_at, completed_at, completion_outcome, completion_note")
-          .eq("restaurant_id", KIARA_RESTAURANT_ID)
-          .in("order_id", locals.map((order) => order.id))
-      : Promise.resolve({ data: [], error: null }),
-    reservations.length
-      ? admin
-          .from("rekaz_changes")
-          .select("source_id, change_type")
-          .eq("restaurant_id", KIARA_RESTAURANT_ID)
-          .in("source_id", reservations.map((row) => row.source_id))
-          .in("change_type", ["updated", "removed", "restored"])
-      : Promise.resolve({ data: [], error: null }),
-    locals.length
-      ? admin
-          .from("operation_events")
-          .select("aggregate_id")
-          .eq("restaurant_id", KIARA_RESTAURANT_ID)
-          .eq("aggregate_type", "driver_order")
-          .in("aggregate_id", locals.map((order) => order.id))
-          .in("event_type", ["order.updated", "order.service_approved"])
-      : Promise.resolve({ data: [], error: null }),
-    driverIds.length
-      ? admin
-          .from("drivers")
-          .select("id, full_name")
-          .eq("restaurant_id", KIARA_RESTAURANT_ID)
-          .in("id", driverIds)
-      : Promise.resolve({ data: [], error: null }),
-    specialistIds.length
-      ? admin
-          .from("specialists")
-          .select("id, full_name")
-          .eq("restaurant_id", KIARA_RESTAURANT_ID)
-          .in("id", specialistIds)
-      : Promise.resolve({ data: [], error: null }),
-    conversationIds.length
-      ? admin
-          .from("conversations")
-          .select("id, customer_name")
-          .eq("restaurant_id", KIARA_RESTAURANT_ID)
-          .in("id", conversationIds)
-      : Promise.resolve({ data: [], error: null }),
+  // Every id list goes out in slices (see rowsByIdChunks): sent whole, a
+  // month's orders made the URL too long and the report failed outright.
+  const [progressRows, changeRows, editEventRows, driverRows, specialistRows, conversationRows] = await Promise.all([
+    rowsByIdChunks<ProgressRow>(localIds, (ids) =>
+      admin
+        .from("field_order_progress")
+        .select("order_id, service_started_at, completed_at, completion_outcome, completion_note")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .in("order_id", ids)),
+    rowsByIdChunks<ChangeRow>(reservations.map((row) => row.source_id), (ids) =>
+      admin
+        .from("rekaz_changes")
+        .select("source_id, change_type")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .in("source_id", ids)
+        .in("change_type", ["updated", "removed", "restored"])),
+    rowsByIdChunks<EditEventRow>(localIds, (ids) =>
+      admin
+        .from("operation_events")
+        .select("aggregate_id")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .eq("aggregate_type", "driver_order")
+        .in("aggregate_id", ids)
+        .in("event_type", ["order.updated", "order.service_approved"])),
+    rowsByIdChunks<NameRow>(driverIds, (ids) =>
+      admin
+        .from("drivers")
+        .select("id, full_name")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .in("id", ids)),
+    rowsByIdChunks<NameRow>(specialistIds, (ids) =>
+      admin
+        .from("specialists")
+        .select("id, full_name")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .in("id", ids)),
+    rowsByIdChunks<NameRow>(conversationIds, (ids) =>
+      admin
+        .from("conversations")
+        .select("id, customer_name")
+        .eq("restaurant_id", KIARA_RESTAURANT_ID)
+        .in("id", ids)),
   ]);
-  if (progressResult.error) throw new Error(progressResult.error.message);
-  if (changesResult.error) throw new Error(changesResult.error.message);
-  if (editEventsResult.error) throw new Error(editEventsResult.error.message);
-  if (driversResult.error) throw new Error(driversResult.error.message);
-  if (specialistsResult.error) throw new Error(specialistsResult.error.message);
-  if (conversationsResult.error) throw new Error(conversationsResult.error.message);
   const progressByOrder = new Map(
-    ((progressResult.data ?? []) as ProgressRow[]).map((row) => [row.order_id, row]),
+    progressRows.map((row) => [row.order_id, row]),
   );
   const driverNames = new Map(
-    ((driversResult.data ?? []) as NameRow[]).map((row) => [row.id, row.full_name ?? null]),
+    driverRows.map((row) => [row.id, row.full_name ?? null]),
   );
   const specialistNames = new Map(
-    ((specialistsResult.data ?? []) as NameRow[]).map((row) => [row.id, row.full_name ?? null]),
+    specialistRows.map((row) => [row.id, row.full_name ?? null]),
   );
   const customerNames = new Map(
-    ((conversationsResult.data ?? []) as NameRow[]).map((row) => [row.id, row.customer_name ?? null]),
+    conversationRows.map((row) => [row.id, row.customer_name ?? null]),
   );
   const changedSourceIds = new Set(
-    ((changesResult.data ?? []) as ChangeRow[]).map((row) => row.source_id),
+    changeRows.map((row) => row.source_id),
   );
   const editedLocalIds = new Set(
-    ((editEventsResult.data ?? []) as EditEventRow[]).map((row) => row.aggregate_id),
+    editEventRows.map((row) => row.aggregate_id),
   );
 
   const grouped = new Map<string, AggregateOrder>();
