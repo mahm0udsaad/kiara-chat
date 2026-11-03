@@ -4,6 +4,7 @@ import { createClient, type Session } from "@supabase/supabase-js";
 import * as SecureStore from "expo-secure-store";
 
 import { supabaseRequestDeadlineMs } from "./auth-resilience";
+import { recordConnectionSample } from "./connection-quality";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() ?? "";
 const publishableKey =
@@ -28,8 +29,21 @@ const fetchWithDeadline: typeof globalThis.fetch = async (input, init) => {
   if (callerSignal?.aborted) abortFromCaller();
   else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
 
+  const startedAt = Date.now();
+  let timedOut = false;
+  controller.signal.addEventListener("abort", () => {
+    timedOut = !callerSignal?.aborted;
+  }, { once: true });
   try {
-    return await platformFetch(input, { ...init, signal: controller.signal });
+    const response = await platformFetch(input, { ...init, signal: controller.signal });
+    recordConnectionSample(Date.now() - startedAt, response.ok ? "ok" : "http_error");
+    return response;
+  } catch (error) {
+    // A login renewal that stalls is the slow connection staff notice first.
+    if (!callerSignal?.aborted) {
+      recordConnectionSample(Date.now() - startedAt, timedOut ? "timeout" : "network");
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
     callerSignal?.removeEventListener("abort", abortFromCaller);

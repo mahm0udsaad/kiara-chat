@@ -26,6 +26,8 @@ import { File, Paths } from "expo-file-system";
 import * as Updates from "expo-updates";
 import { AppState, Platform } from "react-native";
 
+import { recordConnectionSample } from "@/lib/connection-quality";
+
 export type DiagnosticKind =
   | "render_error"
   | "fatal_js"
@@ -184,6 +186,7 @@ export function recordRequestTiming(
 ) {
   try {
     if (path.startsWith("/diagnostics")) return;
+    recordConnectionSample(ms, outcome);
     const pattern = pathPattern(path);
     const stats = requestStats.get(pattern) ?? { count: 0, totalMs: 0, maxMs: 0, failed: 0 };
     stats.count += 1;

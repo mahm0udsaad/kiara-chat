@@ -13,6 +13,7 @@ import {
   startDiagnostics,
 } from "@/lib/diagnostics";
 import { sendDiagnostics, startDiagnosticsUpload } from "@/lib/diagnostics-upload";
+import { ConnectionBanner } from "@/components/connection-banner";
 import { AppProviders } from "@/providers/app-providers";
 import { fieldLocaleForSession } from "@/lib/field-i18n";
 import { useBootstrap } from "@/lib/queries";
@@ -101,6 +102,7 @@ function RootNavigator() {
         <Stack.Screen name="field" options={{ headerShown: false }} />
         <Stack.Screen name="session/[token]" options={{ title: "جلسات اليوم" }} />
       </Stack>
+      <ConnectionBanner />
     </>
   );
 }
