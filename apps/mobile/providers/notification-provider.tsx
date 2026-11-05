@@ -21,6 +21,7 @@ import {
   type NotificationRegistration,
 } from "@/lib/notifications";
 import { requestLocationPrompt } from "@/lib/driver-location";
+import { scheduleInboxRefresh } from "@/lib/inbox-refresh";
 import { queryKeys, useBootstrap } from "@/lib/queries";
 import { useAuth } from "@/providers/auth-provider";
 
@@ -248,7 +249,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
       // Every inbox alert changes at least one list count (new, unassigned,
       // danger), so the tab badges are refreshed even when the alert is about
       // a thread this employee has not opened.
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      scheduleInboxRefresh(queryClient);
       if (typeof data.conversationId === "string") {
         void queryClient.invalidateQueries({
           queryKey: queryKeys.conversation(data.conversationId),

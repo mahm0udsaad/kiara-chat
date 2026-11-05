@@ -1,4 +1,5 @@
-import { Link, Stack, useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { Link, Stack, useIsFocused, useRouter } from "expo-router";
 import {
   memo,
   useCallback,
@@ -46,6 +47,7 @@ import {
 import { canonicalPhone } from "@/lib/phone";
 import {
   EMPTY_CONVERSATION_FILTERS,
+  NEW_CONVERSATION_COUNT_KEY,
   useBootstrap,
   useClaimedConversationForPhone,
   useConversations,
@@ -530,7 +532,13 @@ export default function InboxScreen() {
     const timer = setTimeout(() => setDebouncedSearch(search), 350);
     return () => clearTimeout(timer);
   }, [search]);
-  const conversations = useConversations(view, debouncedSearch.trim(), { filters });
+  // Off screen (inside a chat, on another tab) the list stops refreshing on
+  // every message and catches up once when it is shown again.
+  const isFocused = useIsFocused();
+  const conversations = useConversations(view, debouncedSearch.trim(), {
+    filters,
+    subscribed: isFocused,
+  });
   const startChat = useClaimedConversationForPhone();
   const releaseAll = useReleaseAllConversations();
   const bootstrap = useBootstrap();
@@ -613,6 +621,19 @@ export default function InboxScreen() {
 
   const firstPage = conversations.data?.pages[0];
   const counts = firstPage?.counts;
+  // The tab badge reads the same number; while the inbox is loading lists
+  // anyway, hand it over instead of letting the badge ask the server again.
+  // Only an unfiltered list counts the whole inbox.
+  const queryClient = useQueryClient();
+  const unfilteredNew =
+    firstPage && !firstPage.query && !Object.values(filters).some(Boolean)
+      ? counts?.new
+      : undefined;
+  useEffect(() => {
+    if (unfilteredNew !== undefined) {
+      queryClient.setQueryData(NEW_CONVERSATION_COUNT_KEY, unfilteredNew);
+    }
+  }, [queryClient, unfilteredNew]);
   const items = useMemo(() => {
     const seen = new Set<string>();
     return (conversations.data?.pages ?? [])

@@ -6,7 +6,7 @@ import { PrimaryButton } from "@/components/primary-button";
 import { EmptyState, ErrorState, LoadingScreen } from "@/components/screen-state";
 import { spacing } from "@/constants/theme";
 import { useEmployeePresence } from "@/lib/employee-presence";
-import { useBootstrap, useConversations } from "@/lib/queries";
+import { useBootstrap, useNewConversationCount } from "@/lib/queries";
 import { useAuth } from "@/providers/auth-provider";
 import { useTheme } from "@/providers/theme-provider";
 
@@ -18,7 +18,9 @@ export default function TabsLayout() {
   const { colors } = useTheme();
   // Powers the tab badge; shares the inbox screen's cache entry, so this adds
   // no extra traffic.
-  const newConversations = useConversations("new", "", { enabled: bootstrap.isSuccess });
+  // Just the badge number — a full list page here meant every phone reloaded
+  // the whole inbox on every message, whatever screen it was on.
+  const newConversationCount = useNewConversationCount(bootstrap.isSuccess);
   useEmployeePresence(
     bootstrap.data?.session.role === "admin" || bootstrap.data?.session.role === "agent",
   );
@@ -67,7 +69,7 @@ export default function TabsLayout() {
     );
   }
 
-  const unreadCount = newConversations.data?.pages[0]?.counts.new ?? 0;
+  const unreadCount = newConversationCount.data ?? 0;
 
   return (
     <NativeTabs

@@ -164,10 +164,24 @@ export const EMPTY_CONVERSATION_FILTERS: ConversationFilters = {
 export function useConversations(
   view: InboxView,
   search = "",
-  options: { enabled?: boolean; filters?: ConversationFilters } = {},
+  options: {
+    enabled?: boolean;
+    filters?: ConversationFilters;
+    /**
+     * False while the list is off screen. Tabs keep the inbox mounted under
+     * every other screen, and each refresh loads every conversation on the
+     * server: an unwatched list stays cached and catches up once, when it is
+     * shown again, instead of refreshing on every message.
+     */
+    subscribed?: boolean;
+  } = {},
 ) {
   const filters = options.filters ?? EMPTY_CONVERSATION_FILTERS;
   return useInfiniteQuery({
+    subscribed: options.subscribed ?? true,
+    // An unsubscribed list has no listener, so the default 5 minutes would
+    // drop it while she is still in a chat and show a blank inbox on return.
+    gcTime: 30 * 60_000,
     queryKey: queryKeys.conversations(view, search, filters),
     initialPageParam: 0,
     queryFn: ({ pageParam }) => {
@@ -210,6 +224,31 @@ export function useConversations(
     // foreground. Polling used to reload every conversation plus all of its
     // classification data from Supabase every 30 seconds on every active
     // device, even while nothing changed.
+  });
+}
+
+/** The tab badge: unclaimed "new" threads, without loading a page of them. */
+// Under "conversations" on purpose: every employee action that invalidates the
+// lists (take, release, transfer…) refreshes the badge with them.
+export const NEW_CONVERSATION_COUNT_KEY = ["conversations", "count", "new"] as const;
+
+/**
+ * Just the number for the inbox tab badge.
+ *
+ * Asks for a single row — the server's counts come with every list response —
+ * and is refreshed by InboxLiveProvider at most every few seconds. While the
+ * inbox itself is open, its own list response writes this number, so the badge
+ * costs no request of its own.
+ */
+export function useNewConversationCount(enabled: boolean) {
+  return useQuery({
+    queryKey: NEW_CONVERSATION_COUNT_KEY,
+    queryFn: async () => {
+      const response = await apiRequest<ConversationsResponse>("/conversations?view=new&limit=1");
+      return response.counts.new;
+    },
+    enabled,
+    staleTime: 20_000,
   });
 }
 
