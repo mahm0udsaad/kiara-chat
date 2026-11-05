@@ -5,6 +5,7 @@ import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 
 import { classifySessionLookup } from "@/lib/auth-resilience";
 import { recordRequestTiming } from "@/lib/diagnostics";
+import { recordServerDate } from "@/lib/server-clock";
 import {
   rememberSession,
   rememberedAccessToken,
@@ -181,6 +182,7 @@ async function performApiRequest<T>(
   }
 
   let response: Response;
+  const sentAt = Date.now();
   try {
     response = await fetch(`${apiUrl}/api/mobile/v1${path}`, {
       ...requestInit,
@@ -205,6 +207,7 @@ async function performApiRequest<T>(
       controller.signal.aborted ? "TIMEOUT" : "NETWORK",
     );
   }
+  recordServerDate(response.headers.get("date"), sentAt, Date.now());
 
   /**
    * `fetch` only resolves once headers arrive; the deadline above never covers

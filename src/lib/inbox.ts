@@ -1,6 +1,8 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
+import { after } from "next/server";
+import { healFailedMetaMedia, messagesNeedingHeal } from "@/lib/media-heal";
 import { canViewConversation } from "@/lib/conversation-meta";
 import type { Conversation, Message } from "@/lib/types";
 
@@ -242,6 +244,8 @@ export async function getConversationMessages(
   const rows = (data ?? []) as Message[];
   const hasMore = rows.length > limit;
   const page = rows.slice(0, limit).reverse();
+  const toHeal = messagesNeedingHeal(page);
+  if (toHeal.length) after(() => healFailedMetaMedia(conversationId, toHeal));
   return {
     messages: await withReplyMedia(supabase, conversationId, page),
     hasMore,

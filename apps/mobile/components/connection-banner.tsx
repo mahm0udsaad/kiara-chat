@@ -9,11 +9,13 @@ import {
   currentConnectionQuality,
   subscribeConnectionQuality,
 } from "@/lib/connection-quality";
+import { isClockSkewed, subscribeClockSkew } from "@/lib/server-clock";
 import { useTheme } from "@/providers/theme-provider";
 
 const COPY = {
   slow: "الاتصال بطيء — قد يتأخر التحميل والإرسال",
   offline: "لا يوجد اتصال بالإنترنت — تحققي من الشبكة",
+  clock: "ساعة الهاتف غير مضبوطة — فعّلي «الوقت التلقائي» من إعدادات الهاتف",
 } as const;
 
 /**
@@ -27,13 +29,18 @@ export function ConnectionBanner() {
     currentConnectionQuality,
     currentConnectionQuality,
   );
+  const clockSkewed = useSyncExternalStore(subscribeClockSkew, isClockSkewed, isClockSkewed);
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   // Field screens speak the specialist's own language; this copy is Arabic.
   const inField = useSegments()[0] === "field";
 
-  if (quality === "good" || inField) return null;
-  const offline = quality === "offline";
+  if (inField) return null;
+  // A wrong clock outranks a slow connection: it is the employee's to fix,
+  // and it makes the app slower for everyone until she does.
+  const state = clockSkewed ? "clock" : quality;
+  if (state === "good") return null;
+  const offline = state === "offline" || state === "clock";
 
   return (
     <Animated.View
@@ -78,7 +85,7 @@ export function ConnectionBanner() {
             color: offline ? colors.danger : colors.warning,
           }}
         >
-          {COPY[quality]}
+          {COPY[state]}
         </Text>
       </View>
     </Animated.View>

@@ -5,6 +5,7 @@ import * as SecureStore from "expo-secure-store";
 
 import { supabaseRequestDeadlineMs } from "./auth-resilience";
 import { recordConnectionSample } from "./connection-quality";
+import { serverNow } from "./server-clock";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() ?? "";
 const publishableKey =
@@ -167,7 +168,9 @@ export function rememberedAccessToken(): string | null {
   if (!rememberedSession?.access_token) return null;
   if (
     rememberedSession.expires_at &&
-    rememberedSession.expires_at * 1_000 <= Date.now() + 5_000
+    // Server time, not the phone's: a phone set an hour fast saw every token
+    // as expired and renewed it on each call (see server-clock.ts).
+    rememberedSession.expires_at * 1_000 <= serverNow() + 5_000
   ) {
     return null;
   }

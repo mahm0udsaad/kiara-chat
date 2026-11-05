@@ -96,6 +96,14 @@ export interface StoredMediaSlot {
   source_url?: string | null;
   /** Why the fetch failed, for the backfill and for the logs. */
   fetch_error?: string | null;
+  /**
+   * Meta's media id, kept only when storing failed. Meta serves inbound media
+   * by this id (not by message id) for about 30 days, so without it a failed
+   * file is gone for good. `healFailedMetaMedia` uses it to retry.
+   */
+  provider_media_id?: string | null;
+  /** How many times opening the chat has retried this file. */
+  heal_attempts?: number;
 }
 
 /** Upload one base64 media blob into the bucket. Never throws — returns a slot. */
@@ -119,30 +127,47 @@ export async function uploadBase64Media(params: {
   if (buffer.byteLength > MAX_MEDIA_BYTES) {
     return { ...base, delivery_status: "too_large" };
   }
-  try {
-    const path = buildMediaStoragePath({
-      restaurantId: params.restaurantId,
-      conversationId: params.conversationId,
-      contentType: params.contentType,
-    });
-    const { error } = await getAdminSupabaseClient()
-      .storage.from(WHATSAPP_MEDIA_BUCKET)
-      .upload(path, buffer, {
-        contentType: params.contentType,
-        upsert: false,
-        cacheControl: "3600",
-      });
-    if (error) {
-      console.error("[media] upload failed", params.contentType, error.message);
-      return { ...base, fetch_error: `upload: ${error.message}` };
+  const path = buildMediaStoragePath({
+    restaurantId: params.restaurantId,
+    conversationId: params.conversationId,
+    contentType: params.contentType,
+  });
+  // A slow database stalls Storage too: on 2026-11-04 a 16-minute slowdown
+  // timed out every upload, 5 KB voice notes included, and each was lost on
+  // the first try. Retrying the same path with upsert keeps a retry after a
+  // "timed out but actually landed" upload from failing on "already exists".
+  let lastError = "unknown";
+  for (let attempt = 0; attempt < UPLOAD_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, UPLOAD_BACKOFF_MS[attempt - 1] ?? 3000),
+      );
     }
-    return { ...base, storage_path: path, delivery_status: "stored" };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[media] upload threw", params.contentType, message);
-    return { ...base, fetch_error: `upload: ${message}` };
+    try {
+      const { error } = await getAdminSupabaseClient()
+        .storage.from(WHATSAPP_MEDIA_BUCKET)
+        .upload(path, buffer, {
+          contentType: params.contentType,
+          upsert: attempt > 0,
+          cacheControl: "3600",
+        });
+      if (!error) return { ...base, storage_path: path, delivery_status: "stored" };
+      lastError = error.message;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+    console.warn(
+      `[media] upload failed (attempt ${attempt + 1}/${UPLOAD_ATTEMPTS})`,
+      params.contentType,
+      lastError,
+    );
   }
+  console.error("[media] upload gave up", params.contentType, lastError);
+  return { ...base, fetch_error: `upload: ${lastError}` };
 }
+
+const UPLOAD_ATTEMPTS = 3;
+const UPLOAD_BACKOFF_MS = [1000, 3000];
 
 /**
  * A time-limited public URL for a stored object.

@@ -78,7 +78,13 @@ export function parseDiagnosticEvents(raw: unknown, nowMs = Date.now()): Diagnos
   for (const item of raw.slice(0, MAX_EVENTS)) {
     const event = record(item);
     if (!event || !isKind(event.kind)) continue;
-    const details = record(event.details) ?? {};
+    const details: Record<string, unknown> = { ...(record(event.details) ?? {}) };
+    // A time in the future is replaced below, which used to hide a phone set
+    // an hour fast — the cause of a token-renewal storm in November 2026.
+    const reportedMs = typeof event.at === "string" ? Date.parse(event.at) : NaN;
+    if (Number.isFinite(reportedMs) && reportedMs > nowMs + 5 * 60_000) {
+      details.clock_ahead_s = Math.round((reportedMs - nowMs) / 1000);
+    }
     events.push({
       kind: event.kind,
       message: text(event.message, 500),

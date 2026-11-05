@@ -2193,6 +2193,16 @@ export async function updateDriverOrder(
     return row;
   }
 
+  // Once the specialist has finished the visit, an edit is a correction to
+  // the record (staff fixing the time to what happened, for the reports). It
+  // stays audited but tells nobody: the driver had been getting "تحديث في
+  // الطلب" for work done the day before — 22 times in three weeks by
+  // 2026-11-05 — and once for an old order moved to a new date by mistake.
+  const progress = (await fieldProgressFor([id])).get(id);
+  if (progress?.completedAt || progress?.completionOutcome) {
+    return row;
+  }
+
   const customerName = row.customer_name;
   const specialistId = row.specialist_id;
   const driverId = row.driver_id;

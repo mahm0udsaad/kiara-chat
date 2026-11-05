@@ -158,13 +158,16 @@ async function storeInboundMedia(
   if (!media?.id) return null;
   try {
     const downloaded = await downloadMetaMedia(media.id);
-    return uploadBase64Media({
+    const slot = await uploadBase64Media({
       restaurantId: KIARA_RESTAURANT_ID,
       conversationId,
       contentType: media.mime_type || downloaded.contentType,
       base64: downloaded.buffer.toString("base64"),
       originalFilename: media.filename || downloaded.filename,
     });
+    return slot.delivery_status === "failed"
+      ? { ...slot, provider_media_id: media.id }
+      : slot;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error(`[meta/webhook] media ${media.id} failed: ${detail}`);
@@ -175,6 +178,7 @@ async function storeInboundMedia(
       original_filename: media.filename || null,
       delivery_status: "failed",
       fetch_error: detail.slice(0, 300),
+      provider_media_id: media.id,
     };
   }
 }

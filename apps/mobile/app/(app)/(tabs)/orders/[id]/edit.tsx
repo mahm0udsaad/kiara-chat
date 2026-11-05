@@ -101,6 +101,11 @@ function EditForm({
   const { colors, scheme } = useTheme();
   const insets = useSafeAreaInsets();
   const order = data.order;
+  // The server saves edits to a finished visit without telling the driver or
+  // specialist; say so here, before she reuses an old order for a new booking.
+  const finished = Boolean(
+    order.field_progress?.completedAt || order.field_progress?.completionOutcome,
+  );
   const update = useUpdateOrder(order.id);
   const addDoorPhoto = useAddOrderDoorPhoto(order.id);
   const cancelOrder = useCancelOrder(order.id);
@@ -240,6 +245,23 @@ function EditForm({
           paddingBottom: spacing["3xl"],
         }}
       >
+        {finished ? (
+          <View
+            style={{
+              padding: spacing.md,
+              borderRadius: radius.lg,
+              borderCurve: "continuous",
+              borderWidth: 1,
+              borderColor: colors.warning,
+              backgroundColor: colors.warningSoft,
+            }}
+          >
+            <Text style={{ ...type.footnote, color: colors.warning, ...rtlText }}>
+              هذا الطلب منتهٍ. التعديل يصحّح السجل فقط ولن يُرسَل للسائق أو الأخصائية. لحجز موعد جديد أنشئي طلبًا جديدًا.
+            </Text>
+          </View>
+        ) : null}
+
         {/* Arrival */}
         <View style={{ gap: spacing.sm }}>
           <Text style={{ ...type.subheadStrong, color: colors.text, ...rtlText }}>

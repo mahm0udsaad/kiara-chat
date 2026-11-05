@@ -71,6 +71,18 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
   const queryClient = useQueryClient();
   const { session } = useAuth();
   const bootstrap = useBootstrap(Boolean(session));
+  // Channels follow the signed-in person, not the token. Supabase hands every
+  // renewed token to joined channels itself (TOKEN_REFRESHED → realtime.setAuth),
+  // so re-joining on each renewal only repeated the channel authorisation and
+  // the /presence inbox read. On a phone whose clock was an hour fast the token
+  // renewed twice a second, and each renewal did both — about 30% of all
+  // traffic to the server and database came from that one phone.
+  const userId = session?.user.id ?? null;
+  const accessToken = useRef(session?.access_token ?? null);
+  // Declared before the channel effects, so it has run by the time they join.
+  useEffect(() => {
+    accessToken.current = session?.access_token ?? null;
+  }, [session?.access_token]);
   const role = bootstrap.data?.session.role;
   const teamMemberId = bootstrap.data?.session.teamMemberId ?? null;
   const operationsStaff = role === "admin" || role === "agent";
@@ -156,7 +168,7 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
   );
 
   useEffect(() => {
-    if (!operationsStaff || !session?.access_token) return;
+    if (!operationsStaff || !userId) return;
     const pendingTimers = timers.current;
     let presence: ReturnType<typeof supabase.channel> | null = null;
     let cancelled = false;
@@ -168,7 +180,7 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
     );
 
     void (async () => {
-      await supabase.realtime.setAuth(session.access_token);
+      await supabase.realtime.setAuth(accessToken.current);
       if (cancelled) return;
       presence = supabase
         .channel(PRESENCE_CHANNEL, { config: { private: true } })
@@ -196,10 +208,10 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
       pendingTimers.clear();
       if (presence) void supabase.removeChannel(presence);
     };
-  }, [clearTyping, markTyping, operationsStaff, session?.access_token]);
+  }, [clearTyping, markTyping, operationsStaff, userId]);
 
   useEffect(() => {
-    if (!operationsStaff || !teamMemberId || !session?.access_token) return;
+    if (!operationsStaff || !teamMemberId || !userId) return;
     let liveChannel: ReturnType<typeof supabase.channel> | null = null;
     let cancelled = false;
 
@@ -215,7 +227,7 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
     };
 
     void (async () => {
-      await supabase.realtime.setAuth(session.access_token);
+      await supabase.realtime.setAuth(accessToken.current);
       if (cancelled) return;
       liveChannel = supabase
         .channel(`${INBOX_TOPIC_PREFIX}${teamMemberId}`, {
@@ -261,7 +273,7 @@ export function InboxLiveProvider({ children }: PropsWithChildren) {
       listRefreshTimer.current = null;
       if (liveChannel) void supabase.removeChannel(liveChannel);
     };
-  }, [clearTyping, operationsStaff, queryClient, session?.access_token, teamMemberId, setAlert]);
+  }, [clearTyping, operationsStaff, queryClient, teamMemberId, userId, setAlert]);
 
   return (
     <InboxLiveContext.Provider value={contextValue}>
