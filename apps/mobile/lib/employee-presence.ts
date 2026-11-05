@@ -5,7 +5,9 @@ import { AppState, Keyboard } from "react-native";
 
 import { apiRequest } from "@/lib/api";
 
-const HEARTBEAT_MS = 45_000;
+// Two minutes: often enough for the activity report (see PRESENCE_IDLE_CUTOFF_SECONDS)
+// and 60% fewer writes than the 45 s it was — the ping was 20% of all requests.
+const HEARTBEAT_MS = 120_000;
 /**
  * A conversation counts as being worked only while someone is actually at it:
  * a touch or the keyboard inside this window. A thread left open on a phone

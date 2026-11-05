@@ -54,8 +54,11 @@ export async function GET(
       return mobileError(404, "CONVERSATION_NOT_FOUND", "Conversation not found");
     }
 
-    const permission = await resolveCallPermission(conversation.customer_phone);
-    const window = await getServiceWindow(id);
+    // Both answers are needed, neither depends on the other.
+    const [permission, window] = await Promise.all([
+      resolveCallPermission(conversation.customer_phone, { forDisplay: true }),
+      getServiceWindow(id),
+    ]);
 
     return mobileData({
       conversationId: id,

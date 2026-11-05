@@ -16,8 +16,11 @@ export type EmployeeAppScreen = "chat" | "other";
  * A gap this long between beats means the app was closed or asleep rather than
  * watched, so it buys no time. Two heartbeat intervals plus slack, so one
  * dropped beat on a bad connection does not fracture a continuous stretch.
+ * The beat is every 2 minutes since 2026-11-05 (45 s before), so 5 minutes.
+ * Older app builds still beat every 45 s; the longer cutoff only matters when
+ * a beat is missed, and leaving the app still closes the stretch at once.
  */
-export const PRESENCE_IDLE_CUTOFF_SECONDS = 120;
+export const PRESENCE_IDLE_CUTOFF_SECONDS = 300;
 
 /**
  * Record a best-effort authenticated heartbeat for an operations employee.

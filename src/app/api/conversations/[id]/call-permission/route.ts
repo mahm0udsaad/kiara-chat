@@ -44,8 +44,10 @@ export async function GET(
     return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
   }
 
-  const permission = await resolveCallPermission(conversation.customer_phone);
-  const window = await getServiceWindow(id);
+  const [permission, window] = await Promise.all([
+    resolveCallPermission(conversation.customer_phone, { forDisplay: true }),
+    getServiceWindow(id),
+  ]);
 
   return NextResponse.json({
     conversationId: id,

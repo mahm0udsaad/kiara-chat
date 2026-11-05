@@ -59,16 +59,55 @@ export async function listAllConversations(
   for (let offset = 0; ; offset += batchSize) {
     const { data, error } = await supabase
       .from("conversations")
-      .select(CONVERSATION_COLS)
+      .select(LIST_CONVERSATION_COLS)
       .eq("restaurant_id", KIARA_RESTAURANT_ID)
       .order("last_message_at", { ascending: false })
       .range(offset, offset + batchSize - 1);
     if (error) throw new Error(error.message);
-    const rows = (data ?? []) as Conversation[];
+    const rows = ((data ?? []) as unknown as ListConversationRow[]).map(fromListRow);
     visible.push(...rows.filter((conversation) => canViewConversation(conversation, viewer)));
     if (rows.length < batchSize) break;
   }
   return visible;
+}
+
+/**
+ * The only `metadata` keys the inbox list reads: routing (`section`,
+ * `routed_to`), groups (`chat_kind`), and the status chips. Every list request
+ * reads every conversation, so the whole blob — with `field_sessions` and the
+ * WhatsApp bookkeeping, 70% of it unused here — cost 1.3 MB per request,
+ * 45,000 times a week (docs/perf-baseline-2026-11-05.md). A new list filter
+ * that reads another key must add it here; tests/inbox-list-metadata.test.mjs
+ * fails until it does.
+ */
+export const LIST_METADATA_KEYS = [
+  "cs_status",
+  "booking_stage",
+  "booking_request",
+  "handled_on_whatsapp",
+  "contact_outcome",
+  "section",
+  "routed_to",
+  "chat_kind",
+] as const;
+
+const LIST_CONVERSATION_COLS = [
+  "id, restaurant_id, customer_phone, customer_name, status, started_at, last_message_at, last_inbound_at, handler_mode, assigned_to, unread_count",
+  ...LIST_METADATA_KEYS.map((key) => `m_${key}:metadata->${key}`),
+].join(", ");
+
+type ListConversationRow = Omit<Conversation, "metadata"> &
+  Partial<Record<`m_${(typeof LIST_METADATA_KEYS)[number]}`, unknown>>;
+
+function fromListRow(row: ListConversationRow): Conversation {
+  const metadata: Record<string, unknown> = {};
+  const rest: Record<string, unknown> = { ...row };
+  for (const key of LIST_METADATA_KEYS) {
+    const value = rest[`m_${key}`];
+    delete rest[`m_${key}`];
+    if (value !== null && value !== undefined) metadata[key] = value;
+  }
+  return { ...(rest as Omit<Conversation, "metadata">), metadata } as Conversation;
 }
 
 /**

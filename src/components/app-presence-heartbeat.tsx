@@ -2,7 +2,8 @@
 
 import { useEffect } from "react";
 
-const HEARTBEAT_MS = 45_000;
+// Matches the phone app; see PRESENCE_IDLE_CUTOFF_SECONDS in src/lib/app-presence.ts.
+const HEARTBEAT_MS = 120_000;
 /**
  * A conversation counts as being worked only while someone is actually at it:
  * a click, a key or a scroll inside this window. An inbox left open on a desk

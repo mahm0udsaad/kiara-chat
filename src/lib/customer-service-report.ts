@@ -22,7 +22,8 @@ import { isGroupConversation } from "@/lib/conversation-meta";
 const PAGE_SIZE = 1_000;
 const ID_BATCH_SIZE = 200;
 const EXCLUDED_REPORT_CONVERSATION_NAMES = new Set(["بوت ركاز"]);
-export const EMPLOYEE_ONLINE_WINDOW_SECONDS = 120;
+// "Online" = a beat inside two heartbeat intervals plus slack (beat: 2 min).
+export const EMPLOYEE_ONLINE_WINDOW_SECONDS = 300;
 
 export type CustomerServiceActionKind =
   | "reply"

@@ -17,6 +17,7 @@ import {
 } from "@/lib/audit";
 import { canonicalPhone } from "@/lib/phone";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
+import { after } from "next/server";
 import { KIARA_RESTAURANT_ID } from "@/lib/tenant";
 import {
   fetchCallPermission,
@@ -25,6 +26,14 @@ import {
 
 /** How long a synced answer is treated as fresh enough to act on. */
 const FRESH_FOR_MS = 60_000;
+/**
+ * How long a synced answer is shown without asking Meta first. Opening a chat
+ * waited on Graph almost every time (1.3 s typical, docs/perf-baseline-2026-11-05.md)
+ * for an answer that changes only when the customer replies — and that reply
+ * reaches us through the webhook anyway. Older than this, the saved answer is
+ * still shown at once and Meta is asked in the background.
+ */
+const DISPLAY_FRESH_MS = 10 * 60_000;
 
 export type CallPermissionStatus =
   | "none"
@@ -334,7 +343,11 @@ export interface ResolvedPermission {
  */
 export async function resolveCallPermission(
   customerPhone: string,
-  options: { force?: boolean } = {},
+  /**
+   * `forDisplay`: the answer only decides what the chat header shows. Placing
+   * a call and spending the once-a-day ask keep the strict 60-second check.
+   */
+  options: { force?: boolean; forDisplay?: boolean } = {},
 ): Promise<ResolvedPermission> {
   const phone = storedPhone(customerPhone);
   if (!phone) {
@@ -349,14 +362,25 @@ export async function resolveCallPermission(
 
   const cached = await getCallPermission(phone);
   const syncedAt = cached?.lastSyncedAt ? new Date(cached.lastSyncedAt).getTime() : 0;
-  if (!options.force && Date.now() - syncedAt < FRESH_FOR_MS && cached) {
-    return {
-      callable: isCallable(cached),
-      status: cached.status,
-      expiresAt: cached.expiresAt,
-      canRequest: cached.status !== "requested",
-      authoritative: true,
-    };
+  const age = Date.now() - syncedAt;
+  const fromCache = (): ResolvedPermission => ({
+    callable: isCallable(cached!),
+    status: cached!.status,
+    expiresAt: cached!.expiresAt,
+    canRequest: cached!.status !== "requested",
+    authoritative: true,
+  });
+  if (!options.force && cached && age < FRESH_FOR_MS) return fromCache();
+  if (!options.force && cached && options.forDisplay) {
+    if (age >= DISPLAY_FRESH_MS) {
+      // The next look at this chat gets Meta's answer; this one does not wait.
+      after(() =>
+        resolveCallPermission(customerPhone).catch((error) =>
+          console.error(`[call-permissions] background sync failed for ${phone}`, error),
+        ),
+      );
+    }
+    return fromCache();
   }
 
   let live: Awaited<ReturnType<typeof fetchCallPermission>>;
