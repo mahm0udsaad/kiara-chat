@@ -44,13 +44,18 @@ const PAGE_SIZE = 1_000;
 const MAX_PAGES = 5;
 const ID_BATCH = 150;
 /** Chats the model reads; the rest still count in the numbers. */
-const MAX_CONVERSATIONS = 40;
-const MAX_MESSAGES_PER_CONVERSATION = 60;
-const MAX_MESSAGE_CHARS = 350;
+const MAX_CONVERSATIONS = 30;
+const MAX_MESSAGES_PER_CONVERSATION = 40;
+const MAX_MESSAGE_CHARS = 280;
 /** Rough cap on what the model is sent, so a busy month stays inside the deadline. */
-const MAX_TRANSCRIPT_CHARS = 140_000;
+const MAX_TRANSCRIPT_CHARS = 70_000;
 const REPORT_TIMEOUT_MS = 15_000;
-const MODEL_TIMEOUT_MS = 95_000;
+/**
+ * The model's share of the request. A week of 145 chats with 140k characters
+ * and unlimited thinking ran past 100 s and the app saw only a spinner; past
+ * this the review returns its computed numbers without the AI read.
+ */
+const MODEL_TIMEOUT_MS = 70_000;
 const EXCLUDED_CONVERSATION_NAMES = new Set(["بوت ركاز"]);
 
 export type AgentVerdict = "excellent" | "good" | "needs_coaching" | "needs_intervention";
@@ -124,6 +129,8 @@ export type CustomerServiceAgentAnalysis = {
       team: number | null;
     }[];
   };
+  /** The model failed or ran out of time; only the computed numbers are real. */
+  aiUnavailable?: boolean;
   // Kept so app builds from before this shape still render a review.
   strengths: string[];
   improvements: string[];
@@ -227,7 +234,7 @@ const SCHEMA: JSONSchema7 = {
     incidents: {
       type: "array",
       description:
-        "حتى ١٢ موقفًا محددًا يستحق أن تراجعه المالكة، الأخطر أولًا. لا تذكري موقفًا لا يوجد في المحادثات.",
+        "حتى ٨ مواقف محددة يستحق أن تراجعه المالكة، الأخطر أولًا. لا تذكري موقفًا لا يوجد في المحادثات.",
       items: {
         type: "object",
         additionalProperties: false,
@@ -262,7 +269,7 @@ const SCHEMA: JSONSchema7 = {
     },
     goodExamples: {
       type: "array",
-      description: "حتى ٦ مواقف أحسنت فيها، تصلح للثناء أو لتدريب بقية الفريق.",
+      description: "حتى ٤ مواقف أحسنت فيها، تصلح للثناء أو لتدريب بقية الفريق.",
       items: {
         type: "object",
         additionalProperties: false,
@@ -319,7 +326,7 @@ const SYSTEM_PROMPT = [
   "الرسائل بين أقواس مثل [audio] أو [image] لا تعرفين محتواها، فلا تحكمي عليها.",
   "لا تختلقي وقائع أو نوايا أو أرقامًا. إذا كانت العينة صغيرة فاخفضي درجة الثقة واذكري ذلك.",
   "الاقتباسات يجب أن تكون منسوخة حرفيًا من رسائل الموظفة؛ لا تعيدي صياغتها.",
-  "اكتبي بالعربية المهنية الموجزة، وخاطبي المالكة بصيغة المؤنث.",
+  "اكتبي بالعربية المهنية الموجزة جدًا: كل حقل نصي جملة واحدة قصيرة، وكل قائمة ٣ إلى ٥ نقاط على الأكثر. وخاطبي المالكة بصيغة المؤنث.",
 ].join(" ");
 
 function boundary(day: string, time: string) {
@@ -413,6 +420,24 @@ function teamComparison(
   });
 }
 
+const EMPTY_MODEL_OUTPUT: ModelOutput = {
+  score: 0,
+  verdict: "good",
+  summary: "",
+  dimensions: [],
+  strengths: [],
+  improvements: [],
+  repeatedPatterns: [],
+  risks: [],
+  incidents: [],
+  goodExamples: [],
+  ownerActions: [],
+  talkingPoints: [],
+  evidenceNote: "",
+  conversionInsight: "",
+  lostBookingReasons: [],
+};
+
 type ConversationRow = Pick<Conversation, "id" | "customer_name" | "customer_phone" | "metadata">;
 
 const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: OPERATIONS_TIME_ZONE });
@@ -487,6 +512,7 @@ export async function analyzeCustomerServiceAgent(
   raw: OperationsReportInput,
 ): Promise<CustomerServiceAgentAnalysis | null> {
   if (!isBotConfigured()) return null;
+  const startedAt = Date.now();
   const input = validateOperationsReportInput(raw);
   const admin = getAdminSupabaseClient();
   const { data: member } = await admin
@@ -702,18 +728,38 @@ export async function analyzeCustomerServiceAgent(
       }),
   ];
 
-  const { object } = await generateObject({
-    model: googleAI(MODEL),
-    schema: jsonSchema<ModelOutput>(SCHEMA),
-    system: SYSTEM_PROMPT,
-    abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
-    prompt: [
-      "## الحقائق المحسوبة من النظام",
-      ...factLines,
-      "",
-      "## المحادثات (كل سطر: [اليوم/الشهر الساعة · المتحدث] النص)",
-      blocks.join("\n\n"),
-    ].join("\n"),
+  const prompt = [
+    "## الحقائق المحسوبة من النظام",
+    ...factLines,
+    "",
+    "## المحادثات (كل سطر: [اليوم/الشهر الساعة · المتحدث] النص)",
+    blocks.join("\n\n"),
+  ].join("\n");
+  const modelStarted = Date.now();
+  let object: ModelOutput = EMPTY_MODEL_OUTPUT;
+  let aiUnavailable = false;
+  try {
+    ({ object } = await generateObject({
+      model: googleAI(MODEL),
+      schema: jsonSchema<ModelOutput>(SCHEMA),
+      system: SYSTEM_PROMPT,
+      // Low thinking: the facts are given, the job is reading and citing.
+      providerOptions: { google: { thinkingConfig: { thinkingLevel: "low" } } },
+      abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+      prompt,
+    }));
+  } catch (error) {
+    // The counted numbers are still worth showing; the owner should not lose
+    // them to a slow model.
+    aiUnavailable = true;
+    console.error("[agent-analysis] model failed", error instanceof Error ? error.message : error);
+  }
+  console.info("[agent-analysis] timing", {
+    prepMs: modelStarted - startedAt,
+    modelMs: Date.now() - modelStarted,
+    promptChars: prompt.length,
+    chats: refs.size,
+    aiUnavailable,
   });
 
   const resolveRef = (ref: string) => {
@@ -735,7 +781,7 @@ export async function analyzeCustomerServiceAgent(
       ];
     })
     .sort((a, b) => severityRank[a.severity] - severityRank[b.severity])
-    .slice(0, 12);
+    .slice(0, 8);
 
   const goodExamples = object.goodExamples
     .flatMap(({ ref, quote, whatHappened }) => {
@@ -749,7 +795,7 @@ export async function analyzeCustomerServiceAgent(
         },
       ];
     })
-    .slice(0, 6);
+    .slice(0, 4);
 
   const seen = new Set<AgentDimensionKey>();
   const dimensions = object.dimensions.filter((dimension) => {
@@ -771,6 +817,7 @@ export async function analyzeCustomerServiceAgent(
     conversionInsight: object.conversionInsight,
     lostBookingReasons: object.lostBookingReasons,
     bookings: bookingOutcomes,
+    ...(aiUnavailable ? { aiUnavailable: true } : {}),
     facts: {
       measuredReplies: speed.waits.length,
       medianReplyMinutes: speed.medianMinutes,

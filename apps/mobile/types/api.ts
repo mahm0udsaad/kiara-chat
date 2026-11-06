@@ -866,6 +866,8 @@ export type CustomerServiceAgentAnalysis = {
   evidenceNote?: string;
   conversionInsight?: string;
   lostBookingReasons?: string[];
+  /** The AI part failed or ran out of time; the counted numbers are still real. */
+  aiUnavailable?: boolean;
   /** Counted from Rekaz and the actions sheet, not by the model. */
   bookings?: {
     conversion: {

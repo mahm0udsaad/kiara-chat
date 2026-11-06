@@ -162,8 +162,17 @@ export function AgentAnalysisView({ analysis }: { analysis: CustomerServiceAgent
 
   return (
     <View style={{ gap: spacing.lg }}>
-      <View style={{ gap: spacing.md }}>
-        <Score value={analysis.score} label="تقييم جودة التعامل" />
+      {analysis.aiUnavailable ? (
+        <Card style={{ backgroundColor: colors.warningSoft, borderColor: colors.warningSoft }}>
+          <SectionTitle title="لم يكتمل تحليل الذكاء الاصطناعي" icon="exclamationmark.triangle" color={colors.onWarningSoft} />
+          <Text style={{ ...type.footnote, ...rtlText, color: colors.onWarningSoft }}>
+            الأرقام أدناه محسوبة من المحادثات وركاز وهي دقيقة. أما قراءة السلوك والمواقف فلم تكتمل في الوقت
+            المتاح؛ جرّبي «إعادة التحليل» أو اختاري فترة أقصر.
+          </Text>
+        </Card>
+      ) : (
+        <View style={{ gap: spacing.md }}>
+          <Score value={analysis.score} label="تقييم جودة التعامل" />
         {verdict ? (
           <View style={{ flexDirection: "row-reverse" }}>
             <Badge label={verdict.label} tone={verdict.tone} />
@@ -173,6 +182,7 @@ export function AgentAnalysisView({ analysis }: { analysis: CustomerServiceAgent
           {analysis.summary}
         </Text>
       </View>
+      )}
 
       {facts ? (
         <>
