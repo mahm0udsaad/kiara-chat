@@ -850,7 +850,8 @@ export function useAnalyzeCustomerServiceAgent(
         {
           method: "POST",
           body: JSON.stringify({ personId, from, to, startTime, endTime }),
-          timeoutMs: AI_TIMEOUT_MS,
+          // Reads up to 40 chats and writes a long review; the server allows 120 s.
+          timeoutMs: AI_TIMEOUT_MS * 2.5,
         },
       ),
   });

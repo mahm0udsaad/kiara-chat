@@ -2,7 +2,7 @@ import { analyzeCustomerServiceAgent } from "@/lib/customer-service-analysis";
 import { OperationsReportInputError } from "@/lib/operations-report";
 import { authorizeMobileRequest, mobileData, mobileError, mobileServerError } from "@/lib/mobile/http";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export async function POST(request: Request) {
   const auth = await authorizeMobileRequest(request);

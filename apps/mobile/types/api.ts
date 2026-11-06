@@ -808,6 +808,28 @@ export type CustomerServiceHandledChat = {
   actions: number;
 };
 
+export type AgentVerdict = "excellent" | "good" | "needs_coaching" | "needs_intervention";
+export type AgentDimensionKey =
+  | "responsiveness"
+  | "clarity"
+  | "courtesy"
+  | "resolution"
+  | "follow_up"
+  | "accuracy"
+  | "sales";
+export type AgentIncidentSeverity = "high" | "medium" | "low";
+export type AgentIncidentCategory =
+  | "slow_reply"
+  | "no_reply"
+  | "wrong_info"
+  | "tone"
+  | "unresolved"
+  | "broken_promise"
+  | "missed_booking"
+  | "policy"
+  | "other";
+
+/** Mirrors src/lib/customer-service-analysis.ts. Fields added after 1.1.1 are optional so an older server still renders. */
 export type CustomerServiceAgentAnalysis = {
   score: number;
   summary: string;
@@ -816,7 +838,85 @@ export type CustomerServiceAgentAnalysis = {
   repeatedPatterns: string[];
   risks: string[];
   recommendations: string[];
-  basis: { conversations: number; messages: number; agentReplies: number };
+  verdict?: AgentVerdict;
+  dimensions?: {
+    key: AgentDimensionKey;
+    score: number;
+    confidence: "low" | "medium" | "high";
+    finding: string;
+  }[];
+  incidents?: {
+    conversationId: string;
+    customerName: string | null;
+    severity: AgentIncidentSeverity;
+    category: AgentIncidentCategory;
+    whatHappened: string;
+    quote: string | null;
+    impact: string;
+    betterResponse: string;
+  }[];
+  goodExamples?: {
+    conversationId: string;
+    customerName: string | null;
+    whatHappened: string;
+    quote: string | null;
+  }[];
+  ownerActions?: { priority: "now" | "this_week" | "ongoing"; action: string; reason: string }[];
+  talkingPoints?: string[];
+  evidenceNote?: string;
+  conversionInsight?: string;
+  lostBookingReasons?: string[];
+  /** Counted from Rekaz and the actions sheet, not by the model. */
+  bookings?: {
+    conversion: {
+      handled: number;
+      booked: number;
+      bookedByHer: number;
+      bookedByColleague: number;
+      bookedOnline: number;
+      cancelled: number;
+      notBooked: number;
+      notBookedMarked: { notBooked: number; noReply: number; unmarked: number };
+      rate: number | null;
+      notBookedChats: {
+        conversationId: string;
+        customerName: string | null;
+        sheetOutcome: "booked" | "not_booked" | "no_reply" | null;
+      }[];
+      graceDays: number;
+    };
+    retention: {
+      repeatHandled: number;
+      repeatBookers: number;
+      rate: number | null;
+      customers: {
+        conversationId: string;
+        customerName: string | null;
+        handledDays: number;
+        bookings: number;
+        lastBookedAt: string | null;
+      }[];
+    };
+  };
+  facts?: {
+    measuredReplies: number;
+    medianReplyMinutes: number | null;
+    p90ReplyMinutes: number | null;
+    slowReplies: number;
+    slowReplyMinutes: number;
+    leftWaiting: { conversationId: string; customerName: string | null; waitingSince: string }[];
+    comparison: {
+      key: "first_response_minutes" | "booking_rate" | "resolved_share" | "replies_per_chat";
+      her: number | null;
+      team: number | null;
+    }[];
+  };
+  basis: {
+    conversations: number;
+    conversationsReviewed?: number;
+    messages: number;
+    agentReplies: number;
+  };
 };
 
 export type CustomerServiceReport = {

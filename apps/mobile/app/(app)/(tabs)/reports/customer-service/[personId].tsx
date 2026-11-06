@@ -4,7 +4,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } 
 
 import { ErrorState } from "@/components/screen-state";
 import { PrimaryButton } from "@/components/primary-button";
-import { BulletList, Score } from "@/components/customer-analysis-view";
+import { AgentAnalysisView } from "@/components/reports/agent-analysis-view";
 import {
   ReportMetricCard,
   ReportMetricGrid,
@@ -259,49 +259,13 @@ export default function CustomerServiceEmployeeReportScreen() {
                 <View style={{ flex: 1, gap: spacing.xs }}>
                   <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>تحليل سلوك الموظفة بالذكاء الاصطناعي</Text>
                   <Text style={{ ...type.footnote, ...rtlText, color: colors.textSecondary }}>
-                    يراجع أسلوب الرد وحل الطلبات والمتابعة في محادثات الفترة المختارة فقط.
+                    يقيس سرعة ردها ويقرأ محادثاتها ليعطيكِ مواقف محددة، مقارنة بالفريق، وخطة عمل معها. قد يستغرق دقيقة.
                   </Text>
                 </View>
                 <IconSymbol name="sparkles" size={24} color={colors.brand} />
               </View>
               {agentAnalysis.data ? (
-                <View style={{ gap: spacing.lg }}>
-                  <Score value={agentAnalysis.data.analysis.score} label="تقييم جودة التعامل" />
-                  <Text selectable style={{ ...type.body, ...rtlText, color: colors.textSecondary }}>
-                    {agentAnalysis.data.analysis.summary}
-                  </Text>
-                  {agentAnalysis.data.analysis.strengths.length ? (
-                    <View style={{ gap: spacing.sm }}>
-                      <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.success }}>نقاط القوة</Text>
-                      <BulletList items={agentAnalysis.data.analysis.strengths} color={colors.text} />
-                    </View>
-                  ) : null}
-                  {agentAnalysis.data.analysis.improvements.length ? (
-                    <View style={{ gap: spacing.sm }}>
-                      <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.warning }}>فرص التحسين</Text>
-                      <BulletList items={agentAnalysis.data.analysis.improvements} color={colors.text} />
-                    </View>
-                  ) : null}
-                  {agentAnalysis.data.analysis.repeatedPatterns.length ? (
-                    <View style={{ gap: spacing.sm }}>
-                      <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.text }}>أنماط متكررة</Text>
-                      <BulletList items={agentAnalysis.data.analysis.repeatedPatterns} color={colors.textSecondary} />
-                    </View>
-                  ) : null}
-                  {agentAnalysis.data.analysis.risks.length ? (
-                    <View style={{ gap: spacing.sm }}>
-                      <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.danger }}>مخاطر تحتاج متابعة</Text>
-                      <BulletList items={agentAnalysis.data.analysis.risks} color={colors.danger} />
-                    </View>
-                  ) : null}
-                  <View style={{ gap: spacing.sm }}>
-                    <Text style={{ ...type.subheadStrong, ...rtlText, color: colors.brand }}>خطوات مقترحة</Text>
-                    <BulletList items={agentAnalysis.data.analysis.recommendations} color={colors.text} />
-                  </View>
-                  <Text style={{ ...type.caption, ...rtlText, color: colors.textTertiary }}>
-                    بُني على {reportInteger.format(agentAnalysis.data.analysis.basis.conversations)} محادثة و{reportInteger.format(agentAnalysis.data.analysis.basis.agentReplies)} رد للموظفة.
-                  </Text>
-                </View>
+                <AgentAnalysisView analysis={agentAnalysis.data.analysis} />
               ) : agentAnalysis.isError ? (
                 <Text style={{ ...type.body, ...rtlText, color: colors.danger }}>{agentAnalysis.error.message}</Text>
               ) : null}
