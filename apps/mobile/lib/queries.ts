@@ -38,6 +38,7 @@ import type {
   CustomerAnalysisResult,
   CustomerServiceReport,
   CustomerServiceAgentAnalysis,
+  SavedAgentReport,
   CustomerServiceEmployeeActivitiesResponse,
   ConversationAuditReport,
   CustomerTimeline,
@@ -106,6 +107,7 @@ export const queryKeys = {
   ordersReport: (from: string, to: string) => ["orders-report", from, to] as const,
   customerServiceReport: (from: string, to: string, startTime: string, endTime: string) =>
     ["customer-service-report", from, to, startTime, endTime] as const,
+  agentAnalysisReports: (personId: string) => ["agent-analysis-reports", personId] as const,
   customerServiceEmployeeActivities: (
     personId: string,
     from: string,
@@ -843,17 +845,44 @@ export function useAnalyzeCustomerServiceAgent(
   startTime: string,
   endTime: string,
 ) {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () =>
-      apiRequest<{ analysis: CustomerServiceAgentAnalysis }>(
+      apiRequest<{ analysis: CustomerServiceAgentAnalysis; report?: SavedAgentReport | null }>(
         "/reports/customer-service/analysis",
         {
           method: "POST",
           body: JSON.stringify({ personId, from, to, startTime, endTime }),
-          // Reads up to 40 chats and writes a long review; the server allows 120 s.
+          // Reads up to 30 chats and writes a long review; the server allows 120 s.
           timeoutMs: AI_TIMEOUT_MS * 2.5,
         },
       ),
+    onSuccess: ({ report }) => {
+      const key = queryKeys.agentAnalysisReports(personId);
+      // Show the new review at once; the refetch confirms what was saved.
+      if (report) {
+        queryClient.setQueryData<{ reports: SavedAgentReport[] }>(key, (current) => ({
+          reports: [report, ...(current?.reports ?? []).filter((item) => item.id !== report.id)],
+        }));
+      }
+      void queryClient.invalidateQueries({ queryKey: key });
+    },
+  });
+}
+
+/**
+ * Her saved AI reviews, newest first. The screen opens on the latest one and
+ * keeps the rest in a collapsed list until the owner runs a new review.
+ */
+export function useAgentAnalysisReports(personId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.agentAnalysisReports(personId),
+    queryFn: () =>
+      apiRequest<{ reports: SavedAgentReport[] }>(
+        `/reports/customer-service/analysis?personId=${encodeURIComponent(personId)}`,
+      ),
+    enabled: enabled && Boolean(personId),
+    staleTime: 5 * 60_000,
   });
 }
 

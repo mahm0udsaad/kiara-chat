@@ -921,6 +921,17 @@ export type CustomerServiceAgentAnalysis = {
   };
 };
 
+/** One saved run of the AI review, with the period it covered. */
+export type SavedAgentReport = {
+  id: string;
+  createdAt: string;
+  from: string;
+  to: string;
+  startTime: string;
+  endTime: string;
+  analysis: CustomerServiceAgentAnalysis;
+};
+
 export type CustomerServiceReport = {
   from: string;
   to: string;

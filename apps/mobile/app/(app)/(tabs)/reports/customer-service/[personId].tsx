@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } 
 
 import { ErrorState } from "@/components/screen-state";
 import { PrimaryButton } from "@/components/primary-button";
+import { AgentAnalysisHistory } from "@/components/reports/agent-analysis-history";
 import { AgentAnalysisView } from "@/components/reports/agent-analysis-view";
 import {
   ReportMetricCard,
@@ -22,6 +23,7 @@ import { durationLabel, relativeTimeLabel } from "@/lib/format";
 import { REPORT_LOCALE, reportInteger } from "@/lib/operations-report";
 import {
   useBootstrap,
+  useAgentAnalysisReports,
   useAnalyzeCustomerServiceAgent,
   useCustomerServiceEmployeeActivities,
   useCustomerServiceReport,
@@ -90,6 +92,13 @@ export default function CustomerServiceEmployeeReportScreen() {
     startTime,
     endTime,
   );
+
+  const isOwner = bootstrap.data?.session.isOwner === true;
+  const savedReports = useAgentAnalysisReports(personId, isOwner);
+  // Saved runs come from the list; a run the server could not save still
+  // shows, once, from the mutation itself.
+  const unsavedRun = agentAnalysis.data && !agentAnalysis.data.report ? agentAnalysis.data.analysis : null;
+  const hasReview = Boolean(unsavedRun || savedReports.data?.reports.length);
 
   function changeRange(next: ReportDateSelection) {
     agentAnalysis.reset();
@@ -264,17 +273,25 @@ export default function CustomerServiceEmployeeReportScreen() {
                 </View>
                 <IconSymbol name="sparkles" size={24} color={colors.brand} />
               </View>
-              {agentAnalysis.data ? (
-                <AgentAnalysisView analysis={agentAnalysis.data.analysis} />
-              ) : agentAnalysis.isError ? (
-                <Text style={{ ...type.body, ...rtlText, color: colors.danger }}>{agentAnalysis.error.message}</Text>
-              ) : null}
               <PrimaryButton
-                label={agentAnalysis.data ? "إعادة التحليل" : "تحليل المحادثات"}
-                icon={agentAnalysis.data ? "arrow.clockwise" : "sparkles"}
+                label={hasReview ? "إعادة التحليل للفترة المختارة" : "تحليل المحادثات"}
+                icon={hasReview ? "arrow.clockwise" : "sparkles"}
+                variant={hasReview ? "outline" : "filled"}
                 loading={agentAnalysis.isPending}
                 onPress={() => agentAnalysis.mutate()}
               />
+              {agentAnalysis.isError ? (
+                <Text style={{ ...type.body, ...rtlText, color: colors.danger }}>{agentAnalysis.error.message}</Text>
+              ) : null}
+              {unsavedRun ? <AgentAnalysisView analysis={unsavedRun} /> : null}
+              {isOwner && !unsavedRun ? (
+                <AgentAnalysisHistory
+                  reports={savedReports.data?.reports ?? []}
+                  isLoading={savedReports.isLoading}
+                  selectedFrom={from}
+                  selectedTo={to}
+                />
+              ) : null}
             </Card>
 
             <Card>
