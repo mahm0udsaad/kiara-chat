@@ -117,6 +117,7 @@ const EVENT_TITLE: Record<string, string> = {
   "conversation.outcome_changed": "سجّلت نتيجة التواصل",
   "conversation.labels_changed": "عدّلت التصنيفات",
   "conversation.section_changed": "غيّرت القسم",
+  "conversation.sender_changed": "غيّرت رقم الإرسال",
   "conversation.reminder_confirmed": "حدّثت متابعة الموعد",
   "conversation.note_added": "أضافت ملاحظة داخلية",
   "conversation.bot_resumed": "أعادت المحادثة للبوت",

@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -45,6 +45,7 @@ import {
   closedWithOutcome,
   csStatusLabel,
   csStatusTone,
+  formatPhone,
   formatters,
   relativeDayLabel,
 } from "@/lib/format";
@@ -56,6 +57,7 @@ import {
   useDismissBookingRequest,
   useMarkConversationRead,
   useMediaUrl,
+  useSenders,
   useTakeConversation,
   useTakeOverConversation,
   useUpdateConversationActions,
@@ -288,9 +290,12 @@ function ReplyQuote({ replyTo, outbound }: { replyTo: ReplyTo; outbound: boolean
 const MessageBubble = memo(function MessageBubble({
   message,
   onResend,
+  viaLabel = null,
 }: {
   message: ConversationMessage;
   onResend: (body: string) => void;
+  /** Which business number, when it is not the usual one ("عبر +966…"). */
+  viaLabel?: string | null;
 }) {
   const { colors } = useTheme();
 
@@ -535,6 +540,7 @@ const MessageBubble = memo(function MessageBubble({
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
           <Text style={{ ...type.caption, fontWeight: "400", opacity: 0.75, color: outbound ? colors.onBrand : colors.textTertiary, fontVariant: ["tabular-nums"], textAlign: "left" }}>
             {formatters.time.format(new Date(message.created_at))}
+            {viaLabel ? ` · ${viaLabel}` : ""}
           </Text>
           {outbound ? (
             <DeliveryTicks status={message.delivery_status} color={colors.onBrand} />
@@ -584,6 +590,18 @@ export default function ConversationScreen() {
 
   const conversation = useConversation(id);
   const messageHistory = useConversationMessages(id);
+  // Messages on a second business number say so; the usual number and the
+  // orders number say nothing, so ordinary threads look as they always did.
+  const senderList = useSenders().data?.senders;
+  const viaLabelFor = useCallback(
+    (message: ConversationMessage): string | null => {
+      const account = message.metadata?.sender_account;
+      if (typeof account !== "string" || account === "meta" || account === "openwa") return null;
+      const sender = senderList?.find((item) => item.id === account);
+      return sender?.phone ? `عبر ${formatPhone(sender.phone)}` : "عبر رقم آخر";
+    },
+    [senderList],
+  );
   const bootstrap = useBootstrap();
   const { mutate: markRead } = useMarkConversationRead(id);
   const take = useTakeConversation(id);
@@ -1091,7 +1109,11 @@ export default function ConversationScreen() {
               onLongPress={() => showMessageActions(item.message)}
               delayLongPress={400}
             >
-              <MessageBubble message={item.message} onResend={setResendBody} />
+              <MessageBubble
+                message={item.message}
+                onResend={setResendBody}
+                viaLabel={viaLabelFor(item.message)}
+              />
             </Pressable>
           )
         }

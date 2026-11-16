@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import {
   Mic,
   FileText,
@@ -105,8 +105,22 @@ function StatusTick({ status }: { status: string }) {
   );
 }
 
+/**
+ * Display labels for business numbers other than the usual one, keyed by
+ * sender id ("openwa_cs" → "+966 …"). Provided by the inbox; a message on such
+ * a number says so in its footer, and ordinary messages show nothing extra.
+ */
+export const SenderLabelsContext = createContext<Record<string, string>>({});
+
+function viaLabel(message: Message, labels: Record<string, string>): string | null {
+  const account = (message.metadata as { sender_account?: unknown } | null)?.sender_account;
+  if (typeof account !== "string" || account === "meta" || account === "openwa") return null;
+  return `عبر ${labels[account] ?? "رقم آخر"}`;
+}
+
 function MetaFooter({ message }: { message: Message }) {
   const status = message.delivery_status || message.twilio_status || "";
+  const via = viaLabel(message, useContext(SenderLabelsContext));
   return (
     <p className="mt-1 flex items-center justify-end gap-1 text-[10px] opacity-70">
       {/* Rendered from the ISO string on both server and client, and pinned to
@@ -114,6 +128,7 @@ function MetaFooter({ message }: { message: Message }) {
       <time dateTime={message.created_at} className="tabular-nums">
         {TIME_FMT.format(new Date(message.created_at))}
       </time>
+      {via ? <span dir="rtl">· {via}</span> : null}
       <StatusTick status={status} />
     </p>
   );

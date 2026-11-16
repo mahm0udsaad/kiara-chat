@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -34,7 +34,14 @@ import { IconSymbol, type IconName } from "@/components/ui/icon-symbol";
 import { hitSize, radius, rtlText, spacing, type } from "@/constants/theme";
 import { commitFeedback, errorFeedback, tapFeedback } from "@/lib/haptics";
 import { formatMegabytes, maxDirectUploadBytes } from "@/lib/api";
-import { useBootstrap, useSendMedia } from "@/lib/queries";
+import {
+  useBootstrap,
+  useConversationSender,
+  useSendMedia,
+  useSenders,
+  useSetConversationSender,
+} from "@/lib/queries";
+import { SenderSheet, senderSummary } from "@/components/inbox/sender-sheet";
 import { sendToOutbox } from "@/lib/outbox";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "@/providers/theme-provider";
@@ -86,6 +93,42 @@ export function Composer({
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Which business number replies go out from. Field-team threads always use
+  // the orders number, so they offer no choice and send no sender.
+  const senderState = useConversationSender(conversationId).data;
+  const fieldTeam = senderState?.fieldTeam ?? false;
+  const senders = useSenders(Boolean(senderState) && !fieldTeam).data?.senders ?? [];
+  const setSender = useSetConversationSender(conversationId);
+  const [senderSheetOpen, setSenderSheetOpen] = useState(false);
+  const [senderNotice, setSenderNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const selectedSenderId = senderState?.senderAccountId ?? "meta";
+  const selectedSender = senders.find((sender) => sender.id === selectedSenderId) ?? null;
+  const canChooseSender = Boolean(senderState) && !fieldTeam && senders.length > 1;
+  // Sent with every message so the server uses exactly what she sees. Before
+  // the state loads it is left out and the server uses the saved choice.
+  const outgoingSender = senderState && !fieldTeam ? selectedSenderId : undefined;
+
+  useEffect(() => {
+    if (!senderNotice) return;
+    const timer = setTimeout(() => setSenderNotice(null), senderNotice.error ? 6000 : 3500);
+    return () => clearTimeout(timer);
+  }, [senderNotice]);
+
+  const chooseSender = (id: string) => {
+    setSenderSheetOpen(false);
+    if (id === selectedSenderId) return;
+    // The draft is separate state, so switching never touches what she typed.
+    setSender.mutate(id, {
+      onSuccess: () =>
+        setSenderNotice({ text: "ستُرسل الرسائل الآن من رقم واتساب مختلف.", error: false }),
+      onError: (error) =>
+        setSenderNotice({
+          text: error instanceof Error && error.message ? error.message : "تعذّر تغيير رقم الإرسال",
+          error: true,
+        }),
+    });
+  };
   const [repliesOpen, setRepliesOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -291,6 +334,7 @@ export function Composer({
           caption: attachment.caption.trim(),
           voiceNote: attachment.voiceNote,
           idempotencyKey: attachment.id,
+          senderAccountId: outgoingSender,
         });
         // Remove each success immediately. If a later file fails, retrying the
         // modal contains only work the server has not already accepted.
@@ -304,7 +348,7 @@ export function Composer({
     } finally {
       setUploading(false);
     }
-  }, [pending, sendMedia, removePending]);
+  }, [pending, sendMedia, removePending, outgoingSender]);
 
   const startRecording = useCallback(async () => {
     setMediaError(null);
@@ -346,6 +390,7 @@ export function Composer({
           file: { uri, name: `voice-${Date.now()}.m4a`, type: "audio/mp4" },
           voiceNote: true,
           idempotencyKey,
+          senderAccountId: outgoingSender,
         });
         commitFeedback();
       } catch (error) {
@@ -370,7 +415,7 @@ export function Composer({
         setUploading(false);
       }
     },
-    [recorder, sendMedia],
+    [recorder, sendMedia, outgoingSender],
   );
 
   const sendText = () => {
@@ -381,7 +426,7 @@ export function Composer({
     // and if it fails it turns red with a retry button (see lib/outbox.ts)
     // instead of leaving an error under the box that leaving the chat erased.
     sendToOutbox(
-      { conversationId, text, replyToMessageId: replyTarget?.id },
+      { conversationId, text, replyToMessageId: replyTarget?.id, senderAccountId: outgoingSender },
       queryClient,
     );
     setDraft("");
@@ -397,6 +442,53 @@ export function Composer({
 
   return (
     <View style={{ gap: spacing.sm }}>
+      {senderNotice ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          style={{
+            ...type.caption,
+            ...rtlText,
+            color: senderNotice.error ? colors.danger : colors.textSecondary,
+            paddingHorizontal: spacing.sm,
+          }}
+        >
+          {senderNotice.text}
+        </Text>
+      ) : null}
+      {canChooseSender && selectedSender && !selectedSender.isDefault ? (
+        // Only when it is not the usual number, so the common case stays clean.
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`يُرسل من ${senderSummary(selectedSender)}. تغيير الرقم`}
+          onPress={() => setSenderSheetOpen(true)}
+          style={({ pressed }) => ({
+            alignSelf: "flex-end",
+            flexDirection: "row-reverse",
+            alignItems: "center",
+            gap: spacing.xs,
+            paddingHorizontal: spacing.md,
+            paddingVertical: spacing.xs,
+            borderRadius: radius.full,
+            backgroundColor: selectedSender.available ? colors.brandSoft : colors.dangerSoft,
+            opacity: pressed ? 0.7 : 1,
+          })}
+        >
+          <IconSymbol
+            name="phone"
+            size={12}
+            color={selectedSender.available ? colors.onBrandSoft : colors.onDangerSoft}
+          />
+          <Text
+            style={{
+              ...type.caption,
+              color: selectedSender.available ? colors.onBrandSoft : colors.onDangerSoft,
+            }}
+          >
+            يُرسل من {senderSummary(selectedSender)}
+            {selectedSender.available ? "" : " · غير متصل"}
+          </Text>
+        </Pressable>
+      ) : null}
       {templateOnly ? (
         <View style={{ gap: spacing.sm }}>
           <InlineAlert
@@ -594,9 +686,25 @@ export function Composer({
             />
             <MenuRow icon="camera" label="التقاط صورة" onPress={() => runFromMenu(takePhoto)} />
             <MenuRow icon="doc" label="ملف" onPress={() => runFromMenu(pickDocument)} />
+            {canChooseSender ? (
+              <MenuRow
+                icon="phone"
+                label="الإرسال من رقم آخر"
+                detail={selectedSender ? senderSummary(selectedSender) : undefined}
+                onPress={() => runFromMenu(() => setSenderSheetOpen(true))}
+              />
+            ) : null}
           </Pressable>
         </Pressable>
       </Modal>
+
+      <SenderSheet
+        open={senderSheetOpen}
+        senders={senders}
+        selectedId={selectedSenderId}
+        onPick={chooseSender}
+        onClose={() => setSenderSheetOpen(false)}
+      />
 
       <SavedRepliesSheet
         open={repliesOpen}
@@ -730,10 +838,13 @@ function RecordingBar({
 function MenuRow({
   icon,
   label,
+  detail,
   onPress,
 }: {
   icon: IconName;
   label: string;
+  /** A second line, e.g. the number currently in use. */
+  detail?: string;
   onPress: () => void;
 }) {
   const { colors } = useTheme();
@@ -768,7 +879,12 @@ function MenuRow({
       >
         <IconSymbol name={icon} color={colors.onBrandSoft} size={18} />
       </View>
-      <Text style={{ flex: 1, ...type.body, color: colors.text, ...rtlText }}>{label}</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={{ ...type.body, color: colors.text, ...rtlText }}>{label}</Text>
+        {detail ? (
+          <Text style={{ ...type.caption, color: colors.textSecondary, ...rtlText }}>{detail}</Text>
+        ) : null}
+      </View>
     </Pressable>
   );
 }

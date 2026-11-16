@@ -4,11 +4,24 @@ import type { MessageTransport, SendResult } from "./types";
  * OpenWA transport — HTTP client to the persistent OpenWA service (VPS) that
  * holds Kiara's linked number. The send token never leaves the server.
  */
-const BASE = process.env.OPENWA_URL;
-const TOKEN = process.env.OPENWA_SEND_TOKEN;
+/** One engine process: its URL and send token, both server-only. */
+export interface EngineConfig {
+  url: string | undefined;
+  token: string | undefined;
+}
+
+/** The orders number (pm2 `kiara-wa`): field-team notifications and threads. */
+export const ORDERS_ENGINE: EngineConfig = {
+  url: process.env.OPENWA_URL,
+  token: process.env.OPENWA_SEND_TOKEN,
+};
+
+export function isEngineConfigured(engine: EngineConfig): boolean {
+  return Boolean(engine.url && engine.token);
+}
 
 export function isOpenWaConfigured(): boolean {
-  return Boolean(BASE && TOKEN);
+  return isEngineConfigured(ORDERS_ENGINE);
 }
 
 /**
@@ -74,17 +87,18 @@ async function post(
   path: string,
   body: unknown,
   timeoutMs = ENGINE_TIMEOUT_MS,
+  engine: EngineConfig = ORDERS_ENGINE,
 ): Promise<Response> {
-  if (!BASE || !TOKEN) {
-    throw new Error("OpenWA not configured: set OPENWA_URL and OPENWA_SEND_TOKEN");
+  if (!engine.url || !engine.token) {
+    throw new EngineUnavailableError("OpenWA engine not configured", { reason: "unreachable" });
   }
   return engineFetch(
-    `${BASE.replace(/\/+$/, "")}${path}`,
+    `${engine.url.replace(/\/+$/, "")}${path}`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${TOKEN}`,
+        Authorization: `Bearer ${engine.token}`,
       },
       body: JSON.stringify(body),
     },
@@ -106,12 +120,16 @@ async function parse(res: Response): Promise<SendResult> {
   return { providerMessageId: data.waMessageId ?? data.id ?? "" };
 }
 
-export const openWaTransport: MessageTransport = {
+/**
+ * A transport bound to one engine. Each engine is one linked number, so the
+ * engine *is* the choice of sender; there is no `from` to pass.
+ */
+export function createOpenWaTransport(engine: EngineConfig): MessageTransport {
+  return {
   provider: "openwa",
   async sendText(toE164, body) {
-    // A linked device is one number; there is nothing to choose between.
     return parse(
-      await post("/messages", { to: toE164, body }, ENGINE_SEND_TIMEOUT_MS),
+      await post("/messages", { to: toE164, body }, ENGINE_SEND_TIMEOUT_MS, engine),
     );
   },
   async sendMedia(toE164, media) {
@@ -124,7 +142,7 @@ export const openWaTransport: MessageTransport = {
       ptt: media.ptt,
     };
     return parse(
-      await post("/messages", { to: toE164, media: blob }, ENGINE_SEND_TIMEOUT_MS),
+      await post("/messages", { to: toE164, media: blob }, ENGINE_SEND_TIMEOUT_MS, engine),
     );
   },
   /**
@@ -136,7 +154,10 @@ export const openWaTransport: MessageTransport = {
   async sendTemplate() {
     throw new Error("TEMPLATES_NOT_SUPPORTED: OpenWA sends free-form text");
   },
-};
+  };
+}
+
+export const openWaTransport: MessageTransport = createOpenWaTransport(ORDERS_ENGINE);
 
 export interface EngineState {
   configured: boolean;
@@ -150,8 +171,8 @@ export interface EngineState {
 }
 
 /** Poll the engine for its connection state + QR (for the Connect page). */
-export async function getEngineState(): Promise<EngineState> {
-  if (!BASE || !TOKEN) {
+export async function getEngineState(engine: EngineConfig = ORDERS_ENGINE): Promise<EngineState> {
+  if (!engine.url || !engine.token) {
     return {
       configured: false,
       state: "not_configured",
@@ -161,8 +182,8 @@ export async function getEngineState(): Promise<EngineState> {
       qrMaxAgeMs: null,
     };
   }
-  const base = BASE.replace(/\/+$/, "");
-  const headers = { Authorization: `Bearer ${TOKEN}` };
+  const base = engine.url.replace(/\/+$/, "");
+  const headers = { Authorization: `Bearer ${engine.token}` };
   try {
     const [statusRes, qrRes] = await Promise.all([
       engineFetch(`${base}/status`, { headers }, ENGINE_TIMEOUT_MS),

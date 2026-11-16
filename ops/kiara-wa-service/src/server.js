@@ -12,7 +12,9 @@ import {
   useMultiFileAuthState,
 } from "@whiskeysockets/baileys";
 import makeWASocket from "@whiskeysockets/baileys";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 const config = {
@@ -71,6 +73,76 @@ function bodyFromMessage(message) {
     || m.listResponseMessage?.title
     || m.templateButtonReplyMessage?.selectedDisplayText
     || "";
+}
+
+/**
+ * Message kinds that carry no text and no media of their own. Without this
+ * they reached Kiara as an empty "text" and showed as «رسالة بدون نص».
+ * Returns null for ordinary messages, `{ skip: true }` for ones that are not
+ * worth a bubble, or the readable body and type to forward instead.
+ */
+function describeSpecial(message, contentType) {
+  const m = unwrapMessage(message);
+  if (contentType === "reactionMessage") {
+    const emoji = m.reactionMessage?.text?.trim();
+    // Taking a reaction back is not a message.
+    if (!emoji) return { skip: true };
+    return { messageType: "reaction", body: `تفاعل بـ ${emoji}`, reactionTo: m.reactionMessage?.key?.id || null };
+  }
+  if (contentType === "locationMessage" || contentType === "liveLocationMessage") {
+    const loc = m.locationMessage || m.liveLocationMessage || {};
+    const lat = loc.degreesLatitude;
+    const lng = loc.degreesLongitude;
+    const label = [loc.name, loc.address].filter(Boolean).join(" — ");
+    const link = Number.isFinite(lat) && Number.isFinite(lng) ? `https://maps.google.com/?q=${lat},${lng}` : "";
+    const head = contentType === "liveLocationMessage" ? "📍 موقع مباشر" : "📍 الموقع";
+    return {
+      messageType: "location",
+      body: [label ? `${head}: ${label}` : head, link].filter(Boolean).join("\n"),
+      location: Number.isFinite(lat) && Number.isFinite(lng) ? { latitude: lat, longitude: lng, name: loc.name || null, address: loc.address || null } : null,
+    };
+  }
+  if (contentType === "contactMessage" || contentType === "contactsArrayMessage") {
+    const cards = contentType === "contactMessage" ? [m.contactMessage] : (m.contactsArrayMessage?.contacts || []);
+    const lines = cards.filter(Boolean).map((card) => {
+      const phones = [...String(card.vcard || "").matchAll(/TEL[^:]*:([+\d\s-]+)/g)].map((match) => match[1].trim()).filter(Boolean);
+      const name = card.displayName?.trim() || "بدون اسم";
+      return phones.length ? `${name} — ${phones.join("، ")}` : name;
+    });
+    return { messageType: "contacts", body: `👤 جهة اتصال:\n${lines.join("\n")}` };
+  }
+  if (contentType === "pollCreationMessage" || contentType === "pollCreationMessageV2" || contentType === "pollCreationMessageV3") {
+    const poll = m.pollCreationMessage || m.pollCreationMessageV2 || m.pollCreationMessageV3 || {};
+    const options = (poll.options || []).map((option) => `• ${option.optionName}`).join("\n");
+    return { messageType: "text", body: [`📊 استطلاع: ${poll.name || ""}`.trim(), options].filter(Boolean).join("\n") };
+  }
+  // Bookkeeping WhatsApp sends alongside real messages: an album header before
+  // its photos (which arrive on their own), votes, pins, keep-in-chat flags.
+  if (["albumMessage", "pollUpdateMessage", "pinInChatMessage", "keepInChatMessage", "senderKeyDistributionMessage", "messageContextInfo"].includes(contentType)) {
+    return { skip: true };
+  }
+  return null;
+}
+
+/**
+ * The phone behind a chat. WhatsApp increasingly addresses chats by an
+ * anonymized lid; Baileys 7 carries the phone in `remoteJidAlt` /
+ * `participantAlt` (the old `senderPn` is kept for older sessions) and keeps a
+ * lid→phone table of its own. Without the phone Kiara cannot place a message
+ * in a thread it has not seen this lid on before, and drops it.
+ */
+async function phoneForMessage(sock, key, group, peerJid) {
+  const direct = digitsFromJid(key.senderPn)
+    || digitsFromJid(group ? key.participantAlt : key.remoteJidAlt)
+    || digitsFromJid(peerJid);
+  if (direct) return direct;
+  if (!peerJid?.endsWith("@lid")) return null;
+  try {
+    return digitsFromJid(await sock.signalRepository?.lidMapping?.getPNForLID(peerJid));
+  } catch (error) {
+    logger.warn({ err: error, lid: peerJid }, "lid lookup failed");
+    return null;
+  }
 }
 
 function mediaNode(message) {
@@ -200,7 +272,9 @@ async function startSocket() {
       const fromMe = Boolean(msg.key.fromMe);
       const participantJid = msg.key.participant || msg.key.senderPn || null;
       const peerJid = group ? participantJid : remoteJid;
-      const customerPhone = digitsFromJid(msg.key.senderPn) || digitsFromJid(peerJid);
+      const special = describeSpecial(msg.message, contentType);
+      if (special?.skip) continue;
+      const customerPhone = await phoneForMessage(sock, msg.key, group, peerJid);
       const chatLid = remoteJid.endsWith("@lid") ? remoteJid : null;
       let groupSubject = null;
       if (group) {
@@ -235,8 +309,10 @@ async function startSocket() {
         chatJid: remoteJid,
         groupSubject,
         participantName: fromMe ? null : (msg.pushName || null),
-        messageType: mediaEntry?.[0] || "text",
-        body: bodyFromMessage(message),
+        messageType: special?.messageType || mediaEntry?.[0] || "text",
+        body: special?.body ?? bodyFromMessage(message),
+        reactionTo: special?.reactionTo || null,
+        location: special?.location || null,
         timestamp: Number(msg.messageTimestamp || Math.floor(Date.now() / 1000)),
         media,
       });
@@ -292,14 +368,128 @@ function waJid(value) {
   return `${digits}@s.whatsapp.net`;
 }
 
-function mediaContent(media) {
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "ffmpeg",
+      ["-hide_banner", "-loglevel", "error", "-y", ...args],
+      { timeout: 30_000, encoding: "buffer", maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    );
+  });
+}
+
+/**
+ * WhatsApp only plays a voice note that is Opus in an Ogg container. The app
+ * records AAC in MP4 and Chrome records WebM, so those are re-encoded.
+ *
+ * `native` copies what the WhatsApp app itself writes (16 kHz voip Opus,
+ * 120 ms frames, no tags) and sends a waveform and duration with it, as the
+ * phone does. Plain 48 kHz Opus with no waveform (`legacy`, used 2026-10-12 to
+ * 2026-10-24) was accepted by WhatsApp but specialists could not play it.
+ */
+const VOICE_ENCODINGS = {
+  native: [
+    "-map_metadata", "-1", "-vn", "-ac", "1", "-ar", "16000",
+    "-c:a", "libopus", "-application", "voip", "-b:a", "24k", "-frame_duration", "120",
+    "-avoid_negative_ts", "make_zero",
+  ],
+  legacy: [
+    "-vn", "-c:a", "libopus", "-b:a", "32k", "-ac", "1", "-ar", "48000",
+    "-avoid_negative_ts", "make_zero",
+  ],
+};
+
+/** Test-only switch (`media.voiceVariant`); the app never sends one, so it gets `native`. */
+const VOICE_VARIANTS = {
+  native: { encoding: "native", waveform: true },
+  legacy: { encoding: "legacy", waveform: false },
+  "legacy-waveform": { encoding: "legacy", waveform: true },
+};
+
+/** Duration and the 64-bar waveform WhatsApp draws on a voice bubble (0–100 each). */
+async function voiceShape(file) {
+  // 8 kHz mono PCM is plenty for 64 bars and a whole-second duration.
+  const pcm = await runFfmpeg(["-i", file, "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]);
+  const samples = Math.floor(pcm.length / 2);
+  if (!samples) throw new Error("no audio samples");
+  const bars = 64;
+  const block = Math.max(1, Math.floor(samples / bars));
+  const levels = [];
+  for (let i = 0; i < bars; i++) {
+    let sum = 0;
+    let count = 0;
+    for (let j = i * block; j < Math.min(samples, (i + 1) * block); j++) {
+      sum += Math.abs(pcm.readInt16LE(j * 2));
+      count++;
+    }
+    levels.push(count ? sum / count : 0);
+  }
+  const peak = Math.max(...levels) || 1;
+  return {
+    seconds: Math.max(1, Math.round(samples / 8000)),
+    waveform: new Uint8Array(levels.map((level) => Math.round((level / peak) * 100))),
+  };
+}
+
+async function toVoiceNote(bytes, { encoding, waveform, reencode }) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kiara-voice-"));
+  const input = path.join(dir, "in");
+  const output = path.join(dir, "out.ogg");
+  try {
+    await fs.writeFile(input, bytes);
+    let audio = bytes;
+    let file = input;
+    if (reencode) {
+      await runFfmpeg(["-i", input, ...VOICE_ENCODINGS[encoding], "-f", "ogg", output]);
+      audio = await fs.readFile(output);
+      file = output;
+      if (!audio.length) throw new Error("ffmpeg produced an empty file");
+    }
+    // A missing waveform still leaves a playable note; Baileys then works out the duration.
+    const shape = waveform
+      ? await voiceShape(file).catch((error) => {
+          logger.warn({ err: error }, "voice note waveform failed");
+          return null;
+        })
+      : null;
+    return { audio, seconds: shape?.seconds, waveform: shape?.waveform };
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function mediaContent(media) {
   const bytes = Buffer.from(media.base64 || "", "base64");
   if (!bytes.length || bytes.length > config.maxMediaBytes) throw Object.assign(new Error("invalid media"), { status: 400 });
   const type = String(media.contentType || "application/octet-stream");
   const caption = media.caption || "";
   if (type.startsWith("image/")) return { image: bytes, mimetype: type, caption };
   if (type.startsWith("video/")) return { video: bytes, mimetype: type, caption };
-  if (type.startsWith("audio/")) return { audio: bytes, mimetype: type, ptt: Boolean(media.ptt) };
+  if (type.startsWith("audio/")) {
+    if (!media.ptt) return { audio: bytes, mimetype: type, ptt: false };
+    const isOgg = /^audio\/(ogg|opus)/i.test(type);
+    const variantName = VOICE_VARIANTS[media.voiceVariant] ? media.voiceVariant : "native";
+    try {
+      const note = await toVoiceNote(bytes, { ...VOICE_VARIANTS[variantName], reencode: !isOgg });
+      logger.info(
+        { variant: variantName, from: type, bytes: note.audio.length, seconds: note.seconds ?? null, waveform: Boolean(note.waveform) },
+        "voice note prepared",
+      );
+      return {
+        audio: note.audio,
+        mimetype: isOgg ? type : "audio/ogg; codecs=opus",
+        ptt: true,
+        ...(note.seconds ? { seconds: note.seconds } : {}),
+        ...(note.waveform ? { waveform: note.waveform } : {}),
+      };
+    } catch (error) {
+      if (isOgg) return { audio: bytes, mimetype: type, ptt: true };
+      // A plain audio file she can play beats a voice bubble that never opens.
+      logger.warn({ err: error, type }, "voice note conversion failed; sending as an audio file");
+      return { audio: bytes, mimetype: type, ptt: false };
+    }
+  }
   return { document: bytes, mimetype: type, fileName: media.filename || "file", caption };
 }
 
@@ -317,7 +507,7 @@ app.post("/qr/refresh", async (_req, res) => {
 app.post("/messages", async (req, res) => {
   try {
     if (state !== "ready" || !socket) throw Object.assign(new Error("WhatsApp is not connected"), { status: 503 });
-    const content = req.body?.media ? mediaContent(req.body.media) : { text: String(req.body?.body || "") };
+    const content = req.body?.media ? await mediaContent(req.body.media) : { text: String(req.body?.body || "") };
     if (!req.body?.media && !content.text.trim()) throw Object.assign(new Error("message body is required"), { status: 400 });
     const sent = await socket.sendMessage(waJid(req.body?.to), content);
     res.json({ waMessageId: sent.key.id });
@@ -332,7 +522,24 @@ app.post("/presence/watch", async (req, res) => {
   await Promise.allSettled(phones.slice(0, 250).map((phone) => socket.presenceSubscribe(waJid(phone))));
   res.json({ ok: true, watched: phones.length });
 });
-app.post("/lids/seed", (_req, res) => res.json({ ok: true }));
+/**
+ * Learn the lid of each phone Kiara cares about (its drivers and specialists)
+ * before their first lid-addressed message arrives, so that message carries a
+ * phone and lands in the right thread. Baileys answers from its own table and
+ * only asks WhatsApp about phones it has not mapped yet.
+ */
+app.post("/lids/seed", async (req, res) => {
+  if (state !== "ready" || !socket) return res.status(503).json({ error: "WhatsApp is not connected" });
+  const phones = (Array.isArray(req.body?.phones) ? req.body.phones : []).slice(0, 250);
+  try {
+    const jids = phones.map((phone) => waJid(phone));
+    const mappings = jids.length ? await socket.signalRepository?.lidMapping?.getLIDsForPNs(jids) : [];
+    res.json({ ok: true, asked: jids.length, mapped: mappings?.length || 0 });
+  } catch (error) {
+    logger.warn({ err: error }, "lid seed failed");
+    res.status(error.status || 500).json({ error: error.message || "lid seed failed" });
+  }
+});
 
 app.listen(config.port, config.host, () => logger.info({ host: config.host, port: config.port }, "Kiara WhatsApp gateway listening"));
 void startSocket();

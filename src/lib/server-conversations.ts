@@ -294,6 +294,8 @@ export async function saveMessage(params: {
    * while the Twilio column the platform migration brought over becomes true.
    */
   twilioMessageSid?: string | null;
+  /** The business number it went through or arrived on (`whatsapp_senders.id`, or `openwa`). */
+  senderAccount?: string | null;
 }): Promise<string | null> {
   const { data, error } = await getAdminSupabaseClient()
     .from("messages")
@@ -308,6 +310,7 @@ export async function saveMessage(params: {
       delivery_status: params.deliveryStatus ?? "received",
       ...(params.twilioMessageSid ? { twilio_message_sid: params.twilioMessageSid } : {}),
       ...(params.createdAt ? { created_at: params.createdAt } : {}),
+      ...(params.senderAccount ? { sender_account: params.senderAccount } : {}),
     })
     .select("id")
     .single();

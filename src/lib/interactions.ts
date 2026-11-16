@@ -20,6 +20,7 @@ import {
 import type { MessageTransport, SendResult } from "@/lib/transport/types";
 import { getServiceWindow, isWindowClosedError } from "@/lib/transport/window";
 import { inboxTransportFor, staffKindForConversation } from "@/lib/staff-threads";
+import { resolveReplySender, transportForSender } from "@/lib/whatsapp-senders";
 import {
   greetingName,
   renderTemplateBody,
@@ -55,6 +56,7 @@ export type { CsStatus, AgentInfo };
 function deliverInBackground(
   messageId: string,
   conversationId: string,
+  route: ReplyRoute,
   send: (
     transport: MessageTransport,
     options: { from: string | null },
@@ -64,26 +66,15 @@ function deliverInBackground(
     const admin = getAdminSupabaseClient();
     let sent = false;
     let providerId: string | null = null;
-    // Resolving which number answers this thread costs a read, so it happens
-    // here rather than on the send path — the message row already exists and
-    // the UI is showing it as queued either way.
-    // Driver and specialist threads answer from the orders number, not Meta.
-    const transport = await inboxTransportFor(conversationId);
-    const configured = isProviderConfigured(transport.provider);
-    const { data: convRow } = await admin
-      .from("conversations")
-      .select("metadata")
-      .eq("id", conversationId)
-      .maybeSingle();
-    const waNumber =
-      ((convRow?.metadata as Record<string, unknown> | null)?.wa_number as
-        | string
-        | undefined) ?? null;
+    // The number was chosen and checked before the row was written; delivery
+    // uses exactly that one and never another.
+    const { transport } = route;
+    const configured = true;
     let failureMessage: string | null = null;
     let failureCode: string | null = null;
     if (configured) {
       try {
-        const r = await send(transport, { from: waNumber });
+        const r = await send(transport, { from: route.from });
         providerId = r.providerMessageId || null;
         sent = true;
       } catch (error) {
@@ -489,26 +480,14 @@ function deliverTextReply(params: {
   customerName: string | null;
   body: string;
   contextMessageId?: string | null;
+  route: ReplyRoute;
 }): void {
   after(async () => {
     const admin = getAdminSupabaseClient();
-    // Driver and specialist threads answer from the orders number, not Meta.
-    const transport = await inboxTransportFor(params.conversationId);
-    const configured = isProviderConfigured(transport.provider);
-
-    // The number she wrote to, recorded from the inbound message itself. Sending
-    // from anything else would reach her as a message from a stranger, and a
-    // misconfigured env var would fail every send with no way to see why.
-    const { data: convRow } = await admin
-      .from("conversations")
-      .select("metadata")
-      .eq("id", params.conversationId)
-      .maybeSingle();
-    const waNumber =
-      ((convRow?.metadata as Record<string, unknown> | null)?.wa_number as
-        | string
-        | undefined) ?? null;
-    const sendOptions = { from: waNumber, contextMessageId: params.contextMessageId };
+    // Chosen and checked before the row was written; never swapped here.
+    const { transport } = params.route;
+    const configured = true;
+    const sendOptions = { from: params.route.from, contextMessageId: params.contextMessageId };
 
     let status = "queued";
     let providerId: string | null = null;
@@ -531,7 +510,7 @@ function deliverTextReply(params: {
     if (configured) {
       // Only the Business Platform enforces a window; a linked device does not.
       const windowOpen =
-        transport.provider === "openwa" ||
+        !params.route.enforcesWindow ||
         (await getServiceWindow(params.conversationId)).open;
 
       if (!windowOpen) {
@@ -604,10 +583,67 @@ function deliverTextReply(params: {
   });
 }
 
+/** Which number a reply leaves from, settled before the message is recorded. */
+type ReplyRoute = {
+  /** Stored on the message: a `whatsapp_senders` id, or `openwa` for the orders number. */
+  senderId: string;
+  transport: MessageTransport;
+  /** The Business number she wrote to; only the Business Platform uses it. */
+  from: string | null;
+  enforcesWindow: boolean;
+};
+
+/** Who is replying, and the number they had selected in the composer. */
+export type ReplySender = {
+  email: string | null;
+  teamMemberId?: string | null;
+  /** team_members.role; absent only for system-initiated sends. */
+  role?: string;
+  /** The sender the composer showed. Validated here, never trusted. */
+  senderAccountId?: string | null;
+};
+
+/**
+ * Driver and specialist threads always answer from the orders number, as
+ * before. Customer threads answer from the sender the employee chose (or the
+ * conversation's saved one, or Meta), after checking it exists, is on, is
+ * hers to use and can send right now. A failure throws `SenderError` and
+ * nothing is recorded or sent from any other number.
+ */
+async function routeReply(
+  conversationId: string,
+  conversation: { metadata: unknown; reply_sender: string | null },
+  sender: ReplySender,
+): Promise<ReplyRoute> {
+  if (await staffKindForConversation(conversationId)) {
+    return {
+      senderId: "openwa",
+      transport: await inboxTransportFor(conversationId),
+      from: null,
+      enforcesWindow: false,
+    };
+  }
+  const row = await resolveReplySender({
+    requested: sender.senderAccountId,
+    saved: conversation.reply_sender,
+    role: sender.role,
+  });
+  const transport = transportForSender(row);
+  // The number she wrote to, recorded from the inbound message itself.
+  const waNumber =
+    ((conversation.metadata as Record<string, unknown> | null)?.wa_number as string | undefined) ?? null;
+  return {
+    senderId: row.id,
+    transport,
+    from: row.provider === "meta" ? waNumber : null,
+    enforcesWindow: transport.provider !== "openwa" && isProviderConfigured(transport.provider),
+  };
+}
+
 /** Send an agent reply through the transport layer; records it either way. */
 export async function sendReply(
   conversationId: string,
-  sender: { email: string | null; teamMemberId?: string | null },
+  sender: ReplySender,
   body: string,
   clientRequestId: string = randomUUID(),
   replyTo?: { id: string; role: string; text: string; message_type: string; external_message_sid: string | null },
@@ -615,11 +651,16 @@ export async function sendReply(
   const admin = getAdminSupabaseClient();
   const { data: conv } = await admin
     .from("conversations")
-    .select("id, customer_phone, customer_name")
+    .select("id, customer_phone, customer_name, metadata, reply_sender")
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
   if (!conv) throw new Error("Conversation not found");
+
+  const route = await routeReply(conversationId, {
+    metadata: conv.metadata,
+    reply_sender: (conv.reply_sender as string | null) ?? null,
+  }, sender);
 
   const { data: msg, error } = await admin
     .from("messages")
@@ -628,9 +669,12 @@ export async function sendReply(
       role: "agent",
       content: body,
       message_type: "text",
+      sender_account: route.senderId,
       metadata: {
         source: "app",
         sent_by_email: sender.email,
+        // Also on the column; the apps read it from here.
+        sender_account: route.senderId,
         ...(replyTo ? {
           reply_to: { role: replyTo.role, text: replyTo.text, message_type: replyTo.message_type },
           replied_to_message_id: replyTo.id,
@@ -667,6 +711,7 @@ export async function sendReply(
     customerName: (conv.customer_name as string | null) ?? null,
     body,
     contextMessageId: replyTo?.external_message_sid,
+    route,
   });
 
   return { messageId, sent: false };
@@ -811,7 +856,7 @@ export async function sendTemplateReply(
  */
 export async function sendMediaReply(
   conversationId: string,
-  sender: { email: string | null; teamMemberId?: string | null },
+  sender: ReplySender,
   file:
     | { buffer: Buffer; contentType: string; filename: string | null }
     | {
@@ -826,7 +871,7 @@ export async function sendMediaReply(
   const admin = getAdminSupabaseClient();
   const { data: conv } = await admin
     .from("conversations")
-    .select("id, customer_phone")
+    .select("id, customer_phone, metadata, reply_sender")
     .eq("id", conversationId)
     .eq("restaurant_id", KIARA_RESTAURANT_ID)
     .maybeSingle();
@@ -908,6 +953,11 @@ export async function sendMediaReply(
     ? "voice"
     : messageTypeFromContentType(normalizedContentType);
 
+  const route = await routeReply(conversationId, {
+    metadata: conv.metadata,
+    reply_sender: (conv.reply_sender as string | null) ?? null,
+  }, sender);
+
   const { data: msg, error } = await admin
     .from("messages")
     .insert({
@@ -915,9 +965,11 @@ export async function sendMediaReply(
       role: "agent",
       content: caption || "",
       message_type: messageType,
+      sender_account: route.senderId,
       metadata: {
         source: "app",
         sent_by_email: sender.email,
+        sender_account: route.senderId,
         media: [slot],
         ...(options.ptt ? { voice_note: true } : {}),
       },
@@ -943,7 +995,7 @@ export async function sendMediaReply(
   if (error) throw new Error(`Failed to record media message: ${error.message}`);
 
   const messageId = msg!.id as string;
-  deliverInBackground(messageId, conversationId, async (transport, sendOptions) =>
+  deliverInBackground(messageId, conversationId, route, async (transport, sendOptions) =>
     transport.sendMedia(conv.customer_phone as string, {
       // A phone upload arrives as a storage path with no bytes. The Business
       // providers fetch it themselves; the orders number needs the bytes.

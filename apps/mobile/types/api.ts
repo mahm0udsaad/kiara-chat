@@ -921,6 +921,24 @@ export type CustomerServiceAgentAnalysis = {
   };
 };
 
+/** A business WhatsApp number a reply can go out from. No credentials. */
+export type WhatsAppSender = {
+  id: string;
+  provider: "meta" | "openwa";
+  phone: string | null;
+  label: string;
+  available: boolean;
+  unavailableReason: "disabled" | "not_configured" | "disconnected" | "unreachable" | null;
+  isDefault: boolean;
+};
+
+/** Which number answers this customer, and whether the thread offers a choice. */
+export type ConversationSenderState = {
+  senderAccountId: string;
+  /** Driver and specialist threads always use the orders number. */
+  fieldTeam: boolean;
+};
+
 /** One saved run of the AI review, with the period it covered. */
 export type SavedAgentReport = {
   id: string;

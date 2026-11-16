@@ -59,6 +59,8 @@ export const CONVERSATION_EVENTS = {
   callPermissionRequested: "conversation.call_permission_requested",
   callPermissionGranted: "conversation.call_permission_granted",
   callPermissionDeclined: "conversation.call_permission_declined",
+  // Which business number answers this customer; payload { from, to }.
+  senderChanged: "conversation.sender_changed",
 } as const;
 
 export type ConversationEventType =

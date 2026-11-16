@@ -2,6 +2,7 @@ import { isOpenWaEvent } from "@/lib/transport/openwa-events";
 import { inboxProvider } from "@/lib/transport/inbox-provider";
 import { staffKindForConversation, staffKindForPhone } from "@/lib/staff-threads";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
+import { senderForIngestToken } from "@/lib/whatsapp-senders";
 /**
  * POST /api/webhooks/openwa
  * Ingest endpoint for the persistent OpenWA service. Server-to-server, bearer
@@ -37,9 +38,17 @@ import type { OpenWaEvent } from "@/lib/transport/types";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-function authorized(request: NextRequest): boolean {
-  const token = process.env.OPENWA_INGEST_TOKEN;
-  return Boolean(token) && request.headers.get("authorization") === `Bearer ${token}`;
+/**
+ * Which engine sent this, told apart by its ingest token: the orders number
+ * (`openwa`, OPENWA_INGEST_TOKEN) or a customer-facing number listed in
+ * `whatsapp_senders` (e.g. `openwa_cs`, OPENWA_CS_INGEST_TOKEN). The token is
+ * the only proof; nothing in the body can claim an account.
+ */
+function engineAccount(request: NextRequest): string | null {
+  const header = request.headers.get("authorization");
+  const ordersToken = process.env.OPENWA_INGEST_TOKEN;
+  if (ordersToken && header === `Bearer ${ordersToken}`) return "openwa";
+  return senderForIngestToken(header);
 }
 
 /** Older than this and the message is history replay, not a live question. */
@@ -135,6 +144,7 @@ async function claimPendingAppSend(
   conversationId: string,
   waMessageId: string,
   body: string,
+  account: string,
 ): Promise<boolean> {
   const admin = getAdminSupabaseClient();
   const { data } = await admin
@@ -144,6 +154,9 @@ async function claimPendingAppSend(
     .eq("role", "agent")
     .is("external_message_sid", null)
     .eq("metadata->>source", "app")
+    // Only a send that went out on this same number; a reply on the other
+    // number in the same thread is a different message.
+    .or(`sender_account.is.null,sender_account.eq.${account}`)
     .gte("created_at", new Date(Date.now() - ECHO_WINDOW_MS).toISOString())
     .order("created_at", { ascending: false })
     .limit(5);
@@ -159,9 +172,13 @@ async function claimPendingAppSend(
 }
 
 export async function POST(request: NextRequest) {
-  if (!authorized(request)) {
+  const account = engineAccount(request);
+  if (!account) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  // A customer-facing number takes in its customers' messages; the orders
+  // number keeps its field-team-only rule below.
+  const customerNumber = account !== "openwa";
 
   let event: OpenWaEvent;
   try {
@@ -181,7 +198,11 @@ export async function POST(request: NextRequest) {
   await learnChatLid(event);
 
   let fieldTeamOnly = false;
-  if (event.type !== "ack" && inboxProvider() !== "openwa") {
+  // Groups stay off on a customer-facing number, as on the Business number.
+  if (customerNumber && event.type === "message" && event.chatJid?.trim().endsWith("@g.us")) {
+    return NextResponse.json({ ok: true, standby: true });
+  }
+  if (!customerNumber && event.type !== "ack" && inboxProvider() !== "openwa") {
     if (!(await isFieldTeamEvent(event))) {
       // A message that names no phone and whose lid no thread knows yet cannot
       // be told apart from a customer's, so it is not taken in. Say so: a
@@ -257,7 +278,7 @@ export async function POST(request: NextRequest) {
   // pushName is only the customer's name on an inbound message; on fromMe it's
   // Kiara's own account name (the engine already nulls it, belt and braces here).
   const occurredAt = event.timestamp ? new Date(event.timestamp * 1000).toISOString() : undefined;
-  let conv: { id: string } | null = null;
+  let conv: { id: string; is_new?: boolean } | null = null;
   if (groupJid) {
     conv = await findOrCreateGroupConversation(groupJid, event.groupSubject, occurredAt);
   } else if (phone) {
@@ -284,7 +305,7 @@ export async function POST(request: NextRequest) {
   }
   const conversationId = conv.id;
 
-  if (event.fromMe && (await claimPendingAppSend(conversationId, event.waMessageId, event.body || ""))) {
+  if (event.fromMe && (await claimPendingAppSend(conversationId, event.waMessageId, event.body || "", account))) {
     return NextResponse.json({ deduped: true });
   }
 
@@ -308,7 +329,7 @@ export async function POST(request: NextRequest) {
   }
 
   const role: "customer" | "agent" = event.fromMe ? "agent" : "customer";
-  const metadata: Record<string, unknown> = { provider: "openwa" };
+  const metadata: Record<string, unknown> = { provider: "openwa", sender_account: account };
   let body = event.body || "";
   if (messageType === "reaction" && event.reactionTo) {
     body = await quoteReaction(conversationId, body, event.reactionTo);
@@ -335,12 +356,23 @@ export async function POST(request: NextRequest) {
     // Preserve the WhatsApp send time (epoch seconds) so backfilled history
     // interleaves correctly with live messages.
     createdAt: occurredAt,
+    senderAccount: account,
   });
 
   // A concurrent delivery may win after our initial dedupe read.
   if (!messageId) return NextResponse.json({ deduped: true });
 
   await rememberConversationTransport(conv.id, "openwa");
+  // A customer whose first ever message came to this number is answered from
+  // it by default. Existing customers keep their saved choice (Meta unless
+  // someone switched): replies never follow whichever number wrote last.
+  if (customerNumber && !event.fromMe && conv.is_new) {
+    await getAdminSupabaseClient()
+      .from("conversations")
+      .update({ reply_sender: account })
+      .eq("id", conversationId)
+      .is("reply_sender", null);
+  }
   await bumpConversationActivity(conv.id, {
     inbound: !event.fromMe,
     occurredAt,
@@ -371,7 +403,9 @@ export async function POST(request: NextRequest) {
   // question, and a staff group is a room full of people talking to each other.
   // Nor the field team: a driver saying "وصلت" is not a customer question.
   // A reaction, a shared location or a contact card asks nothing to answer.
+  // Nor a customer-facing OpenWA number: the bot answers on the Business number.
   if (
+    !customerNumber &&
     !event.fromMe &&
     !groupJid &&
     !fieldTeamOnly &&

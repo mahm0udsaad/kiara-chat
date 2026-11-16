@@ -8,6 +8,7 @@ import { getKiaraSession } from "@/lib/tenant";
 import { denyIfRouted } from "@/lib/conversation-access";
 import { sendMediaReply } from "@/lib/interactions";
 import { MAX_MEDIA_BYTES } from "@/lib/storage-media";
+import { parseSenderId as senderId, SenderError } from "@/lib/whatsapp-senders-core";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -54,7 +55,7 @@ export async function POST(
     const teamMemberId = session.teamMemberId;
     const result = await sendMediaReply(
       id,
-      { email: session.email, teamMemberId },
+      { email: session.email, teamMemberId, role: session.role, senderAccountId: senderId(form.get("senderAccountId")) },
       {
         buffer,
         contentType: file.type || "application/octet-stream",
@@ -65,6 +66,9 @@ export async function POST(
     );
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
+    if (e instanceof SenderError) {
+      return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
+    }
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "تعذّر إرسال الملف" },
       { status: 500 }

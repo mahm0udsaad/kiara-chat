@@ -20,6 +20,11 @@ export type OutboxEntry = {
   conversationId: string;
   text: string;
   replyToMessageId?: string;
+  /**
+   * The number it was sent from. A retry uses this same one, never whatever
+   * the composer shows by then, so a message cannot change number.
+   */
+  senderAccountId?: string;
   createdAt: string;
   state: OutboxState;
   /** Set once the server has accepted it. */

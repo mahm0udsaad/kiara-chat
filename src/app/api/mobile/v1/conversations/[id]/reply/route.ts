@@ -8,6 +8,8 @@ import {
   mobileServerError,
 } from "@/lib/mobile/http";
 
+import { parseSenderId as senderId, SenderError } from "@/lib/whatsapp-senders-core";
+
 const MAX_REPLY_LENGTH = 4_096;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -72,6 +74,12 @@ export async function POST(
       {
         email: auth.session.email,
         teamMemberId: auth.session.teamMemberId,
+        role: auth.session.role,
+        senderAccountId: senderId(
+          payload && typeof payload === "object" && "senderAccountId" in payload
+            ? (payload as { senderAccountId?: unknown }).senderAccountId
+            : null,
+        ),
       },
       text,
       idempotencyKey,
@@ -85,6 +93,9 @@ export async function POST(
       202
     );
   } catch (error) {
+    if (error instanceof SenderError) {
+      return mobileError(error.status, error.code, error.message);
+    }
     return mobileServerError(
       error,
       "CONVERSATION_REPLY_FAILED",

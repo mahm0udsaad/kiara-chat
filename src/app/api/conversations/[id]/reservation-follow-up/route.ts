@@ -42,7 +42,7 @@ export async function POST(
       }
       const result = await sendReply(
         id,
-        { email: session.email, teamMemberId: session.teamMemberId },
+        { email: session.email, teamMemberId: session.teamMemberId, role: session.role },
         message
       );
       const followUp = await setReservationFollowUp(

@@ -79,11 +79,12 @@ function webhook({
   concurrentDuplicate = false,
   staffPhones = [],
   pendingAppSends = [],
+  isNew = false,
 } = {}) {
   const calls = { messages: [], activity: [], handled: [], jobs: [], transport: [], acks: [], claimed: [], lids: [] };
   const db = {
     hasMessageWithSid: async () => duplicate,
-    findOrCreateConversation: async () => ({ id: "customer" }),
+    findOrCreateConversation: async () => ({ id: "customer", is_new: isNew }),
     findOrCreateGroupConversation: async () => ({ id: "group" }),
     findConversationByLid: async () => ({ id: "customer" }),
     findConversationByPhone: async () => ({ id: "customer" }),
@@ -106,6 +107,10 @@ function webhook({
     "@/lib/storage-media": {
       uploadBase64Media: async () => ({ path: "stored" }),
       messageTypeFromContentType: () => "image",
+    },
+    // The second customer-facing engine is recognised only by its own token.
+    "@/lib/whatsapp-senders": {
+      senderForIngestToken: (header) => (header === "Bearer cs-test-token" ? "openwa_cs" : null),
     },
     "@/lib/staff-threads": {
       staffKindForPhone: async (phone) => (staffPhones.includes(phone) ? "driver" : null),
@@ -355,4 +360,60 @@ test("a failed thread lookup stops instead of opening another thread", async () 
     "@/lib/phone": { canonicalPhone: (phone) => phone },
   });
   await assert.rejects(() => server.findOrCreateConversation("+966500000000", "Customer"), /lookup failed/);
+});
+
+test("the second number takes in its customers, tagged with that number, without the bot", async () => {
+  // Customers are on Meta, so the orders number would stand this message by.
+  const { send, calls } = webhook({ provider: "meta", isNew: true });
+  const response = await send(inbound, "cs-test-token");
+  assert.equal(response.status, 200);
+  assert.equal(calls.messages.length, 1);
+  assert.equal(calls.messages[0].senderAccount, "openwa_cs");
+  assert.equal(calls.messages[0].metadata.sender_account, "openwa_cs");
+  // A brand-new customer is answered from the number she wrote to.
+  assert.deepEqual(calls.claimed.at(-1), { reply_sender: "openwa_cs" });
+  // Notification only; the bot answers on the Business number, never here.
+  assert.equal(calls.jobs.length, 1);
+});
+
+test("an existing customer writing to the second number keeps her saved reply number", async () => {
+  const { send, calls } = webhook({ provider: "meta", isNew: false });
+  await send(inbound, "cs-test-token");
+  assert.equal(calls.messages[0].senderAccount, "openwa_cs");
+  assert.equal(calls.claimed.some((patch) => "reply_sender" in patch), false);
+});
+
+test("groups stay off on the second number, and the orders number keeps its field-team rule", async () => {
+  const cs = webhook({ provider: "meta" });
+  const group = { ...inbound, chatJid: "120363000000000000@g.us" };
+  assert.deepEqual(await (await cs.send(group, "cs-test-token")).json(), { ok: true, standby: true });
+  assert.equal(cs.calls.messages.length, 0);
+
+  const orders = webhook({ provider: "meta" });
+  assert.deepEqual(await (await orders.send(inbound)).json(), { ok: true, standby: true });
+  const driver = webhook({ provider: "meta", staffPhones: ["+966500000000"] });
+  await driver.send(inbound);
+  assert.equal(driver.calls.messages[0].senderAccount, "openwa");
+});
+
+test("a second engine sends with its own address and token, never the orders engine's", async () => {
+  const requests = [];
+  const { createOpenWaTransport, openWaTransport } = load("src/lib/transport/openwa.ts", {}, {
+    OPENWA_URL: "https://orders.example/", OPENWA_SEND_TOKEN: "orders-token",
+  }, async (url, init) => {
+    requests.push({ url, auth: init.headers.Authorization });
+    return Response.json({ waMessageId: "wa-cs" });
+  });
+  const cs = createOpenWaTransport({ url: "https://cs.example", token: "cs-token" });
+  await cs.sendText("+966500000000", "مرحبا");
+  await openWaTransport.sendText("+966500000000", "order note");
+  assert.deepEqual(requests, [
+    { url: "https://cs.example/messages", auth: "Bearer cs-token" },
+    { url: "https://orders.example/messages", auth: "Bearer orders-token" },
+  ]);
+  // An engine with no settings fails as unavailable instead of falling back.
+  await assert.rejects(
+    createOpenWaTransport({ url: undefined, token: undefined }).sendText("+966500000000", "x"),
+    (error) => error.name === "EngineUnavailableError",
+  );
 });

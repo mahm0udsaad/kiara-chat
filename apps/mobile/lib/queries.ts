@@ -39,6 +39,8 @@ import type {
   CustomerServiceReport,
   CustomerServiceAgentAnalysis,
   SavedAgentReport,
+  WhatsAppSender,
+  ConversationSenderState,
   CustomerServiceEmployeeActivitiesResponse,
   ConversationAuditReport,
   CustomerTimeline,
@@ -108,6 +110,8 @@ export const queryKeys = {
   customerServiceReport: (from: string, to: string, startTime: string, endTime: string) =>
     ["customer-service-report", from, to, startTime, endTime] as const,
   agentAnalysisReports: (personId: string) => ["agent-analysis-reports", personId] as const,
+  senders: ["whatsapp-senders"] as const,
+  conversationSender: (id: string) => ["conversation-sender", id] as const,
   customerServiceEmployeeActivities: (
     personId: string,
     from: string,
@@ -472,6 +476,8 @@ export function useSendMedia(id: string) {
       caption?: string;
       voiceNote?: boolean;
       idempotencyKey: string;
+      /** The number the composer showed; checked on the server. */
+      senderAccountId?: string;
     }) => {
       const sizeBytes = localUploadFileSize(input.file);
       const sizeLimit = maxDirectUploadBytes(input.file.type);
@@ -509,6 +515,7 @@ export function useSendMedia(id: string) {
           sizeBytes,
           storagePath: ticket.storagePath,
           voiceNote: input.voiceNote === true,
+          senderAccountId: input.senderAccountId,
         }),
         timeoutMs: SEND_TIMEOUT_MS,
       });
@@ -2157,5 +2164,52 @@ export function useDeleteDistrict() {
     mutationFn: (id: string) =>
       apiRequest<{ archived: boolean }>(`/districts/${id}`, { method: "DELETE" }),
     onSuccess: () => invalidateDistricts(queryClient),
+  });
+}
+
+/** The business numbers she may reply from, with whether each is connected. */
+export function useSenders(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.senders,
+    queryFn: () => apiRequest<{ senders: WhatsAppSender[] }>("/senders"),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+/** Which number answers this customer. Shared by the team, saved on the server. */
+export function useConversationSender(conversationId: string) {
+  return useQuery({
+    queryKey: queryKeys.conversationSender(conversationId),
+    queryFn: () =>
+      apiRequest<ConversationSenderState>(`/conversations/${conversationId}/sender`),
+    enabled: Boolean(conversationId),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Switch the number for this customer. Applied at once on screen so the
+ * composer never waits; put back if the server refuses.
+ */
+export function useSetConversationSender(conversationId: string) {
+  const queryClient = useQueryClient();
+  const key = queryKeys.conversationSender(conversationId);
+  return useMutation({
+    mutationFn: (senderAccountId: string) =>
+      apiRequest<{ senderAccountId: string; changed: boolean }>(
+        `/conversations/${conversationId}/sender`,
+        { method: "PUT", body: JSON.stringify({ senderAccountId }) },
+      ),
+    onMutate: async (senderAccountId) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<ConversationSenderState>(key);
+      if (previous) queryClient.setQueryData(key, { ...previous, senderAccountId });
+      return { previous };
+    },
+    onError: (_error, _id, context) => {
+      if (context?.previous) queryClient.setQueryData(key, context.previous);
+    },
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: key }),
   });
 }

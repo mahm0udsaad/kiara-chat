@@ -15,6 +15,8 @@ import {
   mobileServerError,
 } from "@/lib/mobile/http";
 import { maxMediaBytesForContentType } from "@/lib/storage-media";
+import { parseSenderId as senderId, SenderError } from "@/lib/whatsapp-senders-core";
+
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -57,6 +59,7 @@ export async function POST(
     let caption: string;
     let voiceNote: boolean;
     let idempotencyKey: string;
+    let senderAccountId: string | null;
     let media:
       | { buffer: Buffer; contentType: string; filename: string | null }
       | {
@@ -75,6 +78,7 @@ export async function POST(
         sizeBytes?: unknown;
         storagePath?: unknown;
         voiceNote?: unknown;
+        senderAccountId?: unknown;
       } | null;
       const contentType =
         typeof body?.contentType === "string" ? body.contentType : "";
@@ -87,6 +91,7 @@ export async function POST(
           : "";
       voiceNote = body?.voiceNote === true;
       idempotencyKey = String(body?.idempotencyKey ?? "");
+      senderAccountId = senderId(body?.senderAccountId);
       if (
         !contentType ||
         !storagePath ||
@@ -133,6 +138,7 @@ export async function POST(
         .slice(0, MAX_CAPTION_LENGTH);
       voiceNote = form.get("voiceNote") === "true";
       idempotencyKey = String(form.get("idempotencyKey") ?? "");
+      senderAccountId = senderId(form.get("senderAccountId"));
       media = {
         buffer: Buffer.from(await file.arrayBuffer()),
         contentType,
@@ -163,6 +169,8 @@ export async function POST(
       {
         email: auth.session.email,
         teamMemberId: auth.session.teamMemberId,
+        role: auth.session.role,
+        senderAccountId,
       },
       media,
       caption,
@@ -178,6 +186,9 @@ export async function POST(
       202
     );
   } catch (error) {
+    if (error instanceof SenderError) {
+      return mobileError(error.status, error.code, error.message);
+    }
     return mobileServerError(
       error,
       "CONVERSATION_MEDIA_FAILED",

@@ -75,6 +75,7 @@ async function deliver(entry: OutboxEntry, queryClient: QueryClient) {
           body: entry.text,
           idempotencyKey: entry.key,
           replyToMessageId: entry.replyToMessageId,
+          senderAccountId: entry.senderAccountId,
         }),
       },
     );
@@ -100,7 +101,7 @@ async function deliver(entry: OutboxEntry, queryClient: QueryClient) {
 
 /** Put a typed reply in the thread at once and start sending it. */
 export function sendToOutbox(
-  input: { conversationId: string; text: string; replyToMessageId?: string },
+  input: { conversationId: string; text: string; replyToMessageId?: string; senderAccountId?: string },
   queryClient: QueryClient,
 ) {
   load();
@@ -109,6 +110,7 @@ export function sendToOutbox(
     conversationId: input.conversationId,
     text: input.text,
     replyToMessageId: input.replyToMessageId,
+    senderAccountId: input.senderAccountId,
     createdAt: new Date().toISOString(),
     state: "sending",
   };

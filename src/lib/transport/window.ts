@@ -7,8 +7,7 @@ import { getAdminSupabaseClient } from "@/lib/supabase/admin";
  * customer's last inbound one. Outside it, nothing but a pre-approved template
  * gets through — a plain send comes back as error 63016.
  *
- * `conversations.last_inbound_at` is already maintained on every inbound by
- * `bumpConversationActivity`, so the window costs one read and no new state.
+ * Read from the latest customer message on the Meta number (see below).
  */
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -26,13 +25,32 @@ export interface ServiceWindow {
 export async function getServiceWindow(
   conversationId: string,
 ): Promise<ServiceWindow> {
-  const { data } = await getAdminSupabaseClient()
-    .from("conversations")
-    .select("last_inbound_at")
-    .eq("id", conversationId)
+  // Only a message that reached the Meta number opens Meta's window. Since a
+  // second number was added, `last_inbound_at` also moves on messages to that
+  // number, so the window reads the latest Meta inbound itself (history rows
+  // have no sender and were all on Meta). One indexed row.
+  const admin = getAdminSupabaseClient();
+  const { data, error } = await admin
+    .from("messages")
+    .select("created_at")
+    .eq("conversation_id", conversationId)
+    .eq("role", "customer")
+    .or("sender_account.is.null,sender_account.eq.meta")
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
-  const lastInboundAt = (data?.last_inbound_at as string | null) ?? null;
+  let lastInboundAt = (data?.created_at as string | null) ?? null;
+  if (error) {
+    // Before the sender column exists, keep the old rule rather than closing
+    // every window and failing every Meta reply.
+    const { data: conversation } = await admin
+      .from("conversations")
+      .select("last_inbound_at")
+      .eq("id", conversationId)
+      .maybeSingle();
+    lastInboundAt = (conversation?.last_inbound_at as string | null) ?? null;
+  }
   if (!lastInboundAt) return { open: false, lastInboundAt: null };
 
   const elapsed = Date.now() - new Date(lastInboundAt).getTime();

@@ -45,6 +45,7 @@ import {
   Check,
   X,
   Trash2,
+  Smartphone,
 } from "lucide-react";
 
 // Lazy — keep the large order form out of the initial inbox bundle. The module
@@ -118,7 +119,8 @@ import {
 import type { CatalogItem } from "@/lib/catalog";
 import { catalogImageFile } from "./catalog-image";
 import { loadDispatchOptions } from "@/lib/dispatch-options-client";
-import { DaySeparator, MessageBubble } from "./message-bubble";
+import { DaySeparator, MessageBubble, SenderLabelsContext } from "./message-bubble";
+import { PROVIDER_LABEL, senderSummary, useConversationSender } from "./use-conversation-sender";
 import {
   useInboxRealtime,
   type ConversationRealtimeChange,
@@ -442,6 +444,8 @@ export function InboxClient({
     setConversations(serverConversations);
   }
   const [selected, setSelected] = useState<Conversation | null>(null);
+  // Which business number replies go out from (+ menu → «الإرسال من رقم آخر»).
+  const sender = useConversationSender(selected?.id ?? null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   // Older messages page in on scroll; the thread only holds what's been read.
@@ -473,7 +477,7 @@ export function InboxClient({
   const [savingName, setSavingName] = useState(false);
   // The composer's "+" menu, and which level of it is showing.
   const [plusOpen, setPlusOpen] = useState(false);
-  const [plusView, setPlusView] = useState<"menu" | "replies">("menu");
+  const [plusView, setPlusView] = useState<"menu" | "replies" | "sender">("menu");
   // Booking requests resolved this session (order created / dismissed) — hides
   // the badge instantly; the server-side metadata clear catches up on refresh.
   const [clearedBookings, setClearedBookings] = useState<Set<string>>(new Set());
@@ -1197,9 +1201,14 @@ export function InboxClient({
       const res = await fetch(`/api/conversations/${conversationId}/reply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: text }),
+        body: JSON.stringify({ body: text, senderAccountId: sender.outgoing }),
       });
       const data = await res.json().catch(() => ({}));
+      // A number that cannot send is refused before anything goes out; say
+      // why instead of leaving only a red tick. Nothing is sent from another number.
+      if (!res.ok && typeof data?.error === "string") {
+        sender.setNotice({ text: data.error, error: true });
+      }
       // Swap the temp row for the real one. If the realtime INSERT already
       // replaced the whole array this finds nothing, which is fine — the server
       // copy is authoritative either way. No refetch, no router.refresh(): the
@@ -1226,7 +1235,7 @@ export function InboxClient({
         )
       );
     }
-  }, [selected, draft]);
+  }, [selected, draft, sender]);
 
   /** Upload + send one file. Returns false so callers can stop a batch. */
   const sendFile = useCallback(
@@ -1244,6 +1253,7 @@ export function InboxClient({
         // Keep uploaded songs/audio files as regular attachments. Only audio
         // captured with the microphone should become a WhatsApp voice note.
         if (options.voiceNote) form.append("voiceNote", "true");
+        if (sender.outgoing) form.append("senderAccountId", sender.outgoing);
         const res = await fetch(`/api/conversations/${selected.id}/media`, {
           method: "POST",
           body: form,
@@ -1265,7 +1275,7 @@ export function InboxClient({
         return false;
       }
     },
-    [selected, router]
+    [selected, router, sender.outgoing]
   );
 
   /**
@@ -2186,6 +2196,7 @@ export function InboxClient({
                       </button>
                     </div>
                   ) : null}
+                  <SenderLabelsContext.Provider value={sender.labels}>
                   {messages.map((m, i) => {
                     const prev = i > 0 ? messages[i - 1] : null;
                     const newDay =
@@ -2221,6 +2232,7 @@ export function InboxClient({
                       </Fragment>
                     );
                   })}
+                  </SenderLabelsContext.Provider>
                   {isTyping(selected.id) ? (
                     <div className="flex justify-start">
                       <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-500 shadow-sm">
@@ -2319,7 +2331,39 @@ export function InboxClient({
                 )}
               </div>
             ) : (
-              <div className="safe-b flex shrink-0 items-end gap-2 border-t bg-[var(--surface)] px-3 pt-3 sm:px-4">
+              <div className="safe-b relative flex shrink-0 items-end gap-2 border-t bg-[var(--surface)] px-3 pt-3 sm:px-4">
+              {sender.notice || (sender.canChoose && sender.selected && !sender.selected.isDefault) ? (
+                // Only when it matters: a switch just happened, a send was
+                // refused, or replies are leaving from the non-usual number.
+                <div className="pointer-events-none absolute -top-8 right-3 left-3 flex justify-end">
+                  {sender.notice ? (
+                    <span
+                      role="status"
+                      className={cn(
+                        "rounded-full px-3 py-1 text-[11px] shadow-sm",
+                        sender.notice.error ? "bg-rose-50 text-rose-700" : "bg-[var(--surface)] text-muted-foreground border"
+                      )}
+                    >
+                      {sender.notice.text}
+                    </span>
+                  ) : sender.selected ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPlusOpen(true);
+                        setPlusView("sender");
+                      }}
+                      className={cn(
+                        "pointer-events-auto rounded-full px-3 py-1 text-[11px] shadow-sm",
+                        sender.selected.available ? "bg-[var(--brand-soft)] text-[var(--brand)]" : "bg-rose-50 text-rose-700"
+                      )}
+                    >
+                      يُرسل من {senderSummary(sender.selected)}
+                      {sender.selected.available ? "" : " · غير متصل"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -2399,7 +2443,59 @@ export function InboxClient({
                               onClick={() => setPlusView("replies")}
                             />
                           ) : null}
+                          {sender.canChoose ? (
+                            <MenuItem
+                              icon={<Smartphone size={16} aria-hidden="true" />}
+                              label="الإرسال من رقم آخر"
+                              onClick={() => setPlusView("sender")}
+                            />
+                          ) : null}
                         </>
+                      ) : plusView === "sender" ? (
+                        <div className="max-h-64 overflow-y-auto" role="radiogroup" aria-label="رقم الإرسال">
+                          <button
+                            type="button"
+                            onClick={() => setPlusView("menu")}
+                            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs text-muted-foreground hover:bg-[var(--brand-soft)]"
+                          >
+                            <ChevronRight size={14} aria-hidden="true" /> رجوع
+                          </button>
+                          {sender.senders.map((option) => {
+                            const isSelected = option.id === sender.selectedId;
+                            const disabled = !option.available && !isSelected;
+                            return (
+                              <button
+                                key={option.id}
+                                type="button"
+                                role="radio"
+                                aria-checked={isSelected}
+                                disabled={disabled}
+                                onClick={() => {
+                                  setPlusOpen(false);
+                                  void sender.choose(option.id);
+                                }}
+                                className={cn(
+                                  "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-right transition-colors disabled:opacity-50",
+                                  isSelected ? "bg-[var(--brand-soft)]" : "hover:bg-[var(--brand-soft)]"
+                                )}
+                              >
+                                <span className="flex size-4 shrink-0 items-center justify-center text-[var(--brand)]">
+                                  {isSelected ? <Check size={14} aria-hidden="true" /> : null}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-sm font-medium tabular-nums text-[var(--foreground)]" dir="ltr">
+                                    {option.phone ?? option.label}
+                                  </span>
+                                  <span className="block truncate text-[11px] text-muted-foreground">
+                                    {PROVIDER_LABEL[option.provider]}
+                                    {option.isDefault ? " · الافتراضي" : ""}
+                                    {option.available ? "" : " · غير متصل"}
+                                  </span>
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       ) : (
                         <div className="max-h-64 overflow-y-auto">
                           <button

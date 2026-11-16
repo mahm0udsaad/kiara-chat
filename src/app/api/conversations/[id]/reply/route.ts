@@ -5,6 +5,8 @@ import { replyDenialFor } from "@/lib/conversation-reply-access";
 import { getConversationById } from "@/lib/inbox";
 import { sendReply } from "@/lib/interactions";
 import { getAdminSupabaseClient } from "@/lib/supabase/admin";
+import { parseSenderId as senderId, SenderError } from "@/lib/whatsapp-senders-core";
+
 
 export async function POST(
   request: Request,
@@ -61,9 +63,18 @@ export async function POST(
     }
     const teamMemberId = session.teamMemberId;
     const clientRequestId = typeof body?.idempotencyKey === "string" ? body.idempotencyKey : undefined;
-    const result = await sendReply(id, { email: session.email, teamMemberId }, text, clientRequestId, replyTo);
+    const result = await sendReply(
+      id,
+      { email: session.email, teamMemberId, role: session.role, senderAccountId: senderId(body?.senderAccountId) },
+      text,
+      clientRequestId,
+      replyTo,
+    );
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
+    if (e instanceof SenderError) {
+      return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
+    }
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Failed to send" },
       { status: 500 }
