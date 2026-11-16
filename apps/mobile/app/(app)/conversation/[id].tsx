@@ -598,7 +598,7 @@ export default function ConversationScreen() {
       const account = message.metadata?.sender_account;
       if (typeof account !== "string" || account === "meta" || account === "openwa") return null;
       const sender = senderList?.find((item) => item.id === account);
-      return sender?.phone ? `عبر ${formatPhone(sender.phone)}` : "عبر رقم آخر";
+      return sender?.phone ? `عبر \u2066${formatPhone(sender.phone)}\u2069` : "عبر رقم آخر";
     },
     [senderList],
   );

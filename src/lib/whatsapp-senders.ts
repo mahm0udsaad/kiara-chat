@@ -92,6 +92,10 @@ export type SenderView = {
 
 /** The numbers this employee may choose from, with whether each can send now. */
 export async function listSendersFor(role: string): Promise<SenderView[]> {
+  // Read fresh: this is what staff see in the menu, and a number switched on
+  // or off must show at once. Sends keep using the short cache.
+  rowsCache = null;
+  stateCache.clear();
   const rows = (await loadSenders()).filter((row) => row.allowed_roles.includes(role));
   const statuses = await Promise.all(rows.map(statusOf));
   return rows.map((row, index) => ({

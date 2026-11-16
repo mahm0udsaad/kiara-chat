@@ -18,8 +18,13 @@ export const PROVIDER_LABEL: Record<WhatsAppSender["provider"], string> = {
   openwa: "OpenWA",
 };
 
+/** Keeps a phone number left-to-right inside Arabic text. */
+export function ltrPhone(phone: string): string {
+  return `\u2066${phone}\u2069`;
+}
+
 export function senderSummary(sender: WhatsAppSender): string {
-  return `${sender.phone ?? sender.label} · ${PROVIDER_LABEL[sender.provider]}`;
+  return `${sender.phone ? ltrPhone(sender.phone) : sender.label} · ${PROVIDER_LABEL[sender.provider]}`;
 }
 
 let sendersRequest: Promise<WhatsAppSender[]> | null = null;
@@ -106,9 +111,15 @@ export function useConversationSender(conversationId: string | null) {
 
   /** Labels for message footers: every non-default number's phone or name. */
   const labels = useMemo(
-    () => Object.fromEntries(senders.filter((s) => !s.isDefault).map((s) => [s.id, s.phone ?? s.label])),
+    () => Object.fromEntries(senders.filter((s) => !s.isDefault).map((s) => [s.id, s.phone ? ltrPhone(s.phone) : s.label])),
     [senders],
   );
 
-  return { senders, selected, selectedId, canChoose, outgoing, choose, notice, setNotice, labels };
+  /** Re-read the list (and each number's connection) when the menu opens. */
+  const refresh = useCallback(() => {
+    sendersRequest = null;
+    void loadSenders().then(setSenders);
+  }, []);
+
+  return { senders, selected, selectedId, canChoose, outgoing, choose, notice, setNotice, labels, refresh };
 }

@@ -25,8 +25,16 @@ const UNAVAILABLE_LABEL: Record<NonNullable<WhatsAppSender["unavailableReason"]>
   unreachable: "لا يستجيب",
 };
 
+/**
+ * A phone number kept left-to-right inside Arabic text. Without the isolate
+ * marks the digit groups are laid out right-to-left: "748 421 508 966+".
+ */
+export function ltrPhone(phone: string): string {
+  return `\u2066${formatPhone(phone)}\u2069`;
+}
+
 export function senderSummary(sender: Pick<WhatsAppSender, "phone" | "label" | "provider">): string {
-  return `${sender.phone ? formatPhone(sender.phone) : sender.label} · ${PROVIDER_LABEL[sender.provider]}`;
+  return `${sender.phone ? ltrPhone(sender.phone) : sender.label} · ${PROVIDER_LABEL[sender.provider]}`;
 }
 
 export function SenderSheet({
@@ -103,7 +111,7 @@ export function SenderSheet({
                 </View>
                 <View style={{ flex: 1, gap: 2 }}>
                   <Text style={{ ...type.bodyStrong, ...numeric, ...rtlText, color: colors.text }}>
-                    {sender.phone ? formatPhone(sender.phone) : sender.label}
+                    {sender.phone ? ltrPhone(sender.phone) : sender.label}
                   </Text>
                   <Text style={{ ...type.caption, ...rtlText, color: colors.textSecondary }}>
                     {PROVIDER_LABEL[sender.provider]}

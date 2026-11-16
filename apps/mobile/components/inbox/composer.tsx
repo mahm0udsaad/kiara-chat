@@ -98,7 +98,8 @@ export function Composer({
   // the orders number, so they offer no choice and send no sender.
   const senderState = useConversationSender(conversationId).data;
   const fieldTeam = senderState?.fieldTeam ?? false;
-  const senders = useSenders(Boolean(senderState) && !fieldTeam).data?.senders ?? [];
+  const sendersQuery = useSenders(Boolean(senderState) && !fieldTeam);
+  const senders = sendersQuery.data?.senders ?? [];
   const setSender = useSetConversationSender(conversationId);
   const [senderSheetOpen, setSenderSheetOpen] = useState(false);
   const [senderNotice, setSenderNotice] = useState<{ text: string; error: boolean } | null>(null);
@@ -460,7 +461,10 @@ export function Composer({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`يُرسل من ${senderSummary(selectedSender)}. تغيير الرقم`}
-          onPress={() => setSenderSheetOpen(true)}
+          onPress={() => {
+            void sendersQuery.refetch();
+            setSenderSheetOpen(true);
+          }}
           style={({ pressed }) => ({
             alignSelf: "flex-end",
             flexDirection: "row-reverse",
@@ -691,7 +695,13 @@ export function Composer({
                 icon="phone"
                 label="الإرسال من رقم آخر"
                 detail={selectedSender ? senderSummary(selectedSender) : undefined}
-                onPress={() => runFromMenu(() => setSenderSheetOpen(true))}
+                onPress={() =>
+                  runFromMenu(() => {
+                    // Fresh connection state every time the list opens.
+                    void sendersQuery.refetch();
+                    setSenderSheetOpen(true);
+                  })
+                }
               />
             ) : null}
           </Pressable>

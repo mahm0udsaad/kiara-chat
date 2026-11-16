@@ -2350,6 +2350,7 @@ export function InboxClient({
                     <button
                       type="button"
                       onClick={() => {
+                        sender.refresh();
                         setPlusOpen(true);
                         setPlusView("sender");
                       }}
@@ -2447,7 +2448,10 @@ export function InboxClient({
                             <MenuItem
                               icon={<Smartphone size={16} aria-hidden="true" />}
                               label="الإرسال من رقم آخر"
-                              onClick={() => setPlusView("sender")}
+                              onClick={() => {
+                                sender.refresh();
+                                setPlusView("sender");
+                              }}
                             />
                           ) : null}
                         </>
