@@ -216,8 +216,8 @@ export async function getEngineState(engine: EngineConfig = ORDERS_ENGINE): Prom
  * refresh one in place against current WhatsApp Web builds, so a displayed code
  * silently dies after ~60s.
  */
-export async function refreshEngineQr(): Promise<void> {
-  const res = await post("/qr/refresh", {});
+export async function refreshEngineQr(engine: EngineConfig = ORDERS_ENGINE): Promise<void> {
+  const res = await post("/qr/refresh", {}, ENGINE_TIMEOUT_MS, engine);
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     throw new Error(`QR refresh failed (${res.status}): ${detail}`);

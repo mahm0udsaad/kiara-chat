@@ -8,6 +8,7 @@ import { inboxProvider, isProviderConfigured, transportFor } from "@/lib/transpo
 import {
   createOpenWaTransport,
   type EngineConfig,
+  type EngineState,
   getEngineState,
   isEngineConfigured,
 } from "@/lib/transport/openwa";
@@ -204,4 +205,36 @@ export async function changeConversationSender(input: {
     );
   }
   return { senderAccountId: row.id, changed };
+}
+
+/** The engine behind an OpenWA sender id, or null. Server-only. */
+export function engineConfigFor(senderId: string): EngineConfig | null {
+  return ENGINES[senderId] ?? null;
+}
+
+export type LinkedSenderState = {
+  id: string;
+  label: string;
+  phone: string | null;
+  enabled: boolean;
+  engine: EngineState;
+};
+
+/**
+ * Every customer-facing OpenWA number with its engine's live state and QR,
+ * for the admin /connect page. Read fresh, not from the send-path cache, so a
+ * QR that just rotated is the one shown.
+ */
+export async function linkedSenderStates(): Promise<LinkedSenderState[]> {
+  rowsCache = null;
+  const rows = (await loadSenders()).filter((row) => row.provider === "openwa");
+  return Promise.all(
+    rows.map(async (row) => ({
+      id: row.id,
+      label: row.label,
+      phone: row.phone,
+      enabled: row.enabled,
+      engine: await getEngineState(ENGINES[row.id] ?? { url: undefined, token: undefined }),
+    })),
+  );
 }

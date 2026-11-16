@@ -27,9 +27,19 @@ interface TwilioState {
   error: string | null;
 }
 
+interface LinkedSender {
+  id: string;
+  label: string;
+  phone: string | null;
+  enabled: boolean;
+  engine: EngineState;
+}
+
 interface WhatsappState {
   openwa: EngineState;
   twilio: TwilioState;
+  /** Customer-facing OpenWA numbers, each on its own engine. */
+  linkedSenders?: LinkedSender[];
   inboxProvider?: "openwa" | "twilio" | "meta";
 }
 
@@ -39,8 +49,6 @@ const FALLBACK_MAX_AGE_MS = 45000;
 export function ConnectClient() {
   const [data, setData] = useState<WhatsappState | null>(null);
   const [error, setError] = useState(false);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   // Ticks once a second purely to drive the countdown re-render.
   const [now, setNow] = useState(() => Date.now());
 
@@ -72,33 +80,9 @@ export function ConnectClient() {
     return () => clearInterval(t);
   }, []);
 
-  const requestFreshQr = useCallback(async () => {
-    setRefreshing(true);
-    setRefreshError(null);
-    try {
-      const res = await fetch("/api/whatsapp/refresh", { method: "POST" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error || `تعذّر إعادة ربط واتساب (${res.status})`);
-      }
-      // The engine restarts its browser to mint a new code; poll picks it up.
-      await poll();
-    } catch (cause) {
-      setRefreshError(cause instanceof Error ? cause.message : "تعذّر إعادة ربط واتساب");
-    } finally {
-      setRefreshing(false);
-    }
-  }, [poll]);
 
-  const engine = data?.openwa;
   const twilio = data?.twilio;
   const openWaInbox = data?.inboxProvider === "openwa";
-  const state = engine?.state ?? "loading";
-  const maxAge = engine?.qrMaxAgeMs ?? FALLBACK_MAX_AGE_MS;
-  const secondsLeft = engine?.qrUpdatedAt
-    ? Math.max(0, Math.ceil((engine.qrUpdatedAt + maxAge - now) / 1000))
-    : null;
-  const expired = secondsLeft === 0;
 
   return (
     <div className="dashboard-page max-w-2xl">
@@ -159,15 +143,96 @@ export function ConnectClient() {
         </p>
       </section>
 
-      {/* ---------- Linked device (OpenWA) ---------- */}
+      {/* ---------- Linked devices (OpenWA) ---------- */}
+      <LinkedDeviceCard
+        title={openWaInbox ? "رقم المحادثات والطلبات" : "رقم التنبيهات الداخلية"}
+        description={
+          openWaInbox
+            ? "اربطي الرقم الجديد لاستخدامه في المحادثات والردود وتنبيهات الطلبات للسائق والأخصائية. يحتاج إعادة ربط إذا انقطعت الجلسة."
+            : "رقم يُرسل ملاحظات الطلبات وتنبيهات الفريق للسائق والأخصائية. يحتاج إعادة ربط إذا انقطعت الجلسة."
+        }
+        engine={data?.openwa}
+        engineKey={null}
+        pollFailed={error}
+        now={now}
+        onChanged={poll}
+      />
+      {(data?.linkedSenders ?? []).map((sender) => (
+        <LinkedDeviceCard
+          key={sender.id}
+          title={`${sender.label}${sender.phone ? ` — ‎${sender.phone}` : ""}`}
+          description={
+            sender.enabled
+              ? "رقم إضافي للرد على العميلات، يُختار من زر + في المحادثة."
+              : "رقم إضافي للرد على العميلات. بعد ربطه يُفعَّل ليظهر في زر + في المحادثة."
+          }
+          engine={sender.engine}
+          engineKey={sender.id}
+          pollFailed={error}
+          now={now}
+          onChanged={poll}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One linked WhatsApp number: its connection state, and its QR while it waits
+ * to be scanned. `engineKey` null is the orders number; otherwise the sender id
+ * of a customer-facing number, which picks that engine on the server.
+ */
+function LinkedDeviceCard({
+  title,
+  description,
+  engine,
+  engineKey,
+  pollFailed,
+  now,
+  onChanged,
+}: {
+  title: string;
+  description: string;
+  engine: EngineState | undefined;
+  engineKey: string | null;
+  pollFailed: boolean;
+  now: number;
+  onChanged: () => Promise<void>;
+}) {
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const requestFreshQr = useCallback(async () => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const query = engineKey ? `?engine=${encodeURIComponent(engineKey)}` : "";
+      const res = await fetch(`/api/whatsapp/refresh${query}`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `تعذّر إعادة ربط واتساب (${res.status})`);
+      }
+      // The engine restarts its socket to mint a new code; the poll picks it up.
+      await onChanged();
+    } catch (cause) {
+      setRefreshError(cause instanceof Error ? cause.message : "تعذّر إعادة ربط واتساب");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [engineKey, onChanged]);
+
+  const state = engine?.state ?? "loading";
+  const maxAge = engine?.qrMaxAgeMs ?? FALLBACK_MAX_AGE_MS;
+  const secondsLeft = engine?.qrUpdatedAt
+    ? Math.max(0, Math.ceil((engine.qrUpdatedAt + maxAge - now) / 1000))
+    : null;
+  const expired = secondsLeft === 0;
+
+  return (
       <section className="mt-6 rounded-2xl border bg-[var(--surface)] p-6">
         <header className="mb-4">
-          <h2 className="text-base font-semibold">{openWaInbox ? "رقم المحادثات والطلبات" : "رقم التنبيهات الداخلية"}</h2>
-          <p className="text-sm text-muted-foreground">
-            {openWaInbox
-              ? "اربطي الرقم الجديد لاستخدامه في المحادثات والردود وتنبيهات الطلبات للسائق والأخصائية. يحتاج إعادة ربط إذا انقطعت الجلسة."
-              : "رقم يُرسل ملاحظات الطلبات وتنبيهات الفريق للسائق والأخصائية. يحتاج إعادة ربط إذا انقطعت الجلسة."}
-          </p>
+          <h2 className="text-base font-semibold">{title}</h2>
+          <p className="text-sm text-muted-foreground">{description}</p>
         </header>
 
         {!engine ? (
@@ -178,8 +243,7 @@ export function ConnectClient() {
           <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800">
             <AlertTriangle className="mt-0.5 size-5 shrink-0" />
             <p className="text-sm">
-              خدمة واتساب غير مُهيّأة بعد. اضبطي متغيّرات OPENWA_URL و
-              OPENWA_SEND_TOKEN.
+              خدمة واتساب لهذا الرقم غير مُهيّأة بعد في إعدادات النشر.
             </p>
           </div>
         ) : state === "ready" ? (
@@ -203,7 +267,7 @@ export function ConnectClient() {
               <p className="basis-full text-sm text-red-700">{refreshError}</p>
             )}
           </div>
-        ) : error || state === "unreachable" ? (
+        ) : pollFailed || state === "unreachable" ? (
           <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
             <AlertTriangle className="mt-0.5 size-5 shrink-0" />
             <p className="text-sm">
@@ -264,7 +328,7 @@ export function ConnectClient() {
 
             <ol className="max-w-sm space-y-1 text-sm text-slate-600">
               <li className="flex items-center gap-2">
-                <Smartphone className="size-4" /> افتحي واتساب على هاتف الصالون
+                <Smartphone className="size-4" /> افتحي واتساب على الهاتف الذي يحمل هذا الرقم
               </li>
               <li>› الإعدادات › الأجهزة المرتبطة › ربط جهاز</li>
               <li>› وجّهي الكاميرا نحو هذا الرمز</li>
@@ -286,6 +350,5 @@ export function ConnectClient() {
           </div>
         )}
       </section>
-    </div>
   );
 }
