@@ -76,6 +76,22 @@ function bodyFromMessage(message) {
 }
 
 /**
+ * A WhatsApp edit: `editedMessage.message.protocolMessage` (or a bare
+ * `protocolMessage`) of type MESSAGE_EDIT (14), naming the original by key id
+ * and carrying the new content. Returns null for anything else, including an
+ * edit with no readable text (nothing useful to put on the original).
+ */
+const MESSAGE_EDIT = 14;
+function editOf(message) {
+  const protocol = message?.editedMessage?.message?.protocolMessage || message?.protocolMessage;
+  if (!protocol || Number(protocol.type) !== MESSAGE_EDIT) return null;
+  const originalId = protocol.key?.id;
+  const body = bodyFromMessage(protocol.editedMessage).trim();
+  if (!originalId || !body) return null;
+  return { originalId, body };
+}
+
+/**
  * Message kinds that carry no text and no media of their own. Without this
  * they reached Kiara as an empty "text" and showed as «رسالة بدون نص».
  * Returns null for ordinary messages, `{ skip: true }` for ones that are not
@@ -265,8 +281,24 @@ async function startSocket() {
     for (const msg of messages || []) {
       const remoteJid = msg.key?.remoteJid;
       const message = unwrapMessage(msg.message);
+      // An edit is its own message pointing at the original. Unhandled, it
+      // reached Kiara as a blank «رسالة بدون نص» and the typo stayed; send
+      // the corrected text for the original instead.
+      const edit = editOf(message);
+      if (edit) {
+        if (remoteJid && remoteJid !== "status@broadcast") {
+          await postIngest({
+            type: "edit",
+            waMessageId: edit.originalId,
+            body: edit.body,
+            fromMe: Boolean(msg.key?.fromMe),
+            timestamp: Number(msg.messageTimestamp || Math.floor(Date.now() / 1000)),
+          });
+        }
+        continue;
+      }
       const contentType = getContentType(message);
-      if (!remoteJid || !msg.key?.id || !contentType || contentType === "protocolMessage" || remoteJid === "status@broadcast") continue;
+      if (!remoteJid || !msg.key?.id || !contentType || contentType === "protocolMessage" || contentType === "editedMessage" || remoteJid === "status@broadcast") continue;
 
       const group = remoteJid.endsWith("@g.us");
       const fromMe = Boolean(msg.key.fromMe);

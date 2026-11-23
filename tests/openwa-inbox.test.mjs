@@ -417,3 +417,23 @@ test("a second engine sends with its own address and token, never the orders eng
     (error) => error.name === "EngineUnavailableError",
   );
 });
+
+test("an edited message corrects the original instead of arriving as a blank bubble", async () => {
+  // The stand-in client answers every select with `pendingAppSends`; here that
+  // is the stored original (`slice` only keeps the update chain happy).
+  const original = { id: "m-1", content: "يعطيكم العافيع", metadata: { provider: "openwa" }, slice: () => [] };
+  const { send, calls } = webhook({ pendingAppSends: original });
+  const edit = { type: "edit", waMessageId: "wa-original", body: "يعطيكم العافية", fromMe: false, timestamp: 1795000000 };
+  const res = await send(edit, "cs-test-token");
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).edited, true);
+  assert.equal(calls.messages.length, 0, "an edit never stores a new message");
+  assert.equal(calls.claimed.length, 1);
+  assert.equal(calls.claimed[0].content, "يعطيكم العافية");
+  assert.equal(calls.claimed[0].metadata.original_content, "يعطيكم العافيع");
+  assert.equal(calls.claimed[0].metadata.provider, "openwa");
+  // An edit with no text, or no target, is rejected before anything is read.
+  for (const bad of [{ ...edit, body: " " }, { ...edit, waMessageId: "" }, { ...edit, fromMe: "no" }]) {
+    assert.equal((await send(bad, "cs-test-token")).status, 400);
+  }
+});

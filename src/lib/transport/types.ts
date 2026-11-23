@@ -146,4 +146,22 @@ export interface OpenWaPresenceEvent {
   state: WaPresence;
 }
 
-export type OpenWaEvent = OpenWaMessageEvent | OpenWaAckEvent | OpenWaPresenceEvent;
+/**
+ * Someone edited a message they had already sent. WhatsApp sends the edit as
+ * a separate message that points at the original; before the engine knew
+ * that, it reached Kiara as a blank «رسالة بدون نص» and the typo stayed.
+ * `waMessageId` is the ORIGINAL message's id; `body` is its corrected text.
+ */
+export interface OpenWaEditEvent {
+  type: "edit";
+  waMessageId: string;
+  body: string;
+  fromMe?: boolean;
+  timestamp?: number; // unix seconds
+}
+
+export type OpenWaEvent =
+  | OpenWaMessageEvent
+  | OpenWaAckEvent
+  | OpenWaPresenceEvent
+  | OpenWaEditEvent;

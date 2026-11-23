@@ -171,6 +171,41 @@ async function claimPendingAppSend(
   return Boolean(claimed?.length);
 }
 
+/**
+ * Put a WhatsApp edit onto the stored message: the corrected text replaces
+ * the old one, which is kept in `metadata.original_content` (first version
+ * only, so a second edit doesn't lose it). Scoped to the engine's own number.
+ */
+async function applyEdit(
+  event: Extract<OpenWaEvent, { type: "edit" }>,
+  account: string,
+): Promise<boolean> {
+  const admin = getAdminSupabaseClient();
+  const { data: row } = await admin
+    .from("messages")
+    .select("id, content, metadata")
+    .eq("external_message_sid", event.waMessageId)
+    .or(`sender_account.is.null,sender_account.eq.${account}`)
+    .maybeSingle();
+  if (!row) return false;
+  const body = event.body.trim();
+  if ((row.content ?? "") === body) return true;
+  const metadata = (row.metadata as Record<string, unknown> | null) ?? {};
+  const { error } = await admin
+    .from("messages")
+    .update({
+      content: body,
+      metadata: {
+        ...metadata,
+        original_content: metadata.original_content ?? row.content ?? "",
+        edited_at: new Date((event.timestamp ?? Date.now() / 1000) * 1000).toISOString(),
+      },
+    })
+    .eq("id", row.id);
+  if (error) throw error;
+  return true;
+}
+
 export async function POST(request: NextRequest) {
   const account = engineAccount(request);
   if (!account) {
@@ -189,6 +224,12 @@ export async function POST(request: NextRequest) {
 
   if (!isOpenWaEvent(event)) {
     return NextResponse.json({ error: "Invalid OpenWA event" }, { status: 400 });
+  }
+
+  // An edit only rewrites a message this same number already stored, so it
+  // needs none of the routing below: no row with that id here, nothing happens.
+  if (event.type === "edit") {
+    return NextResponse.json({ ok: true, edited: await applyEdit(event, account) });
   }
 
   // A rollback must not let the linked device replay into the active inbox.

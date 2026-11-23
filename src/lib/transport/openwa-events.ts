@@ -18,6 +18,11 @@ export function isOpenWaEvent(value: unknown): value is OpenWaEvent {
     return typeof value.waMessageId === "string" && !!value.waMessageId.trim()
       && typeof value.status === "string" && ACKS.has(value.status);
   }
+  if (value.type === "edit") {
+    return typeof value.waMessageId === "string" && !!value.waMessageId.trim()
+      && typeof value.body === "string" && !!value.body.trim()
+      && (value.fromMe == null || typeof value.fromMe === "boolean");
+  }
   if (value.type === "presence") {
     return optionalString(value.customerPhone) && optionalString(value.chatLid)
       && typeof value.state === "string" && PRESENCE.has(value.state);
