@@ -249,4 +249,32 @@ else
   fail "rekaz race: expected 1 added change, found $changes"
 fi
 
+# --- Two webhooks for one new customer in the same instant -----------------
+# She sends "السلام عليكم" and her question in one second; each webhook looks
+# for her thread, finds none, and creates one. Session A holds its insert open
+# while B arrives: the advisory lock must make B wait and then find A's row.
+cat > "$WORK/fa.sql" <<SQL
+begin;
+select is_new from public.find_or_create_conversation('$TENANT'::uuid, '+966500000777', 'Race');
+select pg_sleep(2);
+commit;
+SQL
+cat > "$WORK/fb.sql" <<SQL
+select is_new from public.find_or_create_conversation('$TENANT'::uuid, '+966500000777', 'Race');
+SQL
+run_sql -f "$WORK/fa.sql" > "$WORK/fa.out" 2>&1 &
+fa_pid=$!
+sleep 0.7
+run_sql -f "$WORK/fb.sql" > "$WORK/fb.out" 2>&1
+wait $fa_pid
+expect_contains "$WORK/fa.out" "^t$" "same-second webhooks: the first creates the thread"
+expect_contains "$WORK/fb.out" "^f$" "same-second webhooks: the second waits and reuses it"
+threads=$(run_sql -c "select count(*) from public.conversations
+  where restaurant_id = '$TENANT' and customer_phone = '+966500000777'")
+if [ "$threads" = "1" ]; then
+  pass "same-second webhooks: one thread for the number, not two"
+else
+  fail "same-second webhooks: expected 1 thread, found $threads"
+fi
+
 exit "$status"
