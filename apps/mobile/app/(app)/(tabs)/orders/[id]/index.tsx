@@ -250,7 +250,7 @@ export default function OrderDetailScreen() {
       >
         <CustomerReminderCard
           orderId={order.id}
-          canSend={order.status === "sent" && Boolean(order.specialist_id)}
+          canSend={order.status !== "cancelled"}
         />
         {/* Customer hero */}
         <Card>

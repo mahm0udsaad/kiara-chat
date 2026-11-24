@@ -42,8 +42,10 @@ export async function POST(
   try {
     const order = await getMobileOrderById(id, auth.session);
     if (!order) return mobileError(404, "ORDER_NOT_FOUND", "الطلب غير موجود.");
-    if (order.status !== "sent" || !order.specialist_id) {
-      return mobileError(409, "ORDER_NOT_DISPATCHED", "أرسلي الطلب للأخصائية أولًا قبل تذكير العميلة بأنها في الطريق.");
+    // The team reminds the customer first and dispatches the order after, so
+    // the reminder must not wait on dispatch. Only a cancelled order is closed.
+    if (order.status === "cancelled") {
+      return mobileError(409, "ORDER_CANCELLED", "الطلب ملغي، لا يمكن إرسال تذكير للعميلة.");
     }
     if (body.trim() !== ORDER_CUSTOMER_REMINDER_BODY) {
       const conversation = await getConversationById(order.conversation_id, {

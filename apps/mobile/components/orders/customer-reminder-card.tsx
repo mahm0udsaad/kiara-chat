@@ -44,7 +44,7 @@ export function CustomerReminderCard({
       : status === "uncertain"
         ? "تحققي من حالة التذكير"
         : !canSend
-          ? "أرسلي الطلب أولًا"
+          ? "الطلب ملغي"
           : "تذكير العميلة";
 
   return (
@@ -77,7 +77,7 @@ export function CustomerReminderCard({
                 : status === "sending"
                   ? "جارٍ إرسال التذكير…"
                   : !canSend
-                    ? "يُتاح بعد إرسال الطلب للفريق"
+                    ? "الطلب ملغي"
                     : "الأخصائية في الطريق وتجهيز غرفة مناسبة"}
             </Text>
           </View>
