@@ -1780,7 +1780,7 @@ function ReviewRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function labelColor(
+export function labelColor(
   color: LabelColor,
   colors: ReturnType<typeof useTheme>["colors"],
 ) {

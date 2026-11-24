@@ -1,6 +1,7 @@
 import { Link, type Href } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { LabelTalliesCard } from "@/components/reports/label-tallies-card";
 import { MetaSpendCard, sarLabel } from "@/components/reports/meta-spend-card";
 import {
   FigureStrip,
@@ -260,6 +261,8 @@ export function CustomerServiceTeam({ report }: { report: CustomerServiceReport 
           )}
         </ReportGroup>
       ) : null}
+
+      {report.labelTallies?.length ? <LabelTalliesCard tallies={report.labelTallies} /> : null}
 
       {report.metaSpend ? <MetaSpendCard spend={report.metaSpend} /> : null}
 

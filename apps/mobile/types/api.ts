@@ -988,7 +988,18 @@ export type CustomerServiceReport = {
   closedConversations?: CustomerServiceLast24Conversation[];
   /** WhatsApp Cloud API cost over the period in SAR. Absent on older servers; null when unknown. */
   metaSpend?: MetaSpend | null;
+  /** Tracked conversation labels ticked in the period. Absent on older servers. */
+  labelTallies?: LabelTally[];
   employees: CustomerServiceEmployee[];
+};
+
+export type LabelTally = {
+  id: string;
+  name: string;
+  color: LabelColor;
+  total: number;
+  /** Who ticked the label in the period, most first. */
+  employees: { memberId: string | null; name: string; count: number }[];
 };
 
 export type MetaSpendCategory = "marketing" | "utility" | "authentication" | "service";

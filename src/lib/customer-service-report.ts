@@ -7,6 +7,7 @@ import {
   type OperationsReportInput,
   validateOperationsReportInput,
 } from "@/lib/operations-report";
+import { getLabelTallies, type LabelTally } from "@/lib/label-report";
 import { getMetaSpend, type MetaSpend } from "@/lib/meta-spend";
 import { pageRowsByDay } from "@/lib/paged-rows";
 import { canonicalPhone, normalizePhone } from "@/lib/phone";
@@ -162,6 +163,8 @@ export type CustomerServiceReport = {
   closedConversations: CustomerServiceLast24Conversation[];
   /** What the WhatsApp Cloud API cost over the period, in SAR; null when unknown. */
   metaSpend: MetaSpend | null;
+  /** The tracked conversation labels ticked in the period, per employee. */
+  labelTallies: LabelTally[];
   employees: CustomerServiceEmployee[];
 };
 
@@ -707,6 +710,13 @@ export async function getCustomerServiceReport(
   const rangeEnd = boundary(input.to, "23:59");
   const rangeStartMs = new Date(rangeStart).getTime();
   const rangeEndMs = new Date(rangeEnd).getTime();
+  const labelTalliesPromise = getLabelTallies(
+    getAdminSupabaseClient(),
+    rangeStart,
+    new Date(rangeEndMs + 60_000).toISOString(),
+  );
+  // Settled now so a slow Meta or Rekaz failure path never leaves it unhandled.
+  labelTalliesPromise.catch(() => undefined);
   const startMinute = timeToMinutes(input.startTime);
   const endMinute = timeToMinutes(input.endTime);
   const admin = getAdminSupabaseClient();
@@ -1320,6 +1330,7 @@ export async function getCustomerServiceReport(
     },
     closedConversations,
     metaSpend: await metaSpendPromise,
+    labelTallies: await labelTalliesPromise,
     employees: output,
   };
 }

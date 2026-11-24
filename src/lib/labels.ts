@@ -1,7 +1,7 @@
 /**
  * Labels for Kiara conversations. Uses the shared conversation_labels +
  * conversation_label_assignments tables (already tenant-scoped by RLS). Any
- * agent can create labels. Assignments use full-replace semantics.
+ * agent can create labels. Saving writes only the added/removed assignments.
  * Runs through the AUTHED client so RLS + created_by/assigned_by = auth.uid().
  */
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -109,19 +109,32 @@ export async function deleteLabel(labelId: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-/** Full-replace the labels on a conversation. */
+/**
+ * Make a conversation carry exactly `labelIds`. Only the difference is
+ * written: a label already on the chat keeps who ticked it and when, so the
+ * label report credits the employee who actually set it, not whoever saved
+ * the sheet afterwards.
+ */
 export async function setConversationLabels(
   userId: string,
   conversationId: string,
   labelIds: string[]
 ): Promise<void> {
   const supabase = await createServerSupabaseClient();
-  await supabase
-    .from("conversation_label_assignments")
-    .delete()
-    .eq("conversation_id", conversationId);
-  if (labelIds.length) {
-    const rows = labelIds.map((label_id) => ({
+  const current = await getConversationLabelIds(conversationId);
+  const wanted = [...new Set(labelIds)];
+  const removed = current.filter((id) => !wanted.includes(id));
+  const added = wanted.filter((id) => !current.includes(id));
+  if (removed.length) {
+    const { error } = await supabase
+      .from("conversation_label_assignments")
+      .delete()
+      .eq("conversation_id", conversationId)
+      .in("label_id", removed);
+    if (error) throw new Error(error.message);
+  }
+  if (added.length) {
+    const rows = added.map((label_id) => ({
       conversation_id: conversationId,
       label_id,
       assigned_by: userId,
