@@ -62,8 +62,6 @@ Sign in with a Supabase-auth user that is Kiara's owner or an active
 | `TWILIO_WHATSAPP_FROM` | The Business Platform sender, e.g. `whatsapp:+966508421748`. |
 | `TWILIO_WEBHOOK_BASE_URL` | Public origin Twilio calls. Signature validation hashes this, not the request URL, which behind Vercel reports an internal host. |
 | `TWILIO_STATUS_CALLBACK_URL` | Delivery-receipt endpoint (`/api/webhooks/twilio/status`). |
-| `TWILIO_CONTENT_SID_BOOKING_FOLLOWUP` | Approved template sid (`HXbb5e5dbfc42600f2678e55b38445cdac`). Required for booking follow-up templates on the Business Platform. |
-| `TWILIO_CONTENT_SID_CONVERSATION_OPENER` | The general opener — logo header, greeting by name (`HX21822b343fb1d89bed64aa0ef27fcd6c`). Marketing category, so Meta's per-customer marketing cap applies. |
 | `WHATSAPP_INBOX_PROVIDER` | Customer inbox provider. Defaults to `twilio`; OpenWA order notifications are independent. |
 | `WHATSAPP_CUSTOMER_PROVIDER` | Business Platform provider for campaigns and template management (`twilio` or `meta`). |
 
