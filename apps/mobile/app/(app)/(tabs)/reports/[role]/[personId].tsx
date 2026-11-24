@@ -1,5 +1,5 @@
 import { Redirect, Stack, useLocalSearchParams } from "expo-router";
-import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useState } from "react";
 
 import { ErrorState } from "@/components/screen-state";
@@ -41,23 +41,95 @@ const currency = new Intl.NumberFormat("en-US-u-ca-gregory-nu-latn", {
   maximumFractionDigits: 2,
 });
 
-function Metric({ icon, label, value }: { icon: IconName; label: string; value: string }) {
+function Metric({
+  icon,
+  label,
+  value,
+  onPress,
+  expanded,
+}: {
+  icon: IconName;
+  label: string;
+  value: string;
+  /** Makes the tile a toggle for a detail panel shown under the tiles. */
+  onPress?: () => void;
+  expanded?: boolean;
+}) {
   const { colors } = useTheme();
-  return (
-    <View
-      style={{
-        flex: 1,
-        minWidth: 130,
-        padding: spacing.md,
-        gap: spacing.xs,
-        borderRadius: radius.lg,
-        backgroundColor: colors.surface,
-      }}
-    >
-      <IconSymbol name={icon} size={18} color={colors.brand} />
+  const body = (
+    <>
+      <View style={{ flexDirection: "row-reverse", justifyContent: "space-between", alignItems: "center" }}>
+        <IconSymbol name={icon} size={18} color={colors.brand} />
+        {onPress ? (
+          <IconSymbol name={expanded ? "chevron.up" : "chevron.down"} size={14} color={colors.textTertiary} />
+        ) : null}
+      </View>
       <Text style={{ ...type.caption, ...rtlText, color: colors.textTertiary }}>{label}</Text>
-      <Text selectable style={{ ...type.title3, ...numeric, ...rtlText, color: colors.text }}>{value}</Text>
+      <Text selectable={!onPress} style={{ ...type.title3, ...numeric, ...rtlText, color: colors.text }}>{value}</Text>
+    </>
+  );
+  const style = {
+    flex: 1,
+    minWidth: 130,
+    padding: spacing.md,
+    gap: spacing.xs,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: expanded ? 1 : 0,
+    borderColor: colors.brand,
+  } as const;
+  if (!onPress) return <View style={style}>{body}</View>;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: Boolean(expanded) }}
+      accessibilityLabel={`${label} ${value}، اضغطي لعرض التفاصيل`}
+      testID="trip-costs-metric"
+      style={({ pressed }) => [style, { opacity: pressed ? 0.7 : 1 }]}
+    >
+      {body}
+    </Pressable>
+  );
+}
+
+/** One line of the trip-fee breakdown: how many trips and what they come to. */
+function FeeRow({
+  label,
+  count,
+  amount,
+  tone,
+  onPress,
+  strong,
+}: {
+  label: string;
+  count: number;
+  amount: string | null;
+  tone: string;
+  onPress?: () => void;
+  strong?: boolean;
+}) {
+  const { colors } = useTheme();
+  const row = (
+    <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xs }}>
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tone }} />
+      <Text style={{ ...(strong ? type.subheadStrong : type.subhead), ...rtlText, color: colors.text, flex: 1 }}>
+        {label}
+        <Text style={{ ...numeric, color: colors.textSecondary }}> · {reportInteger.format(count)} مشوار</Text>
+      </Text>
+      {amount != null ? (
+        <Text selectable style={{ ...(strong ? type.subheadStrong : type.subhead), ...numeric, color: colors.text }}>
+          {amount}
+        </Text>
+      ) : null}
+      {onPress ? <IconSymbol name="chevron.left" size={12} color={colors.textTertiary} /> : null}
     </View>
+  );
+  if (!onPress) return row;
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+      {row}
+    </Pressable>
   );
 }
 
@@ -114,8 +186,9 @@ export default function EmployeeReportScreen() {
   const bootstrap = useBootstrap();
   const [range, setRange] = useState(() => initialSelection(asOne(params.from), asOne(params.to)));
   const [tripFilter, setTripFilter] = useState<DriverTripFilter>("all");
-  const startTime = asOne(params.startTime) || "08:00";
-  const endTime = asOne(params.endTime) || "22:00";
+  const [showFeeBreakdown, setShowFeeBreakdown] = useState(false);
+  const startTime = asOne(params.startTime) || "00:00";
+  const endTime = asOne(params.endTime) || "23:59";
   const report = useOperationsReport(
     range.from,
     range.to,
@@ -157,6 +230,10 @@ export default function EmployeeReportScreen() {
     (total, visit) => total + (visit.tripCost ?? 0),
     0,
   );
+  const finishedVisits = visits.filter((visit) => visit.completed);
+  const openVisits = visits.filter((visit) => !visit.completed);
+  const sumCosts = (list: typeof visits) => list.reduce((total, visit) => total + (visit.tripCost ?? 0), 0);
+  const unpricedTrips = visits.length - recordedTripCosts;
 
   return (
     <>
@@ -191,9 +268,39 @@ export default function EmployeeReportScreen() {
                   icon="banknote"
                   label="إجمالي رسوم المشاوير"
                   value={currency.format(totalTripCosts)}
+                  onPress={() => setShowFeeBreakdown((open) => !open)}
+                  expanded={showFeeBreakdown}
                 />
               ) : null}
             </View>
+
+            {role === "driver" && showFeeBreakdown ? (
+              <Card>
+                <Text style={{ ...type.headline, ...rtlText, color: colors.text }}>تفصيل رسوم المشاوير</Text>
+                <FeeRow
+                  label="مكتملة"
+                  count={finishedVisits.length}
+                  amount={currency.format(sumCosts(finishedVisits))}
+                  tone={colors.success}
+                  onPress={() => setTripFilter("done")}
+                />
+                <FeeRow
+                  label="لم تكتمل"
+                  count={openVisits.length}
+                  amount={currency.format(sumCosts(openVisits))}
+                  tone={colors.warning}
+                  onPress={() => setTripFilter("open")}
+                />
+                {unpricedTrips ? (
+                  <FeeRow label="بدون رسوم مسجلة" count={unpricedTrips} amount={null} tone={colors.textTertiary} />
+                ) : null}
+                <View style={{ height: 1, backgroundColor: colors.border }} />
+                <FeeRow label="الإجمالي" count={visits.length} amount={currency.format(totalTripCosts)} tone="transparent" strong />
+                <Text style={{ ...type.caption, ...rtlText, color: colors.textSecondary }}>
+                  «لم تكتمل» يعني أن السائق لم يضغط خطوة الإنهاء في التطبيق، وليس بالضرورة أن المشوار لم يتم. اضغطي على أي سطر لعرض مشاويره في السجل أدناه.
+                </Text>
+              </Card>
+            ) : null}
 
             {role === "driver" ? (
               <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
