@@ -19,6 +19,8 @@ export const LABEL_COLORS: LabelColor[] = [
   "rose",
 ];
 
+const ASSIGNMENT_PAGE_SIZE = 1000;
+
 export async function listLabels(): Promise<Label[]> {
   const supabase = await createServerSupabaseClient();
   const { data } = await supabase
@@ -29,19 +31,37 @@ export async function listLabels(): Promise<Label[]> {
   return (data ?? []) as Label[];
 }
 
-/** Map of conversationId -> labelId[] for all of Kiara's conversations. */
+/**
+ * Map of conversationId -> labelId[] for all of Kiara's conversations.
+ *
+ * Paged: PostgREST returns at most 1,000 rows per request, and one unpaged
+ * read silently dropped every assignment past that — the inbox list showed
+ * no labels on most chats (and the label filter missed them) while the
+ * chat's own sheet, which reads its labels separately, still had them.
+ */
 export async function getLabelAssignments(): Promise<Record<string, string[]>> {
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase
-    .from("conversation_label_assignments")
-    .select("conversation_id, label_id, conversations!inner(restaurant_id)")
-    .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID);
   const map: Record<string, string[]> = {};
-  for (const row of data ?? []) {
-    const cid = row.conversation_id as string;
-    (map[cid] ||= []).push(row.label_id as string);
+  for (let from = 0; ; from += ASSIGNMENT_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("conversation_label_assignments")
+      .select("conversation_id, label_id, conversations!inner(restaurant_id)")
+      .eq("conversations.restaurant_id", KIARA_RESTAURANT_ID)
+      .order("conversation_id", { ascending: true })
+      .order("label_id", { ascending: true })
+      .range(from, from + ASSIGNMENT_PAGE_SIZE - 1);
+    if (error) {
+      // Labels decorate the inbox; a failed read must not take it down.
+      console.error("[labels] assignment read failed", error.message);
+      return map;
+    }
+    const rows = data ?? [];
+    for (const row of rows) {
+      const cid = row.conversation_id as string;
+      (map[cid] ||= []).push(row.label_id as string);
+    }
+    if (rows.length < ASSIGNMENT_PAGE_SIZE) return map;
   }
-  return map;
 }
 
 /** Label ids currently attached to one conversation. */
