@@ -18,7 +18,11 @@ import { replyDenialFor } from "@/lib/conversation-reply-access";
 import { iceConfig } from "@/lib/ice-servers";
 import { getConversationById } from "@/lib/inbox";
 import { getKiaraSession } from "@/lib/tenant";
-import { isMissingCallPermission } from "@/lib/transport/meta-calling";
+import {
+  CALL_ALREADY_ONGOING_MESSAGE,
+  isCallAlreadyOngoing,
+  isMissingCallPermission,
+} from "@/lib/transport/meta-calling";
 
 export const runtime = "nodejs";
 
@@ -97,6 +101,12 @@ export async function POST(request: Request) {
           error: "لم تسمح العميلة بالاتصال بعد — أرسلي طلب الإذن أولًا",
           code: "CALL_PERMISSION_REQUIRED",
         },
+        { status: 409 },
+      );
+    }
+    if (isCallAlreadyOngoing(error)) {
+      return NextResponse.json(
+        { error: CALL_ALREADY_ONGOING_MESSAGE, code: "CALL_ALREADY_ONGOING" },
         { status: 409 },
       );
     }

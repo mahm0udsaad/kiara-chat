@@ -168,3 +168,20 @@ test("missing actions default to permitted rather than hiding the controls", asy
   assert.equal(state.canCall, true);
   assert.equal(state.canRequest, true);
 });
+
+test("Meta's 'call already ongoing' is told apart from a missing permission", () => {
+  // The real error parser, not a stub: the point is that this exact message,
+  // captured from production on 2026-10-14, is recognised.
+  const metaApi = load("src/lib/transport/meta-api.ts");
+  const { isCallAlreadyOngoing, isMissingCallPermission } = load(
+    "src/lib/transport/meta-calling.ts",
+    { "./meta-api": metaApi },
+  );
+  const ongoing = new Error("META_138003_2593057: Call already ongoing with this receiver");
+  const noPermission = new Error("META_138006: No approved call permission");
+
+  assert.equal(isCallAlreadyOngoing(ongoing), true);
+  assert.equal(isMissingCallPermission(ongoing), false);
+  assert.equal(isCallAlreadyOngoing(noPermission), false);
+  assert.equal(isCallAlreadyOngoing("META_138003"), false);
+});

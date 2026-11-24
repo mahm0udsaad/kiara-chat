@@ -31,6 +31,8 @@ function phoneNumberId(): string {
  * caller can say why in Arabic rather than showing a generic failure.
  */
 export const NO_CALL_PERMISSION_ERROR = "138006";
+/** Meta refuses a second call to someone it still has a live call with. */
+export const CALL_ALREADY_ONGOING_ERROR = "138003";
 
 export type CallPermissionStatus =
   | "no_permission"
@@ -374,6 +376,19 @@ export async function terminateCall(callId: string): Promise<void> {
 export function isMissingCallPermission(error: unknown): boolean {
   return metaErrorCode(error)?.startsWith(NO_CALL_PERMISSION_ERROR) === true;
 }
+
+/**
+ * True when the customer is already on a call with this number — typically
+ * the same employee tapping call again a few seconds into a call that is
+ * still live, or a colleague calling her at the same moment.
+ */
+export function isCallAlreadyOngoing(error: unknown): boolean {
+  return metaErrorCode(error)?.startsWith(CALL_ALREADY_ONGOING_ERROR) === true;
+}
+
+/** What the employee is told when Meta refuses a call as already ongoing. */
+export const CALL_ALREADY_ONGOING_MESSAGE =
+  "توجد مكالمة جارية مع هذه العميلة الآن — انتظري انتهاءها ثم أعيدي المحاولة";
 
 // ── Inbound `calls` webhook ────────────────────────────────────────────────
 

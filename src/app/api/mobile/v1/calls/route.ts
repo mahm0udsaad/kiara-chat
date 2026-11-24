@@ -23,7 +23,11 @@ import {
   mobileError,
   mobileServerError,
 } from "@/lib/mobile/http";
-import { isMissingCallPermission } from "@/lib/transport/meta-calling";
+import {
+  CALL_ALREADY_ONGOING_MESSAGE,
+  isCallAlreadyOngoing,
+  isMissingCallPermission,
+} from "@/lib/transport/meta-calling";
 
 export const runtime = "nodejs";
 
@@ -94,6 +98,11 @@ export async function POST(request: Request) {
         // the permission state back in sync for the next attempt.
         await resolveCallPermission(conversation.customer_phone, { force: true });
         return mobileError(409, "CALL_PERMISSION_REQUIRED", PERMISSION_REQUIRED);
+      }
+      // Not a failure of the app: Meta will not ring her twice at once. Said
+      // as a bare "تعذّر بدء المكالمة", it read as calling being broken.
+      if (isCallAlreadyOngoing(error)) {
+        return mobileError(409, "CALL_ALREADY_ONGOING", CALL_ALREADY_ONGOING_MESSAGE);
       }
       throw error;
     }
