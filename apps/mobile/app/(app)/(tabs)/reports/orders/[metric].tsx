@@ -1,7 +1,7 @@
 import { Redirect, Stack, useLocalSearchParams } from "expo-router";
 import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from "react-native";
 
-import { OutcomeRow, ProblemRow } from "@/components/reports/orders-summary";
+import { CancelledRow, OutcomeRow, ProblemRow } from "@/components/reports/orders-summary";
 import { ErrorState } from "@/components/screen-state";
 import { Card, Divider } from "@/components/ui/card";
 import { numeric, rtlText, spacing, type } from "@/constants/theme";
@@ -10,7 +10,13 @@ import { useBootstrap, useOrdersReport } from "@/lib/queries";
 import { useTheme } from "@/providers/theme-provider";
 import type { OrderProblemKind } from "@/types/api";
 
-type OrderMetric = "problems" | "late" | "service-overrun" | "missing-trip-cost" | "not-done";
+type OrderMetric =
+  | "problems"
+  | "late"
+  | "service-overrun"
+  | "missing-trip-cost"
+  | "not-done"
+  | "cancelled";
 
 const METRIC_DETAILS: Record<OrderMetric, { title: string; description: string; kind?: OrderProblemKind }> = {
   problems: {
@@ -35,6 +41,10 @@ const METRIC_DETAILS: Record<OrderMetric, { title: string; description: string; 
   "not-done": {
     title: "طلبات لم يتم تنفيذها",
     description: "الطلبات التي أنهى الفريق متابعتها على أنها لم تُنفذ، مع الملاحظة المسجلة.",
+  },
+  cancelled: {
+    title: "طلبات ملغاة",
+    description: "الطلبات الملغاة في التطبيق أو في ركاز: موعدها، ولمن أُرسلت، ومتى أُلغيت.",
   },
 };
 
@@ -80,13 +90,18 @@ export default function OrdersMetricDetailsScreen() {
 
   const problems = metric === "problems"
     ? report.data?.problems ?? []
-    : metric === "not-done"
+    : metric === "not-done" || metric === "cancelled"
       ? []
       : (report.data?.problems ?? []).filter((problem) => details.kind && problem.kinds.includes(details.kind));
   const outcomes = metric === "not-done"
     ? (report.data?.outcomes ?? []).filter((outcome) => outcome.outcome === "not_done")
     : [];
-  const count = metric === "not-done" ? outcomes.length : problems.length;
+  const cancelled = metric === "cancelled" ? report.data?.cancelledOrders ?? [] : [];
+  const count = metric === "not-done"
+    ? outcomes.length
+    : metric === "cancelled"
+      ? cancelled.length
+      : problems.length;
 
   return (
     <>
@@ -119,7 +134,14 @@ export default function OrdersMetricDetailsScreen() {
 
         {report.data && count ? (
           <Card padded={false} style={{ paddingHorizontal: spacing.lg }}>
-            {metric === "not-done"
+            {metric === "cancelled"
+              ? cancelled.map((order, index) => (
+                <View key={order.key}>
+                  {index ? <Divider /> : null}
+                  <CancelledRow order={order} />
+                </View>
+              ))
+              : metric === "not-done"
               ? outcomes.map((outcome, index) => (
                 <View key={outcome.orderId}>
                   {index ? <Divider /> : null}

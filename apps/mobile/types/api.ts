@@ -664,6 +664,27 @@ export type OrderOutcomeAudit = {
   specialistName: string | null;
 };
 
+/** One order counted under «ملغاة» in the orders report. */
+export type CancelledOrder = {
+  key: string;
+  /** The app order, when there is one. */
+  orderId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  arrivalAt: string;
+  services: string[];
+  cancelledIn: "app" | "rekaz";
+  /** Null when Rekaz's change log never caught the cancel. */
+  cancelledAt: string | null;
+  /** `cancelledAt` is "no later than": Rekaz cancelled it before the sync saw it. */
+  cancelledAtIsUpperBound: boolean;
+  /** Who cancelled it in the app. Rekaz does not say. */
+  cancelledBy: string | null;
+  /** Who the order went out to; null when it was never sent. */
+  sentTo: { drivers: string[]; specialists: string[] } | null;
+  rekazProviders: string[];
+};
+
 export type DriverSettlement = {
   driverId: string;
   driverName: string;
@@ -707,6 +728,8 @@ export type OrdersReport = {
   daily: OrdersReportDay[];
   problems: OrderProblem[];
   outcomes: OrderOutcomeAudit[];
+  /** Missing from servers deployed before 2026-10-26. */
+  cancelledOrders?: CancelledOrder[];
   driverSettlements: DriverSettlement[];
 };
 

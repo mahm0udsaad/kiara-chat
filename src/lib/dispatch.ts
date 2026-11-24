@@ -2330,19 +2330,23 @@ export async function cancelDriverOrder(
     throw new Error(updateError?.message || "تعذّر إلغاء الطلب");
   }
 
-  try {
-    await admin.from("operation_events").insert({
-      restaurant_id: KIARA_RESTAURANT_ID,
-      aggregate_type: "driver_order",
-      aggregate_id: id,
-      event_type: "driver_order.cancelled",
-      actor_user_id: command.actor.userId,
-      actor_team_member_id: command.actor.teamMemberId,
-      actor_role: command.actor.role,
-      payload: { cancelled_at: new Date().toISOString() },
-    });
-  } catch {
-    // Ignore event log failure
+  // `actor_type` is required. Without it every cancel event was refused, and
+  // since the error came back as a value rather than a throw, nothing showed:
+  // no cancellation reached the audit trail before 2026-10-26.
+  const { error: eventError } = await admin.from("operation_events").insert({
+    restaurant_id: KIARA_RESTAURANT_ID,
+    aggregate_type: "driver_order",
+    aggregate_id: id,
+    event_type: "driver_order.cancelled",
+    actor_type: command.actor.teamMemberId ? "team_member" : "owner",
+    actor_user_id: command.actor.userId,
+    actor_team_member_id: command.actor.teamMemberId,
+    actor_role: command.actor.role,
+    payload: { cancelled_at: new Date().toISOString() },
+  });
+  if (eventError) {
+    // The cancel stands either way; only the audit row is missing.
+    console.error("Failed to record order cancellation", eventError);
   }
 
   const [row] = await withNames(supabase, [updated as unknown as DriverOrder]);

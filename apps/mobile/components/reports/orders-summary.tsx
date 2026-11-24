@@ -15,7 +15,13 @@ import { dayKeyFromToday } from "@/lib/calendar";
 import { durationLabel, formatters } from "@/lib/format";
 import { REPORT_LOCALE, reportInteger } from "@/lib/operations-report";
 import { useTheme } from "@/providers/theme-provider";
-import type { OrderOutcomeAudit, OrderProblem, OrderProblemKind, OrdersReport } from "@/types/api";
+import type {
+  CancelledOrder,
+  OrderOutcomeAudit,
+  OrderProblem,
+  OrderProblemKind,
+  OrdersReport,
+} from "@/types/api";
 
 const currency = new Intl.NumberFormat(REPORT_LOCALE, {
   style: "currency",
@@ -92,6 +98,87 @@ export function ProblemRow({ problem }: { problem: OrderProblem }) {
   );
 }
 
+function joinNames(names: string[]) {
+  return names.join(" و");
+}
+
+/** «أُرسل إلى …», or why nobody was sent. */
+export function cancelledSentToLabel(order: CancelledOrder): string {
+  if (order.sentTo) {
+    const parts = [
+      order.sentTo.drivers.length ? `السائق ${joinNames(order.sentTo.drivers)}` : null,
+      order.sentTo.specialists.length ? `الأخصائية ${joinNames(order.sentTo.specialists)}` : null,
+    ].filter(Boolean);
+    return parts.length ? `أُرسل إلى ${parts.join(" · ")}` : "أُرسل قبل الإلغاء";
+  }
+  return order.rekazProviders.length
+    ? `لم يُرسل لأحد · في ركاز: ${joinNames(order.rekazProviders)}`
+    : "لم يُرسل لأحد";
+}
+
+/** Where, when and by whom it was cancelled — saying so when unknown. */
+export function cancelledWhenLabel(order: CancelledOrder): string {
+  const where = order.cancelledIn === "app" ? "أُلغي في التطبيق" : "أُلغي في ركاز";
+  const when = order.cancelledAt
+    ? `${order.cancelledAtIsUpperBound ? "قبل " : ""}${formatters.dateTime.format(new Date(order.cancelledAt))}`
+    : "وقت الإلغاء غير مسجل";
+  return [where, when, order.cancelledBy].filter(Boolean).join(" · ");
+}
+
+export function CancelledRow({ order }: { order: CancelledOrder }) {
+  const { colors } = useTheme();
+  const who = order.customerName || order.customerPhone || "عميلة بدون اسم";
+  const body = (
+    <View style={{ minHeight: hitSize.control, paddingVertical: spacing.md, gap: spacing.xs }}>
+      <View style={{ flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm }}>
+        <IconSymbol name="xmark.circle" size={18} color={colors.warning} />
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text selectable style={{ ...type.bodyStrong, ...rtlText, color: colors.text }}>
+            {who}
+          </Text>
+          <Text selectable style={{ ...type.caption, ...numeric, ...rtlText, color: colors.textSecondary }}>
+            الموعد {order.arrivalAt ? formatters.dateTime.format(new Date(order.arrivalAt)) : "غير معروف"}
+            {order.services.length ? ` · ${order.services.join("، ")}` : ""}
+          </Text>
+        </View>
+        {order.orderId || order.customerPhone ? (
+          <IconSymbol name="chevron.left" size={19} color={colors.textTertiary} />
+        ) : null}
+      </View>
+      <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.onWarningSoft }}>
+        {cancelledWhenLabel(order)}
+      </Text>
+      <Text selectable style={{ ...type.footnote, ...rtlText, color: colors.text }}>
+        {cancelledSentToLabel(order)}
+      </Text>
+    </View>
+  );
+
+  // An app order opens its own record; a booking cancelled in Rekaz before
+  // any order existed opens the customer's record instead.
+  const href: Href | null = order.orderId
+    ? { pathname: "/reports/order/[id]", params: { id: order.orderId } }
+    : order.customerPhone
+      ? {
+          pathname: "/customer/[phone]",
+          params: { phone: order.customerPhone, name: order.customerName ?? "" },
+        }
+      : null;
+  if (!href) return body;
+  return (
+    <Link href={href} asChild>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`طلب ملغي: ${who}`}
+        accessibilityHint={order.orderId ? "يفتح تفاصيل الطلب" : "يفتح ملف العميلة"}
+        style={({ pressed }) => ({ opacity: pressed ? 0.65 : 1 })}
+      >
+        {body}
+      </Pressable>
+    </Link>
+  );
+}
+
 export function OutcomeRow({ outcome }: { outcome: OrderOutcomeAudit }) {
   const { colors } = useTheme();
   const notDone = outcome.outcome === "not_done";
@@ -152,7 +239,16 @@ export function OrdersSummary({ report }: { report: OrdersReport }) {
         <ReportMetricGrid>
           <Metric icon="doc.text" label="إجمالي الطلبات" value={reportInteger.format(totals.total)} testID="orders-total" />
           <Metric icon="checkmark.circle" label="تم التنفيذ" value={reportInteger.format(totals.completed)} tone="success" testID="orders-completed" />
-          <Metric icon="xmark" label="ملغاة" value={reportInteger.format(totals.cancelled)} tone={totals.cancelled ? "warning" : "default"} testID="orders-cancelled" />
+          <Metric
+            icon="xmark"
+            label="ملغاة"
+            value={reportInteger.format(totals.cancelled)}
+            tone={totals.cancelled ? "warning" : "default"}
+            // Opens which orders they were. An older server sends no list, so
+            // the tile stays a plain number there rather than opening empty.
+            href={totals.cancelled && report.cancelledOrders ? metricHref("cancelled") : undefined}
+            testID="orders-cancelled"
+          />
         </ReportMetricGrid>
         <Text selectable style={{ ...type.footnote, ...numeric, ...rtlText, color: colors.textSecondary }}>
           {reportInteger.format(totals.active)} جارية أو قادمة · {reportInteger.format(totals.notDone ?? 0)} لم يتم تنفيذها · نسبة الإكمال {reportInteger.format(totals.completionRate)}%

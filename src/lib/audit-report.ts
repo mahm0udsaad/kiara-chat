@@ -127,6 +127,7 @@ const EVENT_TITLE: Record<string, string> = {
   "order.service_approved": "اعتمدت تعديل خدمات الزيارة",
   "order.dispatch_prepared": "أسندت الطلب للسائق والأخصائية",
   "order.dispatch_completed": "اكتمل إسناد الطلب",
+  "driver_order.cancelled": "ألغت الطلب",
   "rekaz.sync_completed": "مزامنة حجوزات ركاز",
 };
 

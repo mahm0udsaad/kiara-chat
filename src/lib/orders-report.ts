@@ -54,6 +54,42 @@ export type OrderOutcomeAudit = {
   specialistName: string | null;
 };
 
+/**
+ * One order the report counted under «ملغاة», so the tile can say which.
+ *
+ * `cancelledIn` says where it was cancelled. In the app, the time and the
+ * person come from the cancel event (a team member, the driver from the field
+ * app, or the duplicate clean-up). Older team cancels have no event, because
+ * its insert used to fail, so those fall back to the order's last update,
+ * which `cancelDriverOrder` stamps with the same time and person.
+ *
+ * In Rekaz, the time comes from the sync's change log: the update or removal
+ * that caught it, or, for a booking first seen already cancelled, the time it
+ * was first seen (an upper bound). Null when the log has neither. Rekaz does
+ * not say who cancelled.
+ */
+export type CancelledOrder = {
+  key: string;
+  /** The app order, when there is one, so the row can open it. */
+  orderId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  arrivalAt: string;
+  services: string[];
+  cancelledIn: "app" | "rekaz";
+  cancelledAt: string | null;
+  /**
+   * True when `cancelledAt` is only "no later than": the sync first saw the
+   * booking already cancelled, so it was cancelled at or before that time.
+   */
+  cancelledAtIsUpperBound: boolean;
+  cancelledBy: string | null;
+  /** Who the order went out to. Null when it was never sent. */
+  sentTo: { drivers: string[]; specialists: string[] } | null;
+  /** Who Rekaz booked, for a visit that never reached anyone. */
+  rekazProviders: string[];
+};
+
 export type DriverSettlement = {
   driverId: string;
   driverName: string;
@@ -97,6 +133,7 @@ export type OrdersReport = {
   daily: OrdersReportDay[];
   problems: OrderProblem[];
   outcomes: OrderOutcomeAudit[];
+  cancelledOrders: CancelledOrder[];
   driverSettlements: DriverSettlement[];
 };
 
@@ -114,6 +151,7 @@ type LocalOrderRow = {
   conversation_id: string;
   customer_phone: string;
   specialist_id: string | null;
+  second_specialist_id: string | null;
   driver_id: string | null;
   return_driver_id: string | null;
   trip_type: "one_way" | "round_trip";
@@ -124,6 +162,8 @@ type LocalOrderRow = {
   status: string;
   sent_at: string | null;
   rekaz_source_id: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
 };
 
 type ProgressRow = {
@@ -134,6 +174,22 @@ type ProgressRow = {
   completion_note: string | null;
 };
 type ChangeRow = { source_id: string; change_type: string };
+type CancelChangeRow = { source_id: string; change_type: string; changed_at: string };
+type CancelEventRow = {
+  aggregate_id: string;
+  event_type: string;
+  occurred_at: string;
+  actor_team_member_id: string | null;
+};
+
+/** Events that mean "this app order was cancelled", and by what kind of actor. */
+const CANCEL_EVENTS: Record<string, AppCancel["by"]> = {
+  "driver_order.cancelled": "team",
+  "field.cancelled_by_driver": "driver",
+  "order.cancelled_as_duplicate": "system",
+};
+
+type AppCancel = { at: string; by: "team" | "driver" | "system"; teamMemberId: string | null };
 type EditEventRow = { aggregate_id: string };
 type NameRow = { id: string; full_name?: string | null; customer_name?: string | null };
 
@@ -185,7 +241,7 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
     pageRowsByDay<LocalOrderRow>(startMs, endExclusiveMs, (sliceStart, sliceEnd, from, to) =>
       admin
         .from("driver_orders")
-        .select("id, conversation_id, customer_phone, specialist_id, driver_id, return_driver_id, trip_type, arrival_at, duration_minutes, price, return_price, status, sent_at, rekaz_source_id")
+        .select("id, conversation_id, customer_phone, specialist_id, second_specialist_id, driver_id, return_driver_id, trip_type, arrival_at, duration_minutes, price, return_price, status, sent_at, rekaz_source_id, updated_at, updated_by")
         .eq("restaurant_id", KIARA_RESTAURANT_ID)
         .gte("arrival_at", sliceStart)
         .lt("arrival_at", sliceEnd)
@@ -196,7 +252,7 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
 
   const localIds = locals.map((order) => order.id);
   const driverIds = [...new Set(locals.flatMap((order) => [order.driver_id, order.return_driver_id]).filter((id): id is string => Boolean(id)))];
-  const specialistIds = [...new Set(locals.map((order) => order.specialist_id).filter((id): id is string => Boolean(id)))];
+  const specialistIds = [...new Set(locals.flatMap((order) => [order.specialist_id, order.second_specialist_id]).filter((id): id is string => Boolean(id)))];
   const conversationIds = [...new Set(locals.map((order) => order.conversation_id).filter(Boolean))];
   // Every id list goes out in slices (see rowsByIdChunks): sent whole, a
   // month's orders made the URL too long and the report failed outright.
@@ -311,6 +367,7 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
   let tripCosts = 0;
   const problems: OrderProblem[] = [];
   const outcomes: OrderOutcomeAudit[] = [];
+  const cancelledGroups: Array<{ order: AggregateOrder; cancelledInApp: boolean }> = [];
   const settlements = new Map<string, DriverSettlement>();
   const now = Date.now();
 
@@ -353,8 +410,10 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
       ? 0
       : (Number(order.local?.price) || 0) + (Number(order.local?.return_price) || 0);
 
-    if (isCancelled) cancelled += 1;
-    else if (isCompleted) completed += 1;
+    if (isCancelled) {
+      cancelled += 1;
+      cancelledGroups.push({ order, cancelledInApp: order.local?.status === "cancelled" });
+    } else if (isCompleted) completed += 1;
     else if (isNotDone) notDone += 1;
     else active += 1;
     if (isRekazDone) rekazDone += 1;
@@ -509,6 +568,12 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
     daily.set(order.day, day);
   }
 
+  const cancelledOrders = await describeCancelledOrders(admin, cancelledGroups, {
+    customerNames,
+    driverNames,
+    specialistNames,
+  });
+
   const total = grouped.size;
   return {
     from: input.from,
@@ -548,8 +613,173 @@ export async function getOrdersReport(raw: OperationsReportInput): Promise<Order
       b.arrivalAt.localeCompare(a.arrivalAt),
     ),
     outcomes: outcomes.sort((a, b) => b.completedAt.localeCompare(a.completedAt)),
+    cancelledOrders,
     driverSettlements: [...settlements.values()].sort((a, b) =>
       b.totalTripCost - a.totalTripCost || a.driverName.localeCompare(b.driverName, "ar"),
     ),
   };
+}
+
+/**
+ * Turn the cancelled groups into rows the «ملغاة» tile can list. Two small
+ * extra reads, both only for cancelled orders: who cancelled in the app, and
+ * when Rekaz's change log saw a booking cancelled or removed.
+ */
+async function describeCancelledOrders(
+  admin: ReturnType<typeof getAdminSupabaseClient>,
+  groups: Array<{ order: AggregateOrder; cancelledInApp: boolean }>,
+  names: {
+    customerNames: Map<string, string | null>;
+    driverNames: Map<string, string | null>;
+    specialistNames: Map<string, string | null>;
+  },
+): Promise<CancelledOrder[]> {
+  if (!groups.length) return [];
+  const appCancelledIds = groups
+    .filter((group) => group.cancelledInApp && group.order.local)
+    .map((group) => group.order.local!.id);
+  const rekazSourceIds = [
+    ...new Set(
+      groups
+        .filter((group) => !group.cancelledInApp)
+        .flatMap((group) => [...group.order.reservationSourceIds]),
+    ),
+  ];
+  const [eventsResult, teamResult, changesResult] = await Promise.all([
+    appCancelledIds.length
+      ? admin
+          .from("operation_events")
+          .select("aggregate_id, event_type, occurred_at, actor_team_member_id")
+          .eq("restaurant_id", KIARA_RESTAURANT_ID)
+          .eq("aggregate_type", "driver_order")
+          .in("aggregate_id", appCancelledIds)
+          .in("event_type", Object.keys(CANCEL_EVENTS))
+      : Promise.resolve({ data: [], error: null }),
+    // The whole team is a handful of rows; reading it avoids a second round
+    // trip just to name whoever the events and orders point at.
+    appCancelledIds.length
+      ? admin
+          .from("team_members")
+          .select("id, full_name")
+          .eq("restaurant_id", KIARA_RESTAURANT_ID)
+      : Promise.resolve({ data: [], error: null }),
+    rekazSourceIds.length
+      ? admin
+          .from("rekaz_changes")
+          .select("source_id, change_type, changed_at")
+          .eq("restaurant_id", KIARA_RESTAURANT_ID)
+          .in("source_id", rekazSourceIds)
+          // An update or removal dates the cancel. A booking cancelled before
+          // the sync ever saw it live arrives as "added" already cancelled,
+          // which only bounds the cancel from above.
+          .or(
+            "change_type.eq.removed,and(change_type.in.(updated,added),or(next_payload->>status.eq.Cancelled,next_payload->order->>status.eq.Cancelled))",
+          )
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  // These only name and date the rows. If one fails, the list still shows
+  // which orders were cancelled rather than taking the whole report down.
+  for (const result of [eventsResult, teamResult, changesResult]) {
+    if (result.error) console.error("Cancelled orders lookup failed", result.error);
+  }
+  const teamNames = new Map(
+    ((teamResult.error ? [] : teamResult.data ?? []) as NameRow[]).map((row) => [row.id, row.full_name ?? null]),
+  );
+  const appCancels = new Map<string, AppCancel>();
+  for (const row of (eventsResult.error ? [] : eventsResult.data ?? []) as CancelEventRow[]) {
+    const seen = appCancels.get(row.aggregate_id);
+    if (seen && seen.at >= row.occurred_at) continue;
+    appCancels.set(row.aggregate_id, {
+      at: row.occurred_at,
+      by: CANCEL_EVENTS[row.event_type] ?? "team",
+      teamMemberId: row.actor_team_member_id,
+    });
+  }
+  const rekazCancelledAt = new Map<string, RekazCancelTime>();
+  for (const row of (changesResult.error ? [] : changesResult.data ?? []) as CancelChangeRow[]) {
+    const candidate = { at: row.changed_at, upperBound: row.change_type === "added" };
+    const seen = rekazCancelledAt.get(row.source_id);
+    // A recorded update/removal beats "first seen cancelled"; among equals,
+    // the latest wins (a booking can be cancelled, restored and cancelled).
+    const better = !seen ||
+      (seen.upperBound && !candidate.upperBound) ||
+      (seen.upperBound === candidate.upperBound && candidate.at > seen.at);
+    if (better) rekazCancelledAt.set(row.source_id, candidate);
+  }
+  return buildCancelledOrders(groups, { ...names, teamNames, appCancels, rekazCancelledAt });
+}
+
+type RekazCancelTime = { at: string; upperBound: boolean };
+
+/** Pure part of {@link describeCancelledOrders}, kept separate for tests. */
+export function buildCancelledOrders(
+  groups: Array<{ order: AggregateOrder; cancelledInApp: boolean }>,
+  lookups: {
+    customerNames: Map<string, string | null>;
+    driverNames: Map<string, string | null>;
+    specialistNames: Map<string, string | null>;
+    teamNames: Map<string, string | null>;
+    appCancels: Map<string, AppCancel>;
+    rekazCancelledAt: Map<string, RekazCancelTime>;
+  },
+): CancelledOrder[] {
+  const nameList = (ids: Array<string | null | undefined>, from: Map<string, string | null>) =>
+    [...new Set(
+      ids
+        .filter((id): id is string => Boolean(id))
+        .map((id) => from.get(id))
+        .filter((name): name is string => Boolean(name)),
+    )];
+
+  const rows = groups.map(({ order, cancelledInApp }): CancelledOrder => {
+    const local = order.local;
+    const reservations = [...order.reservations].sort((a, b) => a.arrival_at.localeCompare(b.arrival_at));
+    const first = reservations[0]?.payload;
+    const sent = Boolean(local && (local.sent_at || local.status === "sent"));
+    // The visit is cancelled once its last service is, so the latest time
+    // across its bookings is the one that counts.
+    const rekazTimes = reservations
+      .map((row): RekazCancelTime | null =>
+        lookups.rekazCancelledAt.get(row.source_id) ??
+        (row.removed_at ? { at: row.removed_at, upperBound: false } : null))
+      .filter((time): time is RekazCancelTime => Boolean(time));
+    const appCancel = cancelledInApp && local ? lookups.appCancels.get(local.id) : undefined;
+    const appCancelledBy = !cancelledInApp || !local
+      ? null
+      : appCancel?.by === "driver"
+        ? `السائق${local.driver_id && lookups.driverNames.get(local.driver_id) ? ` ${lookups.driverNames.get(local.driver_id)}` : ""}`
+        : appCancel?.by === "system"
+          ? "تلقائيًا (طلب مكرر)"
+          : appCancel
+            ? appCancel.teamMemberId ? lookups.teamNames.get(appCancel.teamMemberId) ?? null : null
+            : local.updated_by ? lookups.teamNames.get(local.updated_by) ?? null : null;
+    const rekazTime = rekazTimes.length
+      ? rekazTimes.reduce((latest, time) => (time.at > latest.at ? time : latest))
+      : null;
+    return {
+      key: order.key,
+      orderId: local?.id ?? null,
+      customerName:
+        (local ? lookups.customerNames.get(local.conversation_id) : null) ||
+        first?.customerName?.trim() ||
+        null,
+      customerPhone: local?.customer_phone || first?.customerPhone || null,
+      arrivalAt: local?.arrival_at ?? reservations[0]?.arrival_at ?? "",
+      services: [...new Set(reservations.map((row) => row.payload?.service).filter((name): name is string => Boolean(name)))],
+      cancelledIn: cancelledInApp ? "app" : "rekaz",
+      cancelledAt: cancelledInApp
+        ? appCancel?.at ?? local?.updated_at ?? null
+        : rekazTime?.at ?? null,
+      cancelledAtIsUpperBound: !cancelledInApp && Boolean(rekazTime?.upperBound),
+      cancelledBy: appCancelledBy,
+      sentTo: sent && local
+        ? {
+            drivers: nameList([local.driver_id, local.return_driver_id], lookups.driverNames),
+            specialists: nameList([local.specialist_id, local.second_specialist_id], lookups.specialistNames),
+          }
+        : null,
+      rekazProviders: [...new Set(reservations.flatMap((row) => row.payload?.providers ?? []).map((name) => name.trim()).filter(Boolean))],
+    };
+  });
+  return rows.sort((a, b) => a.arrivalAt.localeCompare(b.arrivalAt));
 }
